@@ -30,10 +30,10 @@ model:
 dataset:
   train:
     name: StarGANv2Dataset
-    dataroot: data/stargan-v2/afhq/train
+    dataroot: ../data/data42681/afhq/train
     is_train: True
     num_workers: 2
-    batch_size: 1
+    batch_size: 8
     preprocess:
       - name: LoadImageFromFile
         key: src
@@ -67,7 +67,7 @@ dataset:
 
   test:
     name: StarGANv2Dataset
-    dataroot: data/stargan-v2/afhq/val
+    dataroot: ../data/data42681/afhq/val
     is_train: False
     num_workers: 0
     batch_size: 1

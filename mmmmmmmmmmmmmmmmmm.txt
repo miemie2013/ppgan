@@ -4,6 +4,17 @@
 ======================== StarGANv2 ========================
 
 
+# 解压AFHQ数据集
+cd ~/w*
+pip install -r requirements.txt
+
+nvidia-smi
+cd ~
+cd data
+cd data42681
+unzip afhq.zip
+cd ~/w*
+
 
 
 
