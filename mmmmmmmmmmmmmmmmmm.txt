@@ -4,6 +4,30 @@
 ======================== StarGANv2 ========================
 
 
+# 解压mpv3d数据集
+cd ~/w*
+pip install -r requirements.txt
+
+nvidia-smi
+cd ~
+cd data
+cd data125981
+unzip MPV3D_starganv2.zip
+cd ~/w*
+
+
+训练模型:
+cd ~/w*
+python -u tools/main.py -c configs/starganv2_mpv3d.yaml
+
+测试模型:
+cd ~/w*
+python tools/main.py -c configs/starganv2_mpv3d.yaml --evaluate-only --load xxx.pdparams
+
+
+
+
+
 # 解压AFHQ数据集
 cd ~/w*
 pip install -r requirements.txt
@@ -21,18 +45,22 @@ cd ~/w*
 示例以AFHQ数据集为例。如果您想使用CelebAHQ数据集，可以在换一下配置文件。
 
 训练模型:
+cd ~/w*
 python -u tools/main.py -c configs/starganv2_afhq.yaml
 
 测试模型:
+cd ~/w*
 python tools/main.py -c configs/starganv2_afhq.yaml --evaluate-only --load starganv2_afhq.pdparams
 
 
 
 
 训练模型:
+cd ~/w*
 python -u tools/main.py -c configs/starganv2_celeba_hq.yaml
 
 测试模型:
+cd ~/w*
 python tools/main.py -c configs/starganv2_celeba_hq.yaml --evaluate-only --load ${PATH_OF_WEIGHT}
 
 
