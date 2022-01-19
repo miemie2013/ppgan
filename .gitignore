@@ -30,8 +30,15 @@ MANIFEST
 *.manifest
 *.spec
 
-*.zip
 .idea/
+*.zip
+*.pdparams
+*.png
+*.jpg
+*.jpeg
+*.mp4
+*.MOV
+*.gif
 
 # Installer logs
 pip-log.txt
