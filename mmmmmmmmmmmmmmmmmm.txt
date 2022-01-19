@@ -20,9 +20,15 @@ cd ~/w*
 cd ~/w*
 python -u tools/main.py -c configs/starganv2_mpv3d.yaml
 
+
+恢复训练:
+cd ~/w*
+python -u tools/main.py -c configs/starganv2_mpv3d.yaml --resume output_dir/starganv2_mpv3d-2022-01-19-16-13/epoch_5_checkpoint.pdparams
+
+
 测试模型:
 cd ~/w*
-python tools/main.py -c configs/starganv2_mpv3d.yaml --evaluate-only --load xxx.pdparams
+python tools/main.py -c configs/starganv2_mpv3d.yaml --evaluate-only --load output_dir/starganv2_mpv3d-2022-01-19-16-13/epoch_5_checkpoint.pdparams
 
 
 
