@@ -266,13 +266,16 @@ def preprocess(x):
         start, end = index_map[part]
         x[:, start:end] = resize(shift(x[:, start:end], ops.shift), ops.resize)
 
-    zero_out = paddle.concat([
-        paddle.arange(0, index_map.chin.start),
-        paddle.arange(index_map.chin.end, 33),
-        paddle.to_tensor([
+    aaa = paddle.arange(0, index_map.chin.start)
+    bbb = paddle.arange(index_map.chin.end, 33)
+    ccc = paddle.to_tensor([
             index_map.eyebrowsedges.start, index_map.eyebrowsedges.end,
             index_map.lipedges.start, index_map.lipedges.end
-        ])
+        ]).astype("int64")
+    zero_out = paddle.concat([
+        aaa,
+        bbb,
+        ccc
     ])
     x = x.numpy()
     zero_out = zero_out.numpy()

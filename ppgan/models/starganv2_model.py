@@ -1,7 +1,7 @@
 # code was heavily based on https://github.com/clovaai/stargan-v2
 # Users should be careful about adopting these functions in any commercial matters.
 # https://github.com/clovaai/stargan-v2#license
-
+import cv2
 from paddle.fluid.layers.nn import soft_relu
 from .base_model import BaseModel
 
@@ -281,6 +281,18 @@ class StarGANv2Model(BaseModel):
                 masks = self.nets['fan'].get_heatmap(x_real)
         else:
             masks = None
+
+        # 查看masks
+        # m0, m1 = masks
+        # aaa = x_real.numpy()[0]
+        # aaa = aaa.transpose(1, 2, 0)
+        # aaa = (aaa + 1.0) * 127.5
+        # aaa = cv2.cvtColor(aaa, cv2.COLOR_RGB2BGR)
+        # cv2.imwrite('aaa1.png', aaa)
+        # m0 = m0.numpy()[0][0]
+        # m1 = m1.numpy()[0][0]
+        # cv2.imwrite('aaa2.png', m0 * 255.0)
+        # cv2.imwrite('aaa3.png', m1 * 255.0)
 
         # ================ train the discriminator ================
         # 训练了2次判别器。第1次和第2次的区别是如何生成假图像：

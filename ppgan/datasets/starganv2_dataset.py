@@ -17,17 +17,19 @@ from paddle.io import Dataset, WeightedRandomSampler
 
 
 def listdir(dname):
+    # targets = ['png', 'jpg', 'jpeg', 'JPG']
+    targets = ['png', 'jpg', 'jpeg']   # 为了去重
     fnames = list(
         chain(*[
             list(Path(dname).rglob('*.' + ext))
-            for ext in ['png', 'jpg', 'jpeg', 'JPG']
+            for ext in targets
         ]))
     # 这里是咩酱加上的代码，windows系统下'jpg'和'JPG'后缀的图片重复，所以去重。
-    fnames2 = []
-    for i, fn in enumerate(fnames):
-        if fn not in fnames2:
-            fnames2.append(fn)
-    fnames = fnames2
+    # fnames2 = []
+    # for i, fn in enumerate(fnames):
+    #     if fn not in fnames2:
+    #         fnames2.append(fn)
+    # fnames = fnames2
     return fnames
 
 
