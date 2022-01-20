@@ -6,7 +6,7 @@
 
 # 解压mpv3d数据集
 cd ~/w*
-pip install -r requirements.txt
+pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
 
 nvidia-smi
 cd ~
@@ -40,7 +40,7 @@ python tools/main.py -c configs/starganv2_mpv3d.yaml --evaluate-only --load epoc
 
 # 解压AFHQ数据集
 cd ~/w*
-pip install -r requirements.txt
+pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
 
 nvidia-smi
 cd ~
@@ -118,7 +118,7 @@ python -u tools/styleganv2.py --output_path StyleGANv2_outputs --model_type ffhq
 
 # 解压COCO2017数据集
 cd ~/w*
-pip install -r requirements.txt
+pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
 
 nvidia-smi
 cd ~
