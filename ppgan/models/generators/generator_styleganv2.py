@@ -200,7 +200,7 @@ class StyledConv(nn.Layer):
 
     def forward(self, inputs, style, noise=None):
         out = self.conv(inputs, style)
-        out = self.noise(out, noise=noise)
+        out = self.noise(out, noise=noise)  # 插入噪声
         out = self.activate(out)
 
         return out
@@ -376,10 +376,14 @@ class StyleGANv2Generator(nn.Layer):
         noise=None,
         randomize_noise=True,
     ):
-        if not input_is_latent:
+        '''
+        当input_is_latent是False时，styles是输入的噪声。是一个list，有1或2个噪声，每个噪声的形状是[batch, num_style_feat]
+        当input_is_latent是True时，styles是输入的风格向量。是一个list，有1或2个风格向量，每个风格向量的形状是[batch, num_style_feat]
+        '''
+        if not input_is_latent:  # 噪声变成风格向量。是一个list，有1或2个风格向量，每个风格向量的形状是[batch, style_dim]
             styles = [self.style(s) for s in styles]
 
-        if noise is None:
+        if noise is None:  # 没有噪声时，生成噪声。
             if randomize_noise:
                 noise = [None] * self.num_layers
             else:
@@ -388,7 +392,7 @@ class StyleGANv2Generator(nn.Layer):
                     for i in range(self.num_layers)
                 ]
 
-        if truncation < 1.0:
+        if truncation < 1.0:  # 这个表示？？？
             style_t = []
             if truncation_latent is None:
                 truncation_latent = self.get_mean_style()
@@ -398,11 +402,11 @@ class StyleGANv2Generator(nn.Layer):
 
             styles = style_t
 
-        if len(styles) < 2:
+        if len(styles) < 2:  # 风格向量个数少于2时
             inject_index = self.n_latent
 
             if styles[0].ndim < 3:
-                latent = styles[0].unsqueeze(1).tile((1, inject_index, 1))
+                latent = styles[0].unsqueeze(1).tile((1, inject_index, 1))  # [batch, self.n_latent, style_dim]
 
             else:
                 latent = styles[0]
@@ -411,13 +415,13 @@ class StyleGANv2Generator(nn.Layer):
             if inject_index is None:
                 inject_index = random.randint(1, self.n_latent - 1)
 
-            latent = styles[0].unsqueeze(1).tile((1, inject_index, 1))
+            latent = styles[0].unsqueeze(1).tile((1, inject_index, 1))  # [batch, inject_index, style_dim]
             latent2 = styles[1].unsqueeze(1).tile(
-                (1, self.n_latent - inject_index, 1))
+                (1, self.n_latent - inject_index, 1))  # [batch, self.n_latent - inject_index, style_dim]
 
-            latent = paddle.concat([latent, latent2], 1)
+            latent = paddle.concat([latent, latent2], 1)  # [batch, self.n_latent, style_dim]
 
-        out = self.input(latent)
+        out = self.input(latent)  # self.input层的参数重复batch次，得到out  [batch, 512, 4, 4]
         out = self.conv1(out, latent[:, 0], noise=noise[0])
 
         skip = self.to_rgb1(out, latent[:, 1])

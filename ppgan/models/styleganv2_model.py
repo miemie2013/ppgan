@@ -210,7 +210,7 @@ class StyleGAN2Model(BaseModel):
         self.set_requires_grad(self.nets['disc'], True)
         optimizers['optimD'].clear_grad()
         batch = self.real_img.shape[0]
-        noise = self.mixing_noise(batch, self.mixing_prob)
+        noise = self.mixing_noise(batch, self.mixing_prob)  # noise是一个list，有1或2个噪声，每个噪声的形状是[batch, num_style_feat]
 
         fake_img, _ = self.nets['gen'](noise)
         self.visual_items['real_img'] = self.real_img

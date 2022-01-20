@@ -18,7 +18,8 @@ cd ~/w*
 
 训练模型:
 cd ~/w*
-python -u tools/main.py -c configs/starganv2_mpv3d.yaml
+wget https://paddlegan.bj.bcebos.com/models/starganv2_afhq.pdparams
+python -u tools/main.py -c configs/starganv2_mpv3d.yaml --load starganv2_afhq.pdparams
 
 
 恢复训练:
@@ -29,6 +30,9 @@ python -u tools/main.py -c configs/starganv2_mpv3d.yaml --resume output_dir/star
 测试模型:
 cd ~/w*
 python tools/main.py -c configs/starganv2_mpv3d.yaml --evaluate-only --load output_dir/starganv2_mpv3d-2022-01-19-16-13/epoch_5_checkpoint.pdparams
+
+
+python tools/main.py -c configs/starganv2_mpv3d.yaml --evaluate-only --load epoch_5_checkpoint.pdparams
 
 
 
@@ -205,11 +209,16 @@ lr_scheduler:
 
 
 
-
+训练模型:
+cd ~/w*
 python tools/main.py -c configs/stylegan_v2_256_ffhq.yaml
 
+
 # 恢复训练
+cd ~/w*
 python tools/main.py -c configs/stylegan_v2_256_ffhq.yaml --resume output_dir/stylegan_v2_256_ffhq-2021-12-31-14-51/iter_3000_checkpoint.pdparams
+
+
 
 
 训练结束后，需要使用 ``tools/extract_weight.py`` 来提取对应的权重给``applications/tools/styleganv2.py``来进行推理.
