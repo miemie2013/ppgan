@@ -214,7 +214,7 @@ class Trainer:
                 self.test()
 
             if self.current_iter % self.weight_interval == 0:
-                self.save(self.current_iter, 'weight', keep=-1)
+                # self.save(self.current_iter, 'weight', keep=-1)
                 self.save(self.current_iter)
 
             self.current_iter += 1
@@ -366,7 +366,7 @@ class Trainer:
                                         msg + '%s.png' % (label))
                 save_image(image_numpy, img_path)
 
-    def save(self, epoch, name='checkpoint', keep=1):
+    def save(self, steps, name='checkpoint', keep=1):
         if self.local_rank != 0:
             return
 
@@ -375,9 +375,9 @@ class Trainer:
         state_dicts = {}
         if self.by_epoch:
             save_filename = 'epoch_%s_%s.pdparams' % (
-                epoch // self.iters_per_epoch, name)
+                steps // self.iters_per_epoch, name)
         else:
-            save_filename = 'iter_%s_%s.pdparams' % (epoch, name)
+            save_filename = 'iter_%s_%s.pdparams' % (steps, name)
 
         os.makedirs(self.output_dir, exist_ok=True)
         save_path = os.path.join(self.output_dir, save_filename)
@@ -388,10 +388,11 @@ class Trainer:
             save(state_dicts, save_path)
             return
 
-        state_dicts['epoch'] = epoch
+        state_dicts['steps'] = steps
 
         for opt_name, opt in self.model.optimizers.items():
-            state_dicts[opt_name] = opt.state_dict()
+            opt_name_d = opt_name + '_d'
+            state_dicts[opt_name_d] = opt.state_dict()
 
         save(state_dicts, save_path)
 
@@ -400,12 +401,12 @@ class Trainer:
                 if self.by_epoch:
                     checkpoint_name_to_be_removed = os.path.join(
                         self.output_dir, 'epoch_%s_%s.pdparams' %
-                        ((epoch - keep * self.weight_interval) //
+                        ((steps - keep * self.weight_interval) //
                          self.iters_per_epoch, name))
                 else:
                     checkpoint_name_to_be_removed = os.path.join(
                         self.output_dir, 'iter_%s_%s.pdparams' %
-                        (epoch - keep * self.weight_interval, name))
+                        (steps - keep * self.weight_interval, name))
 
                 if os.path.exists(checkpoint_name_to_be_removed):
                     os.remove(checkpoint_name_to_be_removed)
@@ -415,17 +416,22 @@ class Trainer:
 
     def resume(self, checkpoint_path):
         state_dicts = load(checkpoint_path)
-        if state_dicts.get('epoch', None) is not None:
-            self.start_epoch = state_dicts['epoch'] + 1
-            self.global_steps = self.iters_per_epoch * state_dicts['epoch']
-
-            self.current_iter = state_dicts['epoch'] + 1
+        if state_dicts.get('steps', None) is not None:
+            if self.by_epoch:
+                self.start_epoch = state_dicts['steps'] // self.iters_per_epoch + 1
+                self.global_steps = state_dicts['steps']
+                self.current_iter = state_dicts['steps'] + 1
+            else:
+                self.start_epoch = state_dicts['steps'] + 1
+                self.global_steps = self.iters_per_epoch * state_dicts['steps']
+                self.current_iter = state_dicts['steps'] + 1
 
         for net_name, net in self.model.nets.items():
             net.set_state_dict(state_dicts[net_name])
 
         for opt_name, opt in self.model.optimizers.items():
-            opt.set_state_dict(state_dicts[opt_name])
+            opt_name_d = opt_name + '_d'
+            opt.set_state_dict(state_dicts[opt_name_d])
 
     def load(self, weight_path):
         state_dicts = load(weight_path)

@@ -68,5 +68,6 @@ if __name__ == '__main__':
     if isDebug:
         cfg['dataset']['train']['dataroot'] = '../' + cfg['dataset']['train']['dataroot']   # 如果是绝对路径，把这一行注释掉
         cfg['dataset']['test']['dataroot'] = '../' + cfg['dataset']['test']['dataroot']   # 如果是绝对路径，把这一行注释掉
+        cfg['output_dir'] = '../' + cfg['output_dir']   # 如果是绝对路径，把这一行注释掉
 
     main(args, cfg)
