@@ -121,5 +121,7 @@ output_dir/
 
 
 *.npz
+*.pth
+*.pkl
 
 

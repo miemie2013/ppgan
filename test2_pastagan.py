@@ -4,6 +4,7 @@ from ppgan.models.generators.generator_pastagan import ConstEncoderNetwork, Styl
 # from ppgan.models.pastagan_model import PastaGANModel
 
 import numpy as np
+import torch
 
 
 # class GeneratorV18(torch.nn.Module):
@@ -23,14 +24,23 @@ norm_img_c_tensor = paddle.to_tensor(norm_img_c_tensor)
 retain_tensor = paddle.to_tensor(retain_tensor)
 
 
+ckpt_file = 'G_ema_256.pth'
+state_dict = torch.load(ckpt_file, map_location=torch.device('cpu'))
+
 
 gen_c, cat_feat_list = style_encoding(norm_img_c_tensor, retain_tensor)
 
+gen_c2 = dic2['gen_c']
+cat_feats0 = dic2['cat_feats0']
+cat_feats1 = dic2['cat_feats1']
+cat_feats2 = dic2['cat_feats2']
+cat_feats3 = dic2['cat_feats3']
 
 # ddd = np.sum((aaaaaaaaaaa2 - aaaaaaaaaaa.numpy())**2)
 # print('ddd=%.6f' % ddd)
 
 
+# torch.save(ckpt_state, args.output_ckpt)
 print()
 
 
