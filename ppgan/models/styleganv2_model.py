@@ -207,6 +207,8 @@ class StyleGAN2Model(BaseModel):
 
     def train_iter(self, optimizers=None):
         current_iter = self.current_iter
+
+        # ================ train the discriminator ================
         self.set_requires_grad(self.nets['disc'], True)
         optimizers['optimD'].clear_grad()
         batch = self.real_img.shape[0]
@@ -245,10 +247,11 @@ class StyleGAN2Model(BaseModel):
 
         optimizers['optimD'].step()
 
+        # ================ train the generator ================
         self.set_requires_grad(self.nets['disc'], False)
         optimizers['optimG'].clear_grad()
 
-        noise = self.mixing_noise(batch, self.mixing_prob)
+        noise = self.mixing_noise(batch, self.mixing_prob)  # noise是一个list，有1或2个噪声，每个噪声的形状是[batch, num_style_feat]
         fake_img, _ = self.nets['gen'](noise)
         fake_pred = self.nets['disc'](fake_img)
 
