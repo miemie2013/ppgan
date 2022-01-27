@@ -251,8 +251,6 @@ ddd = np.sum((gen_imgs2 - gen_imgs.numpy())**2)
 print('ddd=%.6f' % ddd)
 
 
-# paddle.save(param_state_dict, save_name)
-
 
 print('\n\nfor 10 times...')
 for i in range(10):
@@ -281,6 +279,23 @@ for i in range(10):
         cv2.imwrite(save_path, gen_img)
 
 
+
+class Model(paddle.nn.Layer):
+    def __init__(self, synthesis, mapping, const_encoding, style_encoding, discriminator):
+        super().__init__()
+        self.synthesis = synthesis
+        self.mapping = mapping
+        self.const_encoding = const_encoding
+        self.style_encoding = style_encoding
+        self.discriminator = discriminator
+
+    def forward(self, x):
+        return x
+
+
+model = Model(synthesis, mapping, const_encoding, style_encoding, discriminator=None)
+
+paddle.save(model.state_dict(), save_name)
 
 
 print()

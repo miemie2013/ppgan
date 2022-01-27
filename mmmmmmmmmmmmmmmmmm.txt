@@ -35,7 +35,7 @@ cd ~/w*
 python tools/main.py -c configs/pastagan_mpv3d.yaml --evaluate-only --load output_dir/pastagan_mpv3d-2022-01-19-16-13/epoch_5_checkpoint.pdparams
 
 
-python tools/main.py -c configs/pastagan_mpv3d.yaml --evaluate-only --load xxxxxxx.pdparams
+python tools/main.py -c configs/pastagan_256_mpv3d.yaml --evaluate-only --load G_ema_256.pdparams
 
 
 

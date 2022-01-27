@@ -198,11 +198,11 @@ def he_init(module):
 class PastaGANModel(BaseModel):
     def __init__(
         self,
-        generator,
-        style=None,
+        synthesis,
         mapping=None,
+        const_encoding=None,
+        style_encoding=None,
         discriminator=None,
-        fan=None,
         latent_dim=16,
         lambda_reg=1,
         lambda_sty=1,
@@ -210,34 +210,30 @@ class PastaGANModel(BaseModel):
         lambda_cyc=1,
     ):
         super(PastaGANModel, self).__init__()
-        self.w_hpf = generator['w_hpf']
         self.nets_ema = {}
-        self.nets['generator'] = build_generator(generator)
-        self.nets_ema['generator'] = build_generator(generator)
-        self.nets['style_encoder'] = build_generator(style)
-        self.nets_ema['style_encoder'] = build_generator(style)
-        self.nets['mapping_network'] = build_generator(mapping)
-        self.nets_ema['mapping_network'] = build_generator(mapping)
+        self.nets['synthesis'] = build_generator(synthesis)
+        self.nets_ema['synthesis'] = build_generator(synthesis)
+        self.nets['mapping'] = build_generator(mapping)
+        self.nets_ema['mapping'] = build_generator(mapping)
+        self.nets['const_encoding'] = build_generator(const_encoding)
+        self.nets_ema['const_encoding'] = build_generator(const_encoding)
+        self.nets['style_encoding'] = build_generator(style_encoding)
+        self.nets_ema['style_encoding'] = build_generator(style_encoding)
         if discriminator:
             self.nets['discriminator'] = build_discriminator(discriminator)
-        if self.w_hpf > 0:
-            fan_model = build_generator(fan)
-            fan_model.eval()
-            self.nets['fan'] = fan_model
-            self.nets_ema['fan'] = fan_model
         self.latent_dim = latent_dim
         self.lambda_reg = lambda_reg
         self.lambda_sty = lambda_sty
         self.lambda_ds = lambda_ds
         self.lambda_cyc = lambda_cyc
 
-        self.nets['generator'].apply(he_init)
-        self.nets['style_encoder'].apply(he_init)
-        self.nets['mapping_network'].apply(he_init)
-        self.nets['discriminator'].apply(he_init)
+        # self.nets['generator'].apply(he_init)
+        # self.nets['style_encoder'].apply(he_init)
+        # self.nets['mapping_network'].apply(he_init)
+        # self.nets['discriminator'].apply(he_init)
 
         # remember the initial value of ds weight
-        self.initial_lambda_ds = self.lambda_ds
+        # self.initial_lambda_ds = self.lambda_ds
 
     def setup_input(self, input):
         """Unpack input data from the dataloader and perform necessary pre-processing steps.

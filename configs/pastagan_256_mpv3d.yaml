@@ -7,25 +7,39 @@ model:
   lambda_sty: 1
   lambda_ds: 2
   lambda_cyc: 1
-  generator:
-    name: PastaGANGenerator
-    img_size: &IMAGE_SIZE 256
-    w_hpf: 0
-    style_dim: &STYLE_DIM 64
-  style:
-    name: StarGANv2Style
-    img_size: *IMAGE_SIZE
-    style_dim: *STYLE_DIM
-    num_domains: &NUM_DOMAINS 3
+  synthesis:
+    name: SynthesisNetwork
+    w_dim: &W_DIM 512
+    img_resolution: &IMAGE_SIZE 256
+    img_channels: &IMAGE_CHS 3
+    channel_base: 16384
+    channel_max: 512
+    num_fp16_res: 3
+    conv_clamp: 256
+    use_noise: true
   mapping:
-    name: StarGANv2Mapping
-    latent_dim: *LATENT_DIM
-    style_dim: *STYLE_DIM
-    num_domains: *NUM_DOMAINS
-  discriminator:
-    name: PastaGANDiscriminator
-    img_size: *IMAGE_SIZE
-    num_domains: *NUM_DOMAINS
+    name: MappingNetwork
+    z_dim: &Z_DIM 0
+    c_dim: &C_DIM 512
+    w_dim: *W_DIM
+    num_ws: 14
+    num_layers: 1
+  const_encoding:
+    name: ConstEncoderNetwork
+    input_nc: 6
+    output_nc: &OC 512
+    ngf: &NGF 64
+    n_downsampling: &N_DOWN 6
+  style_encoding:
+    name: StyleEncoderNetwork
+    input_nc: 60
+    output_nc: *OC
+    ngf: *NGF
+    n_downsampling: *N_DOWN
+#  discriminator:
+#    name: PastaGANDiscriminator
+#    img_size: *IMAGE_SIZE
+#    num_domains: *NUM_DOMAINS
 
 dataset:
   train:
