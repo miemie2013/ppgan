@@ -236,6 +236,7 @@ denorm_lower_mask_tensor = dic2['denorm_lower_mask_tensor']
 denorm_lower_mask_tensor = paddle.to_tensor(denorm_lower_mask_tensor)
 
 
+# 因为有噪声，所以不一定 等于0
 gen_coarse_imgs, gen_imgs, _, _ = synthesis(ws, pose_feat, cat_feats, denorm_upper_clothes_tensor,
                                             denorm_lower_clothes_tensor, denorm_upper_mask_tensor,
                                             denorm_lower_mask_tensor)
@@ -253,19 +254,33 @@ print('ddd=%.6f' % ddd)
 # paddle.save(param_state_dict, save_name)
 
 
-gen_imgs = gen_imgs.numpy()
+print('\n\nfor 10 times...')
+for i in range(10):
+    gen_coarse_imgs, gen_imgs, _, _ = synthesis(ws, pose_feat, cat_feats, denorm_upper_clothes_tensor,
+                                                denorm_lower_clothes_tensor, denorm_upper_mask_tensor,
+                                                denorm_lower_mask_tensor)
 
-for ii in range(gen_imgs.shape[0]):
-    gen_img = gen_imgs[ii]
-    gen_img = (gen_img.transpose(1, 2, 0) + 1.0) * 127.5
-    gen_img = gen_img[:, 32:224, [2, 1, 0]]
-    gen_img = np.clip(gen_img, 0, 255)
-    gen_img = gen_img.astype(np.uint8)
+    ddd = np.sum((gen_coarse_imgs2 - gen_coarse_imgs.numpy()) ** 2)
+    print('ddd=%.6f' % ddd)
 
-    save_path = 'aaaaa.jpg'
-    print(save_path)
-    print(gen_img.shape)
-    cv2.imwrite(save_path, gen_img)
+    ddd = np.sum((gen_imgs2 - gen_imgs.numpy()) ** 2)
+    print('ddd=%.6f' % ddd)
+    print()
+
+    gen_imgs = gen_imgs.numpy()
+    for ii in range(gen_imgs.shape[0]):
+        gen_img = gen_imgs[ii]
+        gen_img = (gen_img.transpose(1, 2, 0) + 1.0) * 127.5
+        gen_img = gen_img[:, 32:224, [2, 1, 0]]
+        gen_img = np.clip(gen_img, 0, 255)
+        gen_img = gen_img.astype(np.uint8)
+
+        save_path = 'aaaaa%.2d.jpg'%i
+        # print(save_path)
+        # print(gen_img.shape)
+        cv2.imwrite(save_path, gen_img)
+
+
 
 
 print()
