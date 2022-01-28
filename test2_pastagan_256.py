@@ -1,6 +1,7 @@
 import paddle
 import cv2
 
+from ppgan.utils.filesystem import save
 from ppgan.models.generators.generator_pastagan import ConstEncoderNetwork, StyleEncoderNetwork, MappingNetwork, SynthesisNetwork
 # from ppgan.models.pastagan_model import PastaGANModel
 
@@ -283,11 +284,13 @@ for i in range(10):
 class Model(paddle.nn.Layer):
     def __init__(self, synthesis, mapping, const_encoding, style_encoding, discriminator):
         super().__init__()
-        self.synthesis = synthesis
-        self.mapping = mapping
-        self.const_encoding = const_encoding
-        self.style_encoding = style_encoding
-        self.discriminator = discriminator
+        self.nets = {}
+        self.nets['synthesis'] = synthesis
+        self.nets['mapping'] = mapping
+        self.nets['const_encoding'] = const_encoding
+        self.nets['style_encoding'] = style_encoding
+        if discriminator is not None:
+            self.nets['discriminator'] = discriminator
 
     def forward(self, x):
         return x
@@ -295,9 +298,12 @@ class Model(paddle.nn.Layer):
 
 model = Model(synthesis, mapping, const_encoding, style_encoding, discriminator=None)
 
-paddle.save(model.state_dict(), save_name)
+state_dicts = {}
+for net_name, net in model.nets.items():
+    state_dicts[net_name] = net.state_dict()
 
-
+# paddle.save(state_dicts, save_name)
+save(state_dicts, save_name)
 print()
 
 
