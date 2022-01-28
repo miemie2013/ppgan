@@ -44,52 +44,37 @@ model:
 dataset:
   train:
     name: PastaGANDataset
-    dataroot: ../data/data42681/afhq/train
+    dataroot: ../UPT_256_192_my2/Zalando_256_192
+    txt_name: train_pairs_front_list_0508.txt
     is_train: True
-    num_workers: 2
-    batch_size: 8
-    preprocess:
-      - name: LoadImageFromFile
-        key: src
-      - name: LoadImageFromFile
-        key: ref
-      - name: LoadImageFromFile
-        key: ref2
-      - name: Transforms
-        input_keys: [src, ref, ref2]
-        pipeline:
-          - name: RandomResizedCropProb
-            prob: 0.9
-            size: [*IMAGE_SIZE, *IMAGE_SIZE]
-            scale: [0.8, 1.0]
-            ratio: [0.9, 1.1]
-            interpolation: 'bilinear'
-            keys: [image, image, image]
-          - name: Resize
-            size: [*IMAGE_SIZE, *IMAGE_SIZE]
-            interpolation: 'bilinear'
-            keys: [image, image, image]
-          - name: RandomHorizontalFlip
-            prob: 0.5
-            keys: [image, image, image]
-          - name: Transpose
-            keys: [image, image, image]
-          - name: Normalize
-            mean: [127.5, 127.5, 127.5]
-            std: [127.5, 127.5, 127.5]
-            keys: [image, image, image]
+    use_labels: true
+    xflip: False
+    num_workers: 0
+    batch_size: 2
+    test_count: -1
+    preprocess: None
 
   test:
     name: PastaGANDataset
     dataroot: ../UPT_256_192_my2/Zalando_256_192
-    txt_name: test_pairs_front_list_shuffle_0508.txt
-    is_train: False
+    txt_name: train_pairs_front_list_0508.txt
+    is_train: True
     use_labels: true
     xflip: False
     num_workers: 0
-    batch_size: 1
-    test_count: 16
+    batch_size: 2
+    test_count: -1
     preprocess: None
+#    name: PastaGANDataset
+#    dataroot: ../UPT_256_192_my2/Zalando_256_192
+#    txt_name: test_pairs_front_list_shuffle_0508.txt
+#    is_train: False
+#    use_labels: true
+#    xflip: False
+#    num_workers: 0
+#    batch_size: 1
+#    test_count: 16
+#    preprocess: None
 
 lr_scheduler:
   name: LinearDecay

@@ -31,108 +31,6 @@ limbseq = [[2, 3], [2, 6], [3, 4], [4, 5], [6, 7], [7, 8], [2, 9], [9, 10], \
            [1, 16], [16, 18], [3, 17], [6, 18]]
 
 
-def listdir(dname):
-    # targets = ['png', 'jpg', 'jpeg', 'JPG']
-    targets = ['png', 'jpg', 'jpeg']   # 为了去重
-    fnames = list(
-        chain(*[
-            list(Path(dname).rglob('*.' + ext))
-            for ext in targets
-        ]))
-    # 这里是咩酱加上的代码，windows系统下'jpg'和'JPG'后缀的图片重复，所以去重。
-    # fnames2 = []
-    # for i, fn in enumerate(fnames):
-    #     if fn not in fnames2:
-    #         fnames2.append(fn)
-    # fnames = fnames2
-    return fnames
-
-
-def _make_balanced_sampler(labels):
-    class_counts = np.bincount(labels)
-    class_weights = 1. / class_counts
-    weights = class_weights[labels]
-    return WeightedRandomSampler(weights, len(weights))
-
-
-class ImageFolder(Dataset):
-    def __init__(self, root, use_sampler=False):
-        self.samples, self.targets = self._make_dataset(root)
-        self.use_sampler = use_sampler
-        if self.use_sampler:
-            self.sampler = _make_balanced_sampler(self.targets)
-            self.iter_sampler = iter(self.sampler)
-
-    def _make_dataset(self, root):
-        domains = os.listdir(root)
-        fnames, labels = [], []
-        for idx, domain in enumerate(sorted(domains)):
-            class_dir = os.path.join(root, domain)
-            cls_fnames = listdir(class_dir)
-            fnames += cls_fnames
-            labels += [idx] * len(cls_fnames)
-        # indexes = [i for i in range(len(fnames))]
-        # np.random.shuffle(indexes)
-        # fnames2, labels2 = [], []
-        # for i in indexes:
-        #     fnames2.append(fnames[i])
-        #     labels2.append(labels[i])
-        return fnames, labels
-        # return fnames2, labels2
-
-    def __getitem__(self, i):
-        if self.use_sampler:
-            try:
-                index = next(self.iter_sampler)
-            except StopIteration:
-                self.iter_sampler = iter(self.sampler)
-                index = next(self.iter_sampler)
-        else:
-            index = i
-        fname = self.samples[index]
-        label = self.targets[index]
-        return fname, label
-
-    def __len__(self):
-        return len(self.targets)
-
-
-class ReferenceDataset(Dataset):
-    def __init__(self, root, use_sampler=None):
-        self.samples, self.targets = self._make_dataset(root)
-        self.use_sampler = use_sampler
-        if self.use_sampler:
-            self.sampler = _make_balanced_sampler(self.targets)
-            self.iter_sampler = iter(self.sampler)
-
-    def _make_dataset(self, root):
-        domains = os.listdir(root)
-        fnames, fnames2, labels = [], [], []
-        for idx, domain in enumerate(sorted(domains)):
-            class_dir = os.path.join(root, domain)
-            cls_fnames = listdir(class_dir)
-            fnames += cls_fnames
-            fnames2 += random.sample(cls_fnames, len(cls_fnames))
-            labels += [idx] * len(cls_fnames)
-        return list(zip(fnames, fnames2)), labels
-
-    def __getitem__(self, i):
-        if self.use_sampler:
-            try:
-                index = next(self.iter_sampler)
-            except StopIteration:
-                self.iter_sampler = iter(self.sampler)
-                index = next(self.iter_sampler)
-        else:
-            index = i
-        fname, fname2 = self.samples[index]
-        label = self.targets[index]
-        return fname, fname2, label
-
-    def __len__(self):
-        return len(self.targets)
-
-
 @DATASETS.register()
 class PastaGANDataset(BaseDataset):
     """
@@ -156,27 +54,24 @@ class PastaGANDataset(BaseDataset):
         self.kpt_fnames = []       # 人物关键点文件的路径（txt注解文件第0列）
         self.parsing_fnames = []   # 人物语义分割图的路径（txt注解文件第0列）
 
-        self.clothes_image_fnames = []     # 衣服图片的路径（txt注解文件第1列）
-        self.clothes_kpt_fnames = []       # 衣服关键点文件的路径（txt注解文件第1列）
-        self.clothes_parsing_fnames = []   # 衣服语义分割图的路径（txt注解文件第1列）
+        if not self.is_train:  # 测试集才有。
+            self.clothes_image_fnames = []     # 衣服图片的路径（txt注解文件第1列）
+            self.clothes_kpt_fnames = []       # 衣服关键点文件的路径（txt注解文件第1列）
+            self.clothes_parsing_fnames = []   # 衣服语义分割图的路径（txt注解文件第1列）
 
-        if self.is_train:
-            self.src_loader = ImageFolder(self.dataroot, use_sampler=True)
-            self.ref_loader = ReferenceDataset(self.dataroot, use_sampler=True)
-            self.counts = len(self.src_loader)
-        else:
-            txt_path = os.path.join(self.dataroot, txt_name)
-            with open(txt_path, 'r') as f:
-                for line in f.readlines():
-                    person, clothes = line.strip().split()
+        txt_path = os.path.join(self.dataroot, txt_name)
+        with open(txt_path, 'r') as f:
+            for line in f.readlines():
+                person, clothes = line.strip().split()
 
-                    # 人物（txt注解文件第0列）
-                    self.image_fnames.append(os.path.join(self.dataroot, 'image', person))
-                    self.kpt_fnames.append(
-                        os.path.join(self.dataroot, 'keypoints', person.replace('.jpg', '_keypoints.json')))
-                    self.parsing_fnames.append(
-                        os.path.join(self.dataroot, 'parsing', person.replace('.jpg', '_label.png')))
+                # 人物（txt注解文件第0列）
+                self.image_fnames.append(os.path.join(self.dataroot, 'image', person))
+                self.kpt_fnames.append(
+                    os.path.join(self.dataroot, 'keypoints', person.replace('.jpg', '_keypoints.json')))
+                self.parsing_fnames.append(
+                    os.path.join(self.dataroot, 'parsing', person.replace('.jpg', '_label.png')))
 
+                if not self.is_train:
                     # 衣服（txt注解文件第1列）
                     self.clothes_image_fnames.append(os.path.join(self.dataroot, 'image', clothes))
                     self.clothes_kpt_fnames.append(
@@ -184,37 +79,58 @@ class PastaGANDataset(BaseDataset):
                     self.clothes_parsing_fnames.append(
                         os.path.join(self.dataroot, 'parsing', clothes.replace('.jpg', '_label.png')))
 
+        if self.is_train:
+            # 假设屎山的数据集文件夹路径有'/Zalando'
+            assert '/Zalando' in self.dataroot
+            dataroot2 = self.dataroot.split('/Zalando')[0]
+            vis_dir = os.path.join(dataroot2, 'train_img_vis')  # train_img_vis文件夹里的图片来自训练集image文件夹里的部分图片。
+            image_list = sorted(os.listdir(vis_dir))
+            vis_index = []
+            for image_name in image_list:
+                real_path = os.path.join(self.dataroot, 'image', image_name)
+                if os.path.exists(real_path):
+                    if real_path in self.image_fnames:  # 确保是txt注解文件的第0列的图片。
+                        vis_index.append(self.image_fnames.index(real_path))
+
+            self.vis_index = vis_index
+
+            random_mask_acgpn_dir = os.path.join(dataroot2, 'train_random_mask_acgpn')
+            # 所有随机掩码图片的路径。
+            self._random_mask_acgpn_fnames = [os.path.join(random_mask_acgpn_dir, mask_name) for mask_name in os.listdir(random_mask_acgpn_dir)]
+            # 随机掩码图片的数量。12000
+            self._mask_acgpn_numbers = len(self._random_mask_acgpn_fnames)
+        elif not self.is_train:
             self.vis_index = list(range(64))  # vis_index
 
-            PIL.Image.init()
-            if len(self.image_fnames) == 0:
-                raise IOError('No image files found in the specified path')
+        PIL.Image.init()
+        if len(self.image_fnames) == 0:
+            raise IOError('No image files found in the specified path')
 
-            name = os.path.splitext(os.path.basename(self.dataroot))[0]
-            im_shape = list((self.load_image(0))[0].shape)
-            raw_shape = [len(self.image_fnames)] + [im_shape[2], im_shape[0], im_shape[1]]
-            if resolution is not None and (raw_shape[2] != resolution or raw_shape[3] != resolution):
-                raise IOError('Image files do not match the specified resolution')
+        name = os.path.splitext(os.path.basename(self.dataroot))[0]
+        im_shape = list((self.load_image(0))[0].shape)
+        raw_shape = [len(self.image_fnames)] + [im_shape[2], im_shape[0], im_shape[1]]
+        if resolution is not None and (raw_shape[2] != resolution or raw_shape[3] != resolution):
+            raise IOError('Image files do not match the specified resolution')
 
-            # 父类
-            # super().__init__(name=name, raw_shape=raw_shape, **super_kwargs)
-            self.name = name
-            self.raw_shape = list(raw_shape)
-            self.use_labels = use_labels
-            self.raw_labels = None
-            self.label_shape = None
+        # 父类
+        # super().__init__(name=name, raw_shape=raw_shape, **super_kwargs)
+        self.name = name
+        self.raw_shape = list(raw_shape)
+        self.use_labels = use_labels
+        self.raw_labels = None
+        self.label_shape = None
 
-            # Apply max_size.
-            self.raw_idx = np.arange(self.raw_shape[0], dtype=np.int64)
-            if (max_size is not None) and (self.raw_idx.size > max_size):
-                np.random.RandomState(random_seed).shuffle(self.raw_idx)
-                self.raw_idx = np.sort(self.raw_idx[:max_size])
+        # Apply max_size.
+        self.raw_idx = np.arange(self.raw_shape[0], dtype=np.int64)
+        if (max_size is not None) and (self.raw_idx.size > max_size):
+            np.random.RandomState(random_seed).shuffle(self.raw_idx)
+            self.raw_idx = np.sort(self.raw_idx[:max_size])
 
-            # Apply xflip.
-            self.xflip = np.zeros(self.raw_idx.size, dtype=np.uint8)
-            if xflip:
-                self.raw_idx = np.tile(self.raw_idx, 2)
-                self.xflip = np.concatenate([self.xflip, np.ones_like(self.xflip)])
+        # Apply xflip.
+        self.xflip = np.zeros(self.raw_idx.size, dtype=np.uint8)
+        if xflip:
+            self.raw_idx = np.tile(self.raw_idx, 2)
+            self.xflip = np.concatenate([self.xflip, np.ones_like(self.xflip)])
 
     def valid_joints(self, joint):
         return (joint >= 0.1).all()
