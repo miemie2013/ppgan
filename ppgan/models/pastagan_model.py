@@ -17,32 +17,6 @@ from ppgan.utils.visual import make_grid, tensor2img
 import numpy as np
 
 
-def translate_using_reference(nets, w_hpf, x_src, x_ref, y_ref):
-    N, C, H, W = x_src.shape
-    wb = paddle.to_tensor(np.ones((1, C, H, W))).astype('float32')
-    x_src_with_wb = paddle.concat([wb, x_src], axis=0)
-
-    masks = nets['fan'].get_heatmap(x_src) if w_hpf > 0 else None
-    s_ref = nets['style_encoder'](x_ref, y_ref)
-    s_ref_list = paddle.unsqueeze(s_ref, axis=[1])
-    s_ref_lists = []
-    for _ in range(N):
-        s_ref_lists.append(s_ref_list)
-    s_ref_list = paddle.stack(s_ref_lists, axis=1)
-    s_ref_list = paddle.reshape(
-        s_ref_list,
-        (s_ref_list.shape[0], s_ref_list.shape[1], s_ref_list.shape[3]))
-    x_concat = [x_src_with_wb]
-    for i, s_ref in enumerate(s_ref_list):
-        x_fake = nets['generator'](x_src, s_ref, masks=masks)
-        x_fake_with_ref = paddle.concat([x_ref[i:i + 1], x_fake], axis=0)
-        x_concat += [x_fake_with_ref]
-
-    x_concat = paddle.concat(x_concat, axis=0)
-    img = tensor2img(make_grid(x_concat, nrow=N + 1, range=(0, 1)))
-    del x_concat
-    return img
-
 
 def compute_d_loss(nets,
                    lambda_reg,
@@ -100,6 +74,11 @@ def r1_reg(d_out, x_in):
 
 
 def soft_update(source, target, beta=1.0):
+    '''
+    ema:
+    target = beta * source + (1. - beta) * target
+
+    '''
     assert 0.0 <= beta <= 1.0
 
     if isinstance(source, paddle.DataParallel):
@@ -243,10 +222,7 @@ class PastaGANModel(BaseModel):
 
         The option 'direction' can be used to swap images in domain A and domain B.
         """
-        pass
         self.input = input
-        self.input['z_trg'] = paddle.randn((input['src'].shape[0], self.latent_dim))
-        self.input['z_trg2'] = paddle.randn((input['src'].shape[0], self.latent_dim))
 
     def forward(self):
         """Run forward pass; called by both functions <optimize_parameters> and <test>."""
@@ -383,26 +359,93 @@ class PastaGANModel(BaseModel):
 
     def test_iter(self, metrics=None):
         #TODO
-        self.nets_ema['generator'].eval()
-        self.nets_ema['style_encoder'].eval()
-        soft_update(self.nets['generator'],
-                    self.nets_ema['generator'],
-                    beta=0.999)
-        soft_update(self.nets['mapping_network'],
-                    self.nets_ema['mapping_network'],
-                    beta=0.999)
-        soft_update(self.nets['style_encoder'],
-                    self.nets_ema['style_encoder'],
-                    beta=0.999)
-        src_img = self.input['src']
-        ref_img = self.input['ref']
-        ref_label = self.input['ref_cls']
+        self.nets_ema['synthesis'].eval()
+        self.nets_ema['mapping'].eval()
+        self.nets_ema['const_encoding'].eval()
+        self.nets_ema['style_encoding'].eval()
+        # soft_update(self.nets['synthesis'],
+        #             self.nets_ema['synthesis'],
+        #             beta=0.999)
+        # soft_update(self.nets['mapping'],
+        #             self.nets_ema['mapping'],
+        #             beta=0.999)
+        # soft_update(self.nets['const_encoding'],
+        #             self.nets_ema['const_encoding'],
+        #             beta=0.999)
+        # soft_update(self.nets['style_encoding'],
+        #             self.nets_ema['style_encoding'],
+        #             beta=0.999)
+
+        image = self.input['image']
+        pose = self.input['pose']
+        norm_img = self.input['norm_img']
+        denorm_upper_clothes = self.input['denorm_upper_img']
+        denorm_lower_clothes = self.input['denorm_lower_img']
+        denorm_upper_mask = self.input['denorm_upper_mask']
+        denorm_lower_mask = self.input['denorm_lower_mask']
+        batchsize = image.shape[0]
+        # batchsize > 1时，还要实现一下两两之间的换装。
+        assert batchsize == 1
+        person_name = self.input['person_name'][0]
+        clothes_name = self.input['clothes_name'][0]
+        src_img = self.input['src_img']
+        trg_img = self.input['trg_img']
+        src_img = src_img.numpy()[0]
+        trg_img = trg_img.numpy()[0]
+
+        im_shape = src_img.shape
+        h, w = im_shape[0], im_shape[1]
+        left_padding = (h - w) // 2
+        right_padding = h - w - left_padding
+        gray_img = np.ones((h, w, 3), np.uint8) * 127
+
+
+        image = paddle.cast(image, dtype=paddle.float32)
+        pose = paddle.cast(pose, dtype=image.dtype)
+        norm_img = paddle.cast(norm_img, dtype=image.dtype)
+        denorm_upper_clothes = paddle.cast(denorm_upper_clothes, dtype=image.dtype)
+        denorm_lower_clothes = paddle.cast(denorm_lower_clothes, dtype=image.dtype)
+        denorm_upper_mask = paddle.cast(denorm_upper_mask, dtype=image.dtype)
+        denorm_lower_mask = paddle.cast(denorm_lower_mask, dtype=image.dtype)
+
+        image = image / 127.5 - 1
+        pose = pose / 127.5 - 1
+        norm_img_c = norm_img / 127.5 - 1
+        denorm_upper_clothes = denorm_upper_clothes / 127.5 - 1
+        denorm_lower_clothes = denorm_lower_clothes / 127.5 - 1
+
+
+        retain_tensor = image
+        pose_tensor = paddle.concat([pose, retain_tensor], 1)
+        # gen_z = paddle.randn([batchsize, 0])
+        gen_z = None
+
         with paddle.no_grad():
-            img = translate_using_reference(
-                self.nets_ema, self.w_hpf,
-                paddle.to_tensor(src_img).astype('float32'),
-                paddle.to_tensor(ref_img).astype('float32'),
-                paddle.to_tensor(ref_label).astype('float32'))
-        self.visual_items['reference'] = img
-        self.nets_ema['generator'].train()
-        self.nets_ema['style_encoder'].train()
+            gen_c, cat_feat_list = self.nets['style_encoding'](norm_img_c, retain_tensor)
+            pose_feat = self.nets['const_encoding'](pose_tensor)
+            ws = self.nets['mapping'](gen_z, gen_c)
+            cat_feats = {}
+            for cat_feat in cat_feat_list:
+                h = cat_feat.shape[2]
+                cat_feats[str(h)] = cat_feat
+            # 因为有噪声，所以每一次的结果有点小差别
+            gen_coarse_imgs, gen_imgs, _, _ = self.nets['synthesis'](ws,
+                                                                         pose_feat, cat_feats, denorm_upper_clothes,
+                                                                         denorm_lower_clothes, denorm_upper_mask,
+                                                                         denorm_lower_mask)
+            gen_imgs = gen_imgs.numpy()
+            for ii in range(batchsize):
+                gen_img = gen_imgs[ii]
+                gen_img = (gen_img.transpose(1, 2, 0) + 1.0) * 127.5
+                gen_img = gen_img[:, left_padding:left_padding+w, [2, 1, 0]]
+                gen_img = np.clip(gen_img, 0, 255)
+                gen_img = gen_img.astype(np.uint8)
+
+                row0 = np.concatenate([gray_img, trg_img], 1)
+                row1 = np.concatenate([src_img, gen_img], 1)
+                result_img = np.concatenate([row0, row1], 0)
+                result_img = result_img[:, :, [2, 1, 0]]  # BGR->RGB  ppgan是将RGB格式的图片进行保存的。
+
+        self.visual_items['reference'] = result_img
+        # self.nets_ema['generator'].train()
+        # self.nets_ema['style_encoder'].train()

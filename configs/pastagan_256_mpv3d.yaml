@@ -43,7 +43,7 @@ model:
 
 dataset:
   train:
-    name: StarGANv2Dataset
+    name: PastaGANDataset
     dataroot: ../data/data42681/afhq/train
     is_train: True
     num_workers: 2
@@ -80,30 +80,16 @@ dataset:
             keys: [image, image, image]
 
   test:
-    name: StarGANv2Dataset
-    dataroot: ../data/data42681/afhq/val
+    name: PastaGANDataset
+    dataroot: ../UPT_256_192_my2/Zalando_256_192
+    txt_name: test_pairs_front_list_shuffle_0508.txt
     is_train: False
+    use_labels: true
+    xflip: False
     num_workers: 0
     batch_size: 1
     test_count: 16
-    preprocess:
-      - name: LoadImageFromFile
-        key: src
-      - name: LoadImageFromFile
-        key: ref
-      - name: Transforms
-        input_keys: [src, ref]
-        pipeline:
-          - name: Resize
-            size: [*IMAGE_SIZE, *IMAGE_SIZE]
-            interpolation: 'bicubic' #cv2.INTER_CUBIC
-            keys: [image, image]
-          - name: Transpose
-            keys: [image, image]
-          - name: Normalize
-            mean: [127.5, 127.5, 127.5]
-            std: [127.5, 127.5, 127.5]
-            keys: [image, image]
+    preprocess: None
 
 lr_scheduler:
   name: LinearDecay

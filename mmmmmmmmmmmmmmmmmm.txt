@@ -3,6 +3,10 @@
 
 ======================== PastaGAN ========================
 
+暂时没看
+def normalize(self, upper_img, lower_img, upper_clothes_mask, lower_clothes_mask,
+方法里做了什么
+
 
 # 解压mpv3d数据集
 cd ~/w*
@@ -37,7 +41,7 @@ python tools/main.py -c configs/pastagan_mpv3d.yaml --evaluate-only --load outpu
 
 python tools/main.py -c configs/pastagan_256_mpv3d.yaml --evaluate-only --load G_ema_256.pdparams
 
-
+python tools/main.py -c configs/starganv2_afhq.yaml --evaluate-only --load starganv2_afhq.pdparams
 
 
 

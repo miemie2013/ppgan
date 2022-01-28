@@ -1,0 +1,739 @@
+# code was heavily based on https://github.com/clovaai/stargan-v2
+# Users should be careful about adopting these functions in any commercial matters.
+# https://github.com/clovaai/stargan-v2#license
+import PIL
+import cv2
+import json
+import math
+from skimage.draw import ellipse
+import pycocotools.mask as maskUtils
+import paddle
+from .base_dataset import BaseDataset
+from .builder import DATASETS
+import os
+from itertools import chain
+from pathlib import Path
+import traceback
+import random
+import numpy as np
+from PIL import Image
+
+from paddle.io import Dataset, WeightedRandomSampler
+
+kptcolors = [[255, 0, 0], [255, 85, 0], [255, 170, 0], [255, 255, 0], [170, 255, 0], [85, 255, 0],
+          [0, 255, 0], \
+          [0, 255, 85], [0, 255, 170], [0, 255, 255], [0, 170, 255], [0, 85, 255], [0, 0, 255],
+          [85, 0, 255], \
+          [170, 0, 255], [255, 0, 255], [255, 0, 170], [255, 0, 85],[255, 0, 0]]
+
+limbseq = [[2, 3], [2, 6], [3, 4], [4, 5], [6, 7], [7, 8], [2, 9], [9, 10], \
+           [10, 11], [2, 12], [12, 13], [13, 14], [2, 1], [1, 15], [15, 17], \
+           [1, 16], [16, 18], [3, 17], [6, 18]]
+
+
+def listdir(dname):
+    # targets = ['png', 'jpg', 'jpeg', 'JPG']
+    targets = ['png', 'jpg', 'jpeg']   # 为了去重
+    fnames = list(
+        chain(*[
+            list(Path(dname).rglob('*.' + ext))
+            for ext in targets
+        ]))
+    # 这里是咩酱加上的代码，windows系统下'jpg'和'JPG'后缀的图片重复，所以去重。
+    # fnames2 = []
+    # for i, fn in enumerate(fnames):
+    #     if fn not in fnames2:
+    #         fnames2.append(fn)
+    # fnames = fnames2
+    return fnames
+
+
+def _make_balanced_sampler(labels):
+    class_counts = np.bincount(labels)
+    class_weights = 1. / class_counts
+    weights = class_weights[labels]
+    return WeightedRandomSampler(weights, len(weights))
+
+
+class ImageFolder(Dataset):
+    def __init__(self, root, use_sampler=False):
+        self.samples, self.targets = self._make_dataset(root)
+        self.use_sampler = use_sampler
+        if self.use_sampler:
+            self.sampler = _make_balanced_sampler(self.targets)
+            self.iter_sampler = iter(self.sampler)
+
+    def _make_dataset(self, root):
+        domains = os.listdir(root)
+        fnames, labels = [], []
+        for idx, domain in enumerate(sorted(domains)):
+            class_dir = os.path.join(root, domain)
+            cls_fnames = listdir(class_dir)
+            fnames += cls_fnames
+            labels += [idx] * len(cls_fnames)
+        # indexes = [i for i in range(len(fnames))]
+        # np.random.shuffle(indexes)
+        # fnames2, labels2 = [], []
+        # for i in indexes:
+        #     fnames2.append(fnames[i])
+        #     labels2.append(labels[i])
+        return fnames, labels
+        # return fnames2, labels2
+
+    def __getitem__(self, i):
+        if self.use_sampler:
+            try:
+                index = next(self.iter_sampler)
+            except StopIteration:
+                self.iter_sampler = iter(self.sampler)
+                index = next(self.iter_sampler)
+        else:
+            index = i
+        fname = self.samples[index]
+        label = self.targets[index]
+        return fname, label
+
+    def __len__(self):
+        return len(self.targets)
+
+
+class ReferenceDataset(Dataset):
+    def __init__(self, root, use_sampler=None):
+        self.samples, self.targets = self._make_dataset(root)
+        self.use_sampler = use_sampler
+        if self.use_sampler:
+            self.sampler = _make_balanced_sampler(self.targets)
+            self.iter_sampler = iter(self.sampler)
+
+    def _make_dataset(self, root):
+        domains = os.listdir(root)
+        fnames, fnames2, labels = [], [], []
+        for idx, domain in enumerate(sorted(domains)):
+            class_dir = os.path.join(root, domain)
+            cls_fnames = listdir(class_dir)
+            fnames += cls_fnames
+            fnames2 += random.sample(cls_fnames, len(cls_fnames))
+            labels += [idx] * len(cls_fnames)
+        return list(zip(fnames, fnames2)), labels
+
+    def __getitem__(self, i):
+        if self.use_sampler:
+            try:
+                index = next(self.iter_sampler)
+            except StopIteration:
+                self.iter_sampler = iter(self.sampler)
+                index = next(self.iter_sampler)
+        else:
+            index = i
+        fname, fname2 = self.samples[index]
+        label = self.targets[index]
+        return fname, fname2, label
+
+    def __len__(self):
+        return len(self.targets)
+
+
+@DATASETS.register()
+class PastaGANDataset(BaseDataset):
+    """
+    """
+    def __init__(self, dataroot, txt_name, is_train, preprocess, test_count=0, resolution=None,
+                 max_size=None, use_labels=False, xflip=False, random_seed=0):
+        """Initialize single dataset class.
+
+        Args:
+            dataroot (str): Directory of dataset.
+            preprocess (list[dict]): A sequence of data preprocess config.
+        """
+        super(PastaGANDataset, self).__init__(preprocess)
+        self.test_count = test_count
+
+        self.dataroot = dataroot
+        self.txt_name = txt_name
+        self.is_train = is_train
+
+        self.image_fnames = []     # 人物图片的路径（txt注解文件第0列）
+        self.kpt_fnames = []       # 人物关键点文件的路径（txt注解文件第0列）
+        self.parsing_fnames = []   # 人物语义分割图的路径（txt注解文件第0列）
+
+        self.clothes_image_fnames = []     # 衣服图片的路径（txt注解文件第1列）
+        self.clothes_kpt_fnames = []       # 衣服关键点文件的路径（txt注解文件第1列）
+        self.clothes_parsing_fnames = []   # 衣服语义分割图的路径（txt注解文件第1列）
+
+        if self.is_train:
+            self.src_loader = ImageFolder(self.dataroot, use_sampler=True)
+            self.ref_loader = ReferenceDataset(self.dataroot, use_sampler=True)
+            self.counts = len(self.src_loader)
+        else:
+            txt_path = os.path.join(self.dataroot, txt_name)
+            with open(txt_path, 'r') as f:
+                for line in f.readlines():
+                    person, clothes = line.strip().split()
+
+                    # 人物（txt注解文件第0列）
+                    self.image_fnames.append(os.path.join(self.dataroot, 'image', person))
+                    self.kpt_fnames.append(
+                        os.path.join(self.dataroot, 'keypoints', person.replace('.jpg', '_keypoints.json')))
+                    self.parsing_fnames.append(
+                        os.path.join(self.dataroot, 'parsing', person.replace('.jpg', '_label.png')))
+
+                    # 衣服（txt注解文件第1列）
+                    self.clothes_image_fnames.append(os.path.join(self.dataroot, 'image', clothes))
+                    self.clothes_kpt_fnames.append(
+                        os.path.join(self.dataroot, 'keypoints', clothes.replace('.jpg', '_keypoints.json')))
+                    self.clothes_parsing_fnames.append(
+                        os.path.join(self.dataroot, 'parsing', clothes.replace('.jpg', '_label.png')))
+
+            self.vis_index = list(range(64))  # vis_index
+
+            PIL.Image.init()
+            if len(self.image_fnames) == 0:
+                raise IOError('No image files found in the specified path')
+
+            name = os.path.splitext(os.path.basename(self.dataroot))[0]
+            im_shape = list((self.load_image(0))[0].shape)
+            raw_shape = [len(self.image_fnames)] + [im_shape[2], im_shape[0], im_shape[1]]
+            if resolution is not None and (raw_shape[2] != resolution or raw_shape[3] != resolution):
+                raise IOError('Image files do not match the specified resolution')
+
+            # 父类
+            # super().__init__(name=name, raw_shape=raw_shape, **super_kwargs)
+            self.name = name
+            self.raw_shape = list(raw_shape)
+            self.use_labels = use_labels
+            self.raw_labels = None
+            self.label_shape = None
+
+            # Apply max_size.
+            self.raw_idx = np.arange(self.raw_shape[0], dtype=np.int64)
+            if (max_size is not None) and (self.raw_idx.size > max_size):
+                np.random.RandomState(random_seed).shuffle(self.raw_idx)
+                self.raw_idx = np.sort(self.raw_idx[:max_size])
+
+            # Apply xflip.
+            self.xflip = np.zeros(self.raw_idx.size, dtype=np.uint8)
+            if xflip:
+                self.raw_idx = np.tile(self.raw_idx, 2)
+                self.xflip = np.concatenate([self.xflip, np.ones_like(self.xflip)])
+
+    def valid_joints(self, joint):
+        return (joint >= 0.1).all()
+
+    def get_crop(self, keypoints, bpart, order, wh, o_w, o_h, ar=1.0):
+        joints = keypoints
+        bpart_indices = [order.index(b) for b in bpart]
+        part_src = np.float32(joints[bpart_indices][:, :2])
+        # fall backs
+        if not self.valid_joints(joints[bpart_indices][:, 2]):
+            if bpart[0] == "lhip" and bpart[1] == "lknee":      # 鏈塰ip鍏抽敭鐐逛絾鏄病鏈塳nee鍏抽敭鐐?
+                bpart = ["lhip"]
+                bpart_indices = [order.index(b) for b in bpart]
+                part_src = np.float32(joints[bpart_indices][:, :2])
+            elif bpart[0] == "rhip" and bpart[1] == "rknee":    #銆€宸﹁竟鍚岢�悄1�7
+                bpart = ["rhip"]
+                bpart_indices = [order.index(b) for b in bpart]
+                part_src = np.float32(joints[bpart_indices][:, :2])
+            elif bpart[0] == "lknee" and bpart[1] == "lankle":
+                bpart = ["lknee"]
+                bpart_indices = [order.index(b) for b in bpart]
+                part_src = np.float32(joints[bpart_indices][:, :2])
+            elif bpart[0] == "rknee" and bpart[1] == "rankle":
+                bpart = ["rknee"]
+                bpart_indices = [order.index(b) for b in bpart]
+                part_src = np.float32(joints[bpart_indices][:, :2])
+            elif bpart[0] == "lshoulder" and bpart[1] == "rshoulder" and bpart[2] == "cnose": # 娌℃湁宸﹁偐鍙宠偄1�7,榧诲瓙杩欑粍鍖哄煄1�7
+                bpart = ["lshoulder", "rshoulder", "rshoulder"]
+                bpart_indices = [order.index(b) for b in bpart]
+                part_src = np.float32(joints[bpart_indices][:, :2])
+
+        if not self.valid_joints(joints[bpart_indices][:, 2]):
+                return None, None
+        # part_src[:, 0] = part_src[:, 0] + 32                    # correct axis by adding pad size
+
+        if part_src.shape[0] == 1:
+            # leg fallback
+            a = part_src[0]
+            b = np.float32([a[0], o_h - 1])
+            part_src = np.float32([a, b])
+
+        if part_src.shape[0] == 4:
+            pass
+        elif part_src.shape[0] == 3:
+            # lshoulder, rshoulder, cnose
+            if bpart == ["lshoulder", "rshoulder", "rshoulder"]:
+                segment = part_src[1] - part_src[0]
+                normal = np.array([-segment[1], segment[0]])
+                if normal[1] > 0.0:
+                    normal = -normal
+
+                a = part_src[0] + normal
+                b = part_src[0]
+                c = part_src[1]
+                d = part_src[1] + normal
+                part_src = np.float32([a, b, c, d])
+            else:
+                assert bpart == ["lshoulder", "rshoulder", "cnose"]
+                neck = 0.5*(part_src[0] + part_src[1])
+                neck_to_nose = part_src[2] - neck
+                part_src = np.float32([neck + 2*neck_to_nose, neck])
+
+                # segment box
+                segment = part_src[1] - part_src[0]
+                normal = np.array([-segment[1], segment[0]])
+                alpha = 1.0 / 2.0
+                a = part_src[0] + alpha*normal
+                b = part_src[0] - alpha*normal
+                c = part_src[1] - alpha*normal
+                d = part_src[1] + alpha*normal
+                part_src = np.float32([b, c, d, a])
+        else:
+            assert part_src.shape[0] == 2
+
+            segment = part_src[1] - part_src[0]
+            normal = np.array([-segment[1], segment[0]])
+            alpha = ar / 2.0
+            a = part_src[0] + alpha*normal
+            b = part_src[0] - alpha*normal
+            c = part_src[1] - alpha*normal
+            d = part_src[1] + alpha*normal
+            part_src = np.float32([a, b, c, d])
+
+        dst = np.float32([[0., 0.], [0., 1.], [1., 1.], [1., 0.]])
+        part_dst = np.float32(wh * dst)
+
+        M = cv2.getPerspectiveTransform(part_src, part_dst)
+        M_inv = cv2.getPerspectiveTransform(part_dst, part_src)
+        return M, M_inv
+
+    def normalize(self, upper_img, lower_img, upper_clothes_mask, lower_clothes_mask,
+                  upper_pose, lower_pose, upper_keypoints, lower_keypoints, box_factor):
+
+        '''
+        upper_img            [256, 256, 3]    被扒者上衣的图片
+        lower_img            [256, 256, 3]    试穿者下装（裤子、裙子等）的图片
+        upper_clothes_mask   [256, 256, 3]    被扒者上衣的掩码
+        lower_clothes_mask   [256, 256, 3]    试穿者下装（裤子、裙子等）的掩码
+        upper_pose           [256, 256, 3]    被扒者骨骼图
+        lower_pose           [256, 256, 3]    试穿者骨骼图
+        upper_keypoints      [18, 3]    被扒者关键点
+        lower_keypoints      [18, 3]    试穿者关键点
+        box_factor           int        图片宽高缩小为原来的1/(2^box_factor)
+        Return:
+        norm_img             xxxxxxxxxxx
+        norm_pose            xxxxxxxxxxx
+        denorm_upper_img     xxxxxxxxxxx
+        denorm_lower_img     xxxxxxxxxxx
+        '''
+
+        h, w = upper_img.shape[:2]
+        o_h, o_w = h, w
+        h = h // 2 ** box_factor
+        w = w // 2 ** box_factor
+        wh = np.array([w, h])
+        wh = np.expand_dims(wh, 0)
+
+        bparts = [
+            ["lshoulder", "lhip", "rhip", "rshoulder"],
+            ["lshoulder", "rshoulder", "cnose"],
+            ["lshoulder", "lelbow"],
+            ["lelbow", "lwrist"],
+            ["rshoulder", "relbow"],
+            ["relbow", "rwrist"],
+            ["lhip", "lknee"],
+            ["lknee", "lankle"],
+            ["rhip", "rknee"],
+            ["rknee", "rankle"]]
+
+        order = ['cnose', 'cneck', 'rshoulder', 'relbow', 'rwrist', 'lshoulder',
+                 'lelbow', 'lwrist', 'rhip', 'rknee', 'rankle', 'lhip', 'lknee',
+                 'lankle', 'reye', 'leye', 'rear', 'lear']
+        ar = 0.5
+
+        part_imgs = list()
+        part_stickmen = list()
+
+        denorm_upper_img = np.zeros_like(upper_img)   # [256, 256, 3]
+        denorm_lower_img = np.zeros_like(upper_img)   # [256, 256, 3]
+        kernel = np.ones((5, 5), np.uint8)
+
+        for ii, bpart in enumerate(bparts):
+            part_img = np.zeros((h, w, 3)).astype(np.uint8)
+            part_stickman = np.zeros((h, w, 3)).astype(np.uint8)
+            part_clothes_mask = np.zeros((h, w, 3)).astype(np.uint8)
+
+            upper_M, _ = self.get_crop(upper_keypoints, bpart, order, wh, o_w, o_h, ar)
+            lower_M, lower_M_inv = self.get_crop(lower_keypoints, bpart, order, wh, o_w, o_h, ar)
+
+            if ii < 6:
+                if upper_M is not None:
+                    part_img = cv2.warpPerspective(upper_img, upper_M, (w, h), borderMode=cv2.BORDER_REPLICATE)
+                    part_stickman = cv2.warpPerspective(upper_pose, upper_M, (w, h), borderMode=cv2.BORDER_REPLICATE)
+                    part_clothes_mask = cv2.warpPerspective(upper_clothes_mask, upper_M, (w, h),
+                                                            borderMode=cv2.BORDER_REPLICATE)
+            else:
+                if lower_M is not None:
+                    part_img = cv2.warpPerspective(lower_img, lower_M, (w, h), borderMode=cv2.BORDER_REPLICATE)
+                    part_stickman = cv2.warpPerspective(lower_pose, lower_M, (w, h), borderMode=cv2.BORDER_REPLICATE)
+                    part_clothes_mask = cv2.warpPerspective(lower_clothes_mask, lower_M, (w, h),
+                                                            borderMode=cv2.BORDER_REPLICATE)
+
+            if lower_M_inv is not None:
+                denorm_patch = cv2.warpPerspective(part_img, lower_M_inv, (o_w, o_h), borderMode=cv2.BORDER_CONSTANT)
+                denorm_clothes_mask_patch = cv2.warpPerspective(part_clothes_mask, lower_M_inv, (o_w, o_h),
+                                                                borderMode=cv2.BORDER_CONSTANT)
+                if ii < 6:
+                    denorm_clothes_mask_patch = cv2.erode(denorm_clothes_mask_patch, kernel, iterations=1)
+                denorm_clothes_mask_patch = denorm_clothes_mask_patch[..., 0:1]
+                denorm_clothes_mask_patch = (denorm_clothes_mask_patch == 255).astype(np.uint8)
+
+                if ii < 6:
+                    denorm_upper_img = denorm_patch * denorm_clothes_mask_patch + denorm_upper_img * (
+                                1 - denorm_clothes_mask_patch)
+                else:
+                    denorm_lower_img = denorm_patch * denorm_clothes_mask_patch + denorm_lower_img * (
+                                1 - denorm_clothes_mask_patch)
+
+            part_imgs.append(part_img)
+            part_stickmen.append(part_stickman)
+
+        img = np.concatenate(part_imgs, axis=2)
+        stickman = np.concatenate(part_stickmen, axis=2)
+
+        return img, stickman, denorm_upper_img, denorm_lower_img
+
+    def draw_pose_from_cords(self, pose_joints, img_size, affine_matrix=None,
+                             coeffs=None, radius=2, draw_joints=True):
+        colors = np.zeros(shape=img_size + (3,), dtype=np.uint8)
+        # mask = np.zeros(shape=img_size, dtype=np.uint8)
+        if draw_joints:
+            for i, p in enumerate(limbseq):
+                f, t = p[0] - 1, p[1] - 1
+                from_missing = pose_joints[f][2] < 0.1  # 咩酱：关键点的置信度太低时，跳过画骨骼线
+                to_missing = pose_joints[t][2] < 0.1    # 咩酱：关键点的置信度太低时，跳过画骨骼线
+                if from_missing or to_missing:
+                    continue
+                if not affine_matrix is None:
+                    pf = np.dot(affine_matrix, np.matrix([pose_joints[f][0], pose_joints[f][1], 1]).reshape(3, 1))
+                    pt = np.dot(affine_matrix, np.matrix([pose_joints[t][0], pose_joints[t][1], 1]).reshape(3, 1))
+                else:
+                    pf = pose_joints[f][0], pose_joints[f][1]
+                    pt = pose_joints[t][0], pose_joints[t][1]
+                fx, fy = pf[1], pf[0]  # max(pf[1], 0), max(pf[0], 0)
+                tx, ty = pt[1], pt[0]  # max(pt[1], 0), max(pt[0], 0)
+                fx, fy = int(fx), int(fy)  # int(min(fx, 255)), int(min(fy, 191))
+                tx, ty = int(tx), int(ty)  # int(min(tx, 255)), int(min(ty, 191))
+                # xx, yy, val = line_aa(fx, fy, tx, ty)
+                # colors[xx, yy] = np.expand_dims(val, 1) * kptcolors[i] # 255
+                cv2.line(colors, (fy, fx), (ty, tx), kptcolors[i], 2)
+                # mask[xx, yy] = 255
+
+        for i, joint in enumerate(pose_joints):
+            if pose_joints[i][2] < 0.1:  # 咩酱：关键点的置信度太低时，跳过画关键点
+                continue
+            if not affine_matrix is None:
+                pj = np.dot(affine_matrix, np.matrix([joint[0], joint[1], 1]).reshape(3, 1))
+            else:
+                pj = joint[0], joint[1]
+            x, y = int(pj[1]), int(pj[0])  # int(min(pj[1], 255)), int(min(pj[0], 191))
+            # 关键点处画实心圆（椭圆）
+            xx, yy = ellipse(x, y, r_radius=radius, c_radius=radius, shape=img_size)
+            colors[xx, yy] = kptcolors[i]
+            # mask[xx, yy] = 255
+
+        # colors = colors * 1./255
+        # mask = mask * 1./255
+
+        return colors
+
+    def get_joints(self, keypoints_path, h, w, affine_matrix=None, coeffs=None):
+        with open(keypoints_path, 'r') as f:
+            keypoints_data = json.load(f)
+        if len(keypoints_data['people']) == 0:
+            keypoints = np.zeros((18,3))
+        else:
+            keypoints = np.array(keypoints_data['people'][0]['pose_keypoints_2d']).reshape(-1,3)
+        # joints = self.kp_to_map(img_sz=(192,256), kps=keypoints)
+        color_joint = self.draw_pose_from_cords(keypoints, (h, w), affine_matrix, coeffs)
+        return color_joint, keypoints
+
+    def get_mask_from_kps(self, kps, img_h, img_w):
+        rles = maskUtils.frPyObjects(kps, img_h, img_w)
+        rle = maskUtils.merge(rles)
+        mask = maskUtils.decode(rle)[..., np.newaxis].astype(np.float32)
+        mask = mask * 255.0
+        return mask
+
+    def get_rectangle_mask(self, a, b, c, d, img_h, img_w):
+        x1, y1 = a + (b - d) / 4, b + (c - a) / 4
+        x2, y2 = a - (b - d) / 4, b - (c - a) / 4
+
+        x3, y3 = c + (b - d) / 4, d + (c - a) / 4
+        x4, y4 = c - (b - d) / 4, d - (c - a) / 4
+
+        kps = [x1, y1, x2, y2]
+
+        v0_x, v0_y = c - a, d - b
+        v1_x, v1_y = x3 - x1, y3 - y1
+        v2_x, v2_y = x4 - x1, y4 - y1
+
+        cos1 = (v0_x * v1_x + v0_y * v1_y) / (
+                    math.sqrt(v0_x * v0_x + v0_y * v0_y) * math.sqrt(v1_x * v1_x + v1_y * v1_y))
+        cos2 = (v0_x * v2_x + v0_y * v2_y) / (
+                    math.sqrt(v0_x * v0_x + v0_y * v0_y) * math.sqrt(v2_x * v2_x + v2_y * v2_y))
+
+        if cos1 < cos2:
+            kps.extend([x3, y3, x4, y4])
+        else:
+            kps.extend([x4, y4, x3, y3])
+
+        kps = np.array(kps).reshape(1, -1).tolist()
+        mask = self.get_mask_from_kps(kps, img_h=img_h, img_w=img_w)
+
+        return mask
+
+    def get_hand_mask(self, hand_keypoints, h, w):
+        s_x, s_y, s_c = hand_keypoints[0]  # 咩酱：肩的x坐标、y坐标、置信度
+        e_x, e_y, e_c = hand_keypoints[1]  # 咩酱：肘的x坐标、y坐标、置信度
+        w_x, w_y, w_c = hand_keypoints[2]  # 咩酱：手的x坐标、y坐标、置信度
+
+        up_mask = np.ones((h, w, 1), dtype=np.float32)
+        bottom_mask = np.ones((h, w, 1), dtype=np.float32)
+        if s_c > 0.1 and e_c > 0.1:  # 咩酱：肩和肘的置信度够高时，
+            up_mask = self.get_rectangle_mask(s_x, s_y, e_x, e_y, h, w)
+            # 对手臂的上半部分进行膨胀操作，消除两部分之间的空隙
+            if h == 256:
+                kernel = np.ones((25, 25), np.uint8)
+            elif h == 512:
+                kernel = np.ones((35, 35), np.uint8)
+            else:
+                raise NotImplementedError("h \'{}\' is not implemented.".format(h))
+            up_mask = cv2.dilate(up_mask, kernel, iterations=1)
+            up_mask = (up_mask > 0).astype(np.float32)[..., np.newaxis]
+        if e_c > 0.1 and w_c > 0.1:  # 咩酱：肘和手的置信度够高时，跳过画骨骼线
+            bottom_mask = self.get_rectangle_mask(e_x, e_y, w_x, w_y, h, w)
+            # 对手臂的下半部分进行膨胀操作，消除两部分之间的空隙
+            if h == 256:
+                kernel = np.ones((15, 15), np.uint8)
+            elif h == 512:
+                kernel = np.ones((20, 20), np.uint8)
+            else:
+                raise NotImplementedError("h \'{}\' is not implemented.".format(h))
+            bottom_mask = cv2.dilate(bottom_mask, kernel, iterations=1)
+            bottom_mask = (bottom_mask > 0).astype(np.float32)[..., np.newaxis]
+
+        return up_mask, bottom_mask
+
+
+    def get_palm_mask(self, hand_mask, hand_up_mask, hand_bottom_mask):
+        inter_up_mask = ((hand_mask + hand_up_mask) == 2).astype(np.float32)
+        hand_mask = hand_mask - inter_up_mask
+        inter_bottom_mask = ((hand_mask+hand_bottom_mask) == 2).astype(np.float32)
+        palm_mask = hand_mask - inter_bottom_mask
+
+        return palm_mask
+
+    def get_palm(self, keypoints, parsing, h, w):
+        left_hand_keypoints = keypoints[[5, 6, 7], :].copy()   # 咩酱：左臂的关键点
+        right_hand_keypoints = keypoints[[2, 3, 4], :].copy()  # 咩酱：右臂的关键点
+
+        left_hand_up_mask, left_hand_botton_mask = self.get_hand_mask(left_hand_keypoints, h, w)
+        right_hand_up_mask, right_hand_botton_mask = self.get_hand_mask(right_hand_keypoints, h, w)
+
+        # 可视化。根据关键点获得：左手臂上半部分掩码、左手臂下半部分掩码、右手臂上半部分掩码、右手臂下半部分掩码。
+        # cv2.imwrite('left_hand_up_mask.jpg', left_hand_up_mask * 255)
+        # cv2.imwrite('left_hand_botton_mask.jpg', left_hand_botton_mask * 255)
+        # cv2.imwrite('right_hand_up_mask.jpg', right_hand_up_mask * 255)
+        # cv2.imwrite('right_hand_botton_mask.jpg', right_hand_botton_mask * 255)
+
+        # mask refined by parsing
+        left_hand_mask = (parsing == 14).astype(np.float32)
+        right_hand_mask = (parsing == 15).astype(np.float32)
+
+        # 可视化。语义分割图中：左手臂掩码、右手臂掩码。
+        # cv2.imwrite('left_hand_mask.jpg', left_hand_mask * 255)
+        # cv2.imwrite('right_hand_mask.jpg', right_hand_mask * 255)
+
+        # 获得左手掌的掩码
+        left_palm_mask = self.get_palm_mask(left_hand_mask, left_hand_up_mask, left_hand_botton_mask)
+        # 获得右手掌的掩码
+        right_palm_mask = self.get_palm_mask(right_hand_mask, right_hand_up_mask, right_hand_botton_mask)
+        # 获得左右手掌的掩码
+        palm_mask = ((left_palm_mask + right_palm_mask) > 0).astype(np.uint8)
+        # 可视化。左右手掌的掩码。
+        # cv2.imwrite('palm_mask.jpg', palm_mask * 255)
+
+        return palm_mask
+
+    def load_image(self, raw_idx):
+        # load images --> range [0, 255]
+
+        # ==================== txt文件第0列，试穿者 ====================
+        fname = self.image_fnames[raw_idx]
+        person_name = fname
+        self.image = cv2.imread(fname)
+        src_img = np.copy(self.image)
+        self.image = cv2.cvtColor(self.image, cv2.COLOR_BGR2RGB)
+
+        im_shape = self.image.shape
+        # padding to same size
+        h, w = im_shape[0], im_shape[1]
+        left_padding = (h - w) // 2
+        right_padding = h - w - left_padding
+
+        image = np.pad(self.image, ((0, 0), (left_padding, right_padding), (0, 0)), 'constant',
+                       constant_values=(255, 255))
+
+        # load keypoints --> range [0, 1]
+        fname = self.kpt_fnames[raw_idx]
+        pose, keypoints = self.get_joints(fname, h, w)  # self.cords_to_map(kpt, im_shape[:2])
+        pose = np.pad(pose, ((0, 0), (left_padding, right_padding), (0, 0)), 'constant', constant_values=(0, 0))
+        keypoints[:, 0] += left_padding  # 咩酱：x坐标加上left_padding
+
+        # 语义分割图
+        # load upper_cloth and lower body
+        fname = self.parsing_fnames[raw_idx]
+        parsing = cv2.imread(fname)[..., 0:1]
+        parsing = np.pad(parsing, ((0, 0), (left_padding, right_padding), (0, 0)), 'constant', constant_values=(0, 0))  # [h, w=h, 1]
+
+        # 左右手掌的掩码
+        palm_mask = self.get_palm(keypoints, parsing, h, h)  # [h, w=h, 1]
+        # 头的掩码
+        head_mask = (parsing == 1).astype(np.uint8) + (parsing == 4).astype(np.uint8) + \
+                    (parsing == 2).astype(np.uint8) + (parsing == 13).astype(np.uint8)
+        # 左右鞋的掩码
+        shoes_mask = (parsing == 18).astype(np.uint8) + (parsing == 19).astype(np.uint8)
+        # 下装（裤子、裙子等）的掩码
+        lower_clothes_mask = (parsing == 9).astype(np.uint8) + (parsing == 12).astype(np.uint8) + \
+                             (parsing == 6).astype(np.uint8)
+        # 下装（裤子、裙子等）的图片
+        lower_clothes_image = lower_clothes_mask * image
+
+        # 手掌、头、鞋的图片
+        image = image * (palm_mask + head_mask + shoes_mask)
+
+        # ==================== txt文件第1列，从这个人身上扒衣服 ====================
+        fname = self.clothes_image_fnames[raw_idx]
+        clothes_name = fname
+        self.clothes = cv2.imread(fname)
+        trg_img = np.copy(self.clothes)
+        self.clothes = cv2.cvtColor(self.clothes, cv2.COLOR_BGR2RGB)
+        clothes = np.pad(self.clothes, ((0, 0), (left_padding, right_padding), (0, 0)), 'constant',
+                         constant_values=(255, 255))
+
+        fname = self.clothes_kpt_fnames[raw_idx]
+        clothes_pose, clothes_keypoints = self.get_joints(fname, h, w)  # self.cords_to_map(kpt, im_shape[:2])
+        clothes_pose = np.pad(clothes_pose, ((0, 0), (left_padding, right_padding), (0, 0)), 'constant',
+                              constant_values=(0, 0))
+        clothes_keypoints[:, 0] += left_padding
+
+        # 被扒者语义分割图
+        fname = self.clothes_parsing_fnames[raw_idx]
+        clothes_parsing = cv2.imread(fname)[..., 0:1]
+        clothes_parsing = np.pad(clothes_parsing, ((0, 0), (left_padding, right_padding), (0, 0)), 'constant',
+                                 constant_values=(0, 0))
+
+        # 被扒者上衣的掩码
+        upper_clothes_mask = (clothes_parsing == 5).astype(np.uint8) + (clothes_parsing == 6).astype(np.uint8) + \
+                             (clothes_parsing == 7).astype(np.uint8)
+        # 被扒者上衣的图片
+        upper_clothes_image = upper_clothes_mask * clothes
+
+        # 被扒者上衣的掩码
+        upper_clothes_mask_rgb = np.concatenate([upper_clothes_mask, upper_clothes_mask, upper_clothes_mask], axis=2)
+        # 试穿者下装（裤子、裙子等）的掩码
+        lower_clothes_mask_rgb = np.concatenate([lower_clothes_mask, lower_clothes_mask, lower_clothes_mask], axis=2)
+        upper_clothes_mask_rgb = upper_clothes_mask_rgb * 255
+        lower_clothes_mask_rgb = lower_clothes_mask_rgb * 255
+
+        # 被扒者骨骼图
+        upper_pose = clothes_pose
+        # 试穿者骨骼图
+        lower_pose = pose
+        # 被扒者关键点
+        upper_keypoints = clothes_keypoints
+        # 试穿者关键点
+        lower_keypoints = keypoints
+
+        '''
+        upper_clothes_image     [256, 256, 3]    被扒者上衣的图片
+        lower_clothes_image     [256, 256, 3]    试穿者下装（裤子、裙子等）的图片
+        upper_clothes_mask_rgb  [256, 256, 3]    被扒者上衣的掩码
+        lower_clothes_mask_rgb  [256, 256, 3]    试穿者下装（裤子、裙子等）的掩码
+        upper_pose              [256, 256, 3]    被扒者骨骼图
+        lower_pose              [256, 256, 3]    试穿者骨骼图
+        upper_keypoints         [18, 3]    被扒者关键点
+        lower_keypoints         [18, 3]    试穿者关键点
+        box_factor              int        图片宽高缩小为原来的1/(2^box_factor)
+        Return:
+        norm_img             [64, 64, 30]
+        norm_pose            [64, 64, 30]
+        denorm_upper_img     [256, 256, 3]   被扒者上衣的图片（经过加工变形）
+        denorm_lower_img     [256, 256, 3]   试穿者下装（裤子、裙子等）的图片（经过加工变形）
+        '''
+        norm_img, norm_pose, denorm_upper_img, denorm_lower_img = self.normalize(upper_clothes_image,
+                                                                                 lower_clothes_image,
+                                                                                 upper_clothes_mask_rgb,
+                                                                                 lower_clothes_mask_rgb,
+                                                                                 upper_pose, lower_pose,
+                                                                                 upper_keypoints, lower_keypoints, 2)
+
+        # 可视化。根据关键点获得：左手臂上半部分掩码、左手臂下半部分掩码、右手臂上半部分掩码、右手臂下半部分掩码。
+        # cv2.imwrite('denorm_upper_img.jpg', cv2.cvtColor(denorm_upper_img, cv2.COLOR_RGB2BGR))
+        # cv2.imwrite('denorm_lower_img.jpg', cv2.cvtColor(denorm_lower_img, cv2.COLOR_RGB2BGR))
+
+        person_name = person_name.split('\\')[-1]
+        clothes_name = clothes_name.split('\\')[-1]
+        return image, pose, norm_img, norm_pose, denorm_upper_img, denorm_lower_img, person_name, clothes_name, src_img, trg_img
+
+    def __getitem__(self, idx):
+        if self.is_train:
+            pass
+        else:
+            image, pose, norm_img, norm_pose, denorm_upper_img, denorm_lower_img, person_name, clothes_name, src_img, trg_img = self.load_image(self.raw_idx[idx])
+
+            image = image.transpose(2, 0, 1)  # HWC => CHW
+            pose = pose.transpose(2, 0, 1)    # HWC => CHW
+            norm_img = norm_img.transpose(2, 0, 1)
+            norm_pose = norm_pose.transpose(2, 0, 1)
+            denorm_upper_img = denorm_upper_img.transpose(2, 0, 1)
+            denorm_lower_img = denorm_lower_img.transpose(2, 0, 1)
+
+            # concat the pose and img since they often binded together
+            norm_img = np.concatenate((norm_img, norm_pose), axis=0)
+
+            denorm_upper_mask = (np.sum(denorm_upper_img, axis=0, keepdims=True) > 0).astype(np.uint8)
+            denorm_lower_mask = (np.sum(denorm_lower_img, axis=0, keepdims=True) > 0).astype(np.uint8)
+
+            assert isinstance(image, np.ndarray)
+            assert list(image.shape) == self.image_shape
+            assert image.dtype == np.uint8
+
+            datas = {
+                'image': image.copy(),
+                'pose': pose.copy(),
+                'norm_img': norm_img.copy(),
+                'denorm_upper_img': denorm_upper_img.copy(),
+                'denorm_lower_img': denorm_lower_img.copy(),
+                'denorm_upper_mask': denorm_upper_mask.copy(),
+                'denorm_lower_mask': denorm_lower_mask.copy(),
+                'person_name': person_name,
+                'clothes_name': clothes_name,
+                'src_img': src_img,
+                'trg_img': trg_img,
+            }
+            return datas
+
+    @property
+    def image_shape(self):
+        return list(self.raw_shape[1:])
+
+    def __len__(self):
+        size = self.raw_idx.size
+        if self.is_train:
+            pass
+        else:
+            size = min(self.test_count, size)
+        return size
+
+    def prepare_data_infos(self, dataroot):
+        pass
