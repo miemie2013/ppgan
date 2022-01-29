@@ -182,6 +182,8 @@ class PastaGANModel(BaseModel):
         const_encoding=None,
         style_encoding=None,
         discriminator=None,
+        G_reg_interval=4,
+        D_reg_interval=16,
         latent_dim=16,
         lambda_reg=1,
         lambda_sty=1,
@@ -214,6 +216,10 @@ class PastaGANModel(BaseModel):
         # remember the initial value of ds weight
         # self.initial_lambda_ds = self.lambda_ds
 
+        self.phases = []
+        self.z_dim = self.nets['mapping'].z_dim
+        print()
+
     def setup_input(self, input):
         """Unpack input data from the dataloader and perform necessary pre-processing steps.
 
@@ -233,7 +239,46 @@ class PastaGANModel(BaseModel):
             optim.clear_gradients()
 
     def train_iter(self, optimizers=None):
-        #TODO
+        phase_real = self.input[0]
+        phase_pose = self.input[1]
+        phase_norm_img = self.input[2]
+        phase_norm_img_lower = self.input[3]
+        phase_denorm_upper_img = self.input[4]
+        phase_denorm_lower_img = self.input[5]
+        phase_gt_parsing = self.input[7]
+        phase_denorm_upper_mask = self.input[8]
+        phase_denorm_lower_mask = self.input[9]
+        phase_retain_mask = self.input[12]
+
+        phase_real_tensor = paddle.cast(phase_real, dtype=paddle.float32) / 127.5 - 1
+        phase_parts_tensor = paddle.cast(phase_norm_img, dtype=paddle.float32) / 127.5 - 1
+        phase_parts_lower_tensor = paddle.cast(phase_norm_img_lower, dtype=paddle.float32) / 127.5 - 1
+        phase_parts_tensor = paddle.concat([phase_parts_tensor, phase_parts_lower_tensor], 1)
+
+        phase_denorm_upper_img_tensor = paddle.cast(phase_denorm_upper_img, dtype=paddle.float32) / 127.5 - 1
+        phase_denorm_lower_img_tensor = paddle.cast(phase_denorm_lower_img, dtype=paddle.float32) / 127.5 - 1
+        phase_denorm_upper_mask_tensor = paddle.cast(phase_denorm_upper_mask, dtype=paddle.float32)
+        phase_denorm_lower_mask_tensor = paddle.cast(phase_denorm_lower_mask, dtype=paddle.float32)
+
+        phase_pose_tensor = paddle.cast(phase_pose, dtype=paddle.float32) / 127.5 - 1
+        phase_head_mask = phase_retain_mask
+        phase_head_tensor = phase_head_mask * phase_real_tensor - (1 - phase_head_mask)
+        phase_pose_tensor = paddle.concat([phase_pose_tensor, phase_head_tensor], 1)
+
+        phase_gt_parsing_tensor = paddle.cast(phase_gt_parsing, dtype=paddle.float32)
+
+        # process head
+        phase_retain_tensor = phase_head_tensor
+
+        phases = self.phases
+        batch_size = phase_real_tensor.shape[0]
+        all_gen_z = paddle.randn([len(phases) * batch_size, self.z_dim])  # 咩酱：训练的4个阶段每个gpu的噪声
+        # all_gen_z = [phase_gen_z.split(batch_gpu) for phase_gen_z in all_gen_z.split(batch_size)]  # 咩酱：训练的4个阶段每个gpu的噪声
+
+        del phase_real      # conserve memory
+        del phase_pose       # conserve memory
+        del phase_head_mask   # conserve memory
+        del phase_gt_parsing  # conserve memory
 
         # x_real [N, 3, 256, 256]
         # y_org  [N, ]  x_real的类别id

@@ -3,14 +3,29 @@
 
 ======================== PastaGAN ========================
 
-暂时没看
+
+1.暂时没看
 def normalize(self, upper_img, lower_img, upper_clothes_mask, lower_clothes_mask,
 方法里做了什么
 
-暂时设置PastaGANDiscriminator的use_fp16 = False
+2.暂时设置PastaGANDiscriminator的use_fp16 = False
 class PastaGANDiscriminator(nn.Layer):
             # use_fp16 = (res >= fp16_resolution)
             use_fp16 = False
+
+3.PastaGAN的优化器的参数需要根据G_reg_interval和D_reg_interval来动态计算。原版计算代码：
+    for name, module, opt_kwargs, reg_interval in [('G', G, G_opt_kwargs, G_reg_interval), ('D', D, D_opt_kwargs, D_reg_interval)]:
+        if reg_interval is None:
+            opt = dnnlib.util.construct_class_by_name(params=module.parameters(), **opt_kwargs) # subclass of torch.optim.Optimizer
+            phases += [dnnlib.EasyDict(name=name+'both', module=module, opt=opt, interval=1)]
+        else: # Lazy regularization.
+            mb_ratio = reg_interval / (reg_interval + 1)
+            opt_kwargs = dnnlib.EasyDict(opt_kwargs)
+            opt_kwargs.lr = opt_kwargs.lr * mb_ratio
+            opt_kwargs.betas = [beta ** mb_ratio for beta in opt_kwargs.betas]
+            opt = dnnlib.util.construct_class_by_name(module.parameters(), **opt_kwargs) # subclass of torch.optim.Optimizer
+
+可以用pasta_gan_cal_optim_canshu.py计算。
 
 
 

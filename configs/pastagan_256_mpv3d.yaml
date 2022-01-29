@@ -4,6 +4,8 @@ output_dir: output_dir
 model:
   name: PastaGANModel
   latent_dim: &LATENT_DIM 16
+  G_reg_interval: 4
+  D_reg_interval: 16
   lambda_sty: 1
   lambda_ds: 2
   lambda_cyc: 1
@@ -92,42 +94,41 @@ lr_scheduler:
   # will get from real dataset
   iters_per_epoch: 365
 
+# miemie2013: optimizer's canshu xuyao genjv G_reg_interval he D_reg_interval lai jisuan. qingkan readme.txt
+#optimizer:
+#  generator:
+#    name: Adam
+#    net_names:
+#      - all
+#    learning_rate: 0.002
+#    beta1: 0.0
+#    beta2: 0.99
+#    epsilon: 1e-8
+#  discriminator:
+#    name: Adam
+#    net_names:
+#      - discriminator
+#    learning_rate: 0.002
+#    beta1: 0.0
+#    beta2: 0.99
+#    epsilon: 1e-8
 optimizer:
-  synthesis:
+  generator:
     name: Adam
     net_names:
-      - synthesis
+      - all
+    learning_rate: 0.0016
     beta1: 0.0
-    beta2: 0.99
-    weight_decay: 0.0001
-  mapping:
-    name: Adam
-    net_names:
-      - mapping
-    beta1: 0.0
-    beta2: 0.99
-    weight_decay: 0.0001
-  const_encoding:
-    name: Adam
-    net_names:
-      - const_encoding
-    beta1: 0.0
-    beta2: 0.99
-    weight_decay: 0.0001
-  style_encoding:
-    name: Adam
-    net_names:
-      - style_encoding
-    beta1: 0.0
-    beta2: 0.99
-    weight_decay: 0.0001
+    beta2: 0.9919919678228657
+    epsilon: 1e-8
   discriminator:
     name: Adam
     net_names:
       - discriminator
+    learning_rate: 0.0018823529411764706
     beta1: 0.0
-    beta2: 0.99
-    weight_decay: 0.0001
+    beta2: 0.9905854573074332
+    epsilon: 1e-8
 
 validate:
   interval: 3000
