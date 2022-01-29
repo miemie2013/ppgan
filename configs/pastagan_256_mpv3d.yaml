@@ -11,11 +11,11 @@ model:
     name: SynthesisNetwork
     w_dim: &W_DIM 512
     img_resolution: &IMAGE_SIZE 256
-    img_channels: &IMAGE_CHS 3
-    channel_base: 16384
-    channel_max: 512
-    num_fp16_res: 3
-    conv_clamp: 256
+    img_channels: &IMG_CHANNELS 3
+    channel_base: &CHANNEL_BASE 16384
+    channel_max: &CHANNEL_MAX 512
+    num_fp16_res: &NUM_FP16_RES 3
+    conv_clamp: &CONV_CLAMP 256
     use_noise: true
   mapping:
     name: MappingNetwork
@@ -38,8 +38,16 @@ model:
     n_downsampling: *N_DOWN
   discriminator:
     name: PastaGANDiscriminator
-    img_size: *IMAGE_SIZE
-    num_domains: *NUM_DOMAINS
+    c_dim: *C_DIM
+    img_resolution: *IMAGE_SIZE
+    img_channels: *IMG_CHANNELS
+    channel_base: *CHANNEL_BASE
+    channel_max: *CHANNEL_MAX
+    num_fp16_res: *NUM_FP16_RES
+    conv_clamp: *CONV_CLAMP
+    block_kwargs: {}
+    mapping_kwargs: {}
+    epilogue_kwargs: {mbstd_group_size: 4}
 
 dataset:
   train:
