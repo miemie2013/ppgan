@@ -55,26 +55,26 @@ dataset:
     preprocess: None
 
   test:
-    name: PastaGANDataset
-    dataroot: ../UPT_256_192_my2/Zalando_256_192
-    txt_name: train_pairs_front_list_0508.txt
-    is_train: True
-    use_labels: true
-    xflip: False
-    num_workers: 0
-    batch_size: 2
-    test_count: -1
-    preprocess: None
 #    name: PastaGANDataset
 #    dataroot: ../UPT_256_192_my2/Zalando_256_192
-#    txt_name: test_pairs_front_list_shuffle_0508.txt
-#    is_train: False
+#    txt_name: train_pairs_front_list_0508.txt
+#    is_train: True
 #    use_labels: true
 #    xflip: False
 #    num_workers: 0
-#    batch_size: 1
-#    test_count: 16
+#    batch_size: 2
+#    test_count: -1
 #    preprocess: None
+    name: PastaGANDataset
+    dataroot: ../UPT_256_192_my2/Zalando_256_192
+    txt_name: test_pairs_front_list_shuffle_0508.txt
+    is_train: False
+    use_labels: true
+    xflip: False
+    num_workers: 0
+    batch_size: 1
+    test_count: 16
+    preprocess: None
 
 lr_scheduler:
   name: LinearDecay
