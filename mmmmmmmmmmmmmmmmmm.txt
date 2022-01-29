@@ -7,6 +7,12 @@
 def normalize(self, upper_img, lower_img, upper_clothes_mask, lower_clothes_mask,
 方法里做了什么
 
+暂时设置PastaGANDiscriminator的use_fp16 = False
+class PastaGANDiscriminator(nn.Layer):
+            # use_fp16 = (res >= fp16_resolution)
+            use_fp16 = False
+
+
 
 # 解压mpv3d数据集
 cd ~/w*
@@ -26,7 +32,7 @@ wget https://paddlegan.bj.bcebos.com/models/starganv2_afhq.pdparams
 python -u tools/main.py -c configs/pastagan_mpv3d.yaml --load starganv2_afhq.pdparams
 
 
-python -u tools/main.py -c configs/pastagan_mpv3d.yaml
+python -u tools/main.py -c configs/pastagan_256_mpv3d.yaml
 
 
 恢复训练:

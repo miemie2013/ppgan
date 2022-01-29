@@ -36,10 +36,10 @@ model:
     output_nc: *OC
     ngf: *NGF
     n_downsampling: *N_DOWN
-#  discriminator:
-#    name: PastaGANDiscriminator
-#    img_size: *IMAGE_SIZE
-#    num_domains: *NUM_DOMAINS
+  discriminator:
+    name: PastaGANDiscriminator
+    img_size: *IMAGE_SIZE
+    num_domains: *NUM_DOMAINS
 
 dataset:
   train:
@@ -85,24 +85,31 @@ lr_scheduler:
   iters_per_epoch: 365
 
 optimizer:
-  generator:
+  synthesis:
     name: Adam
     net_names:
-      - generator
+      - synthesis
     beta1: 0.0
     beta2: 0.99
     weight_decay: 0.0001
-  style_encoder:
+  mapping:
     name: Adam
     net_names:
-      - style_encoder
+      - mapping
     beta1: 0.0
     beta2: 0.99
     weight_decay: 0.0001
-  mapping_network:
+  const_encoding:
     name: Adam
     net_names:
-      - mapping_network
+      - const_encoding
+    beta1: 0.0
+    beta2: 0.99
+    weight_decay: 0.0001
+  style_encoding:
+    name: Adam
+    net_names:
+      - style_encoding
     beta1: 0.0
     beta2: 0.99
     weight_decay: 0.0001

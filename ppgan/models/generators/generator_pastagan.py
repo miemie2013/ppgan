@@ -220,6 +220,20 @@ def upfirdn2d(x, filter, up=1, down=1, padding=0, flip_filter=False, gain=1):
     x = x[:, :, ::downy, ::downx]
     return x
 
+
+def downsample2d(x, f, down=2, padding=0, flip_filter=False, gain=1):
+    downx, downy = _parse_scaling(down)
+    padx0, padx1, pady0, pady1 = _parse_padding(padding)
+    fw, fh = _get_filter_size(f)
+    p = [
+        padx0 + (fw - downx + 1) // 2,
+        padx1 + (fw - downx) // 2,
+        pady0 + (fh - downy + 1) // 2,
+        pady1 + (fh - downy) // 2,
+    ]
+    return upfirdn2d(x, f, down=down, padding=p, flip_filter=flip_filter, gain=gain)
+
+
 def conv2d_resample(x, w, filter=None, up=1, down=1, padding=0, groups=1, flip_weight=True, flip_filter=False):
     r""" 2D卷积（带有上采样或者下采样）
     Padding只在最开始执行一次.
@@ -283,9 +297,9 @@ def conv2d_resample(x, w, filter=None, up=1, down=1, padding=0, groups=1, flip_w
         if groups == 1:
             w = w.transpose((1, 0, 2, 3))
         else:
-            w = w.reshape(groups, out_channels // groups, in_channels_per_group, kh, kw)
+            w = w.reshape((groups, out_channels // groups, in_channels_per_group, kh, kw))
             w = w.transpose((0, 2, 1, 3, 4))
-            w = w.reshape(groups * in_channels_per_group, out_channels // groups, kh, kw)
+            w = w.reshape((groups * in_channels_per_group, out_channels // groups, kh, kw))
         px0 -= kw - 1
         px1 -= kw - up
         py0 -= kh - 1
