@@ -727,7 +727,69 @@ class PastaGANDataset(BaseDataset):
 
     def __getitem__(self, idx):
         if self.is_train:
-            pass
+            image, pose, norm_img, norm_img_lower, denorm_upper_img, denorm_lower_img, M_invs, gt_parsing, \
+                denorm_hand_masks, norm_clothes_masks, norm_clothes_masks_lower, retain_mask = self.load_image(self.raw_idx[idx])
+
+            image = image.transpose(2, 0, 1)                    # HWC => CHW
+            pose = pose.transpose(2, 0, 1)                      # HWC => CHW
+            norm_img = norm_img.transpose(2, 0, 1)
+            norm_img_lower = norm_img_lower.transpose(2, 0, 1)
+            denorm_upper_img = denorm_upper_img.transpose(2, 0, 1)
+            denorm_lower_img = denorm_lower_img.transpose(2, 0, 1)
+
+            norm_clothes_masks = norm_clothes_masks.transpose(2, 0, 1)
+            norm_clothes_masks_lower = norm_clothes_masks_lower.transpose(2, 0, 1)
+
+            # upper_clothes_mask = upper_clothes_mask.transpose(2,0,1)
+            # lower_clothes_mask = lower_clothes_mask.transpose(2,0,1)
+            gt_parsing = gt_parsing.transpose(2, 0, 1)
+
+            retain_mask = retain_mask.transpose(2, 0, 1)
+
+            # concat the pose and img since they often binded together
+            # norm_img = np.concatenate((norm_img, norm_pose), axis=0)
+
+
+            denorm_random_mask = np.zeros((256, 256, 1), dtype=np.uint8)
+            # random.seed(5)
+            random.seed(1)
+
+            if random.random() < 0.4:
+                for mask in denorm_hand_masks:
+                    if random.random() < 0.5:
+                        denorm_random_mask += mask
+            # if random.random() < 0.4:
+            #     for mask in denorm_leg_masks:
+            #         if random.random() < 0.5:
+            #             denorm_random_mask += mask
+
+            if random.random() < 0.9:
+                fname = self._random_mask_acgpn_fnames[self.raw_idx[idx] % self._mask_acgpn_numbers]
+                random_mask = cv2.imread(fname)[..., 0:1]
+                random_mask = cv2.resize(random_mask, (256, 256))[..., np.newaxis]
+                denorm_random_mask += random_mask
+
+            denorm_random_mask = (denorm_random_mask > 0).astype(np.uint8)
+            denorm_random_mask = denorm_random_mask.transpose(2, 0, 1)
+
+            denorm_upper_img_erase = denorm_upper_img * (1-denorm_random_mask)
+            denorm_upper_mask = (np.sum(denorm_upper_img_erase, axis=0, keepdims=True) > 0).astype(np.uint8)
+            denorm_lower_img_erase = denorm_lower_img * (1-denorm_random_mask)
+            denorm_lower_mask = (np.sum(denorm_lower_img_erase, axis=0, keepdims=True) > 0).astype(np.uint8)
+
+            # assert isinstance(image, np.ndarray)
+            # assert list(image.shape) == self.image_shape
+            # assert image.dtype == np.uint8
+
+            # return image.copy(), pose.copy(), sem.copy(), norm_img.copy(), denorm_upper_img.copy(), denorm_lower_img.copy(), \
+            #         M_invs.copy(), upper_clothes_mask.copy(), lower_clothes_mask.copy(), denorm_random_mask.copy(), \
+            #         denorm_upper_mask.copy(), denorm_lower_mask.copy(), norm_clothes_masks.copy()
+            # return image.copy(), pose.copy(), sem.copy(), norm_img.copy(), denorm_upper_img_erase.copy(), denorm_lower_img_erase.copy(), \
+            #         M_invs.copy(), upper_clothes_mask.copy(), lower_clothes_mask.copy(), \
+            #         denorm_upper_mask.copy(), denorm_lower_mask.copy(), norm_clothes_masks.copy(), retain_mask.copy()
+            return image.copy(), pose.copy(), norm_img.copy(), norm_img_lower.copy(), denorm_upper_img_erase.copy(), denorm_lower_img_erase.copy(), \
+                    M_invs.copy(), gt_parsing.copy(), denorm_upper_mask.copy(), denorm_lower_mask.copy(), \
+                    norm_clothes_masks.copy(), norm_clothes_masks_lower.copy(), retain_mask.copy()
         else:
             image, pose, norm_img, norm_pose, denorm_upper_img, denorm_lower_img, person_name, clothes_name, src_img, trg_img = self.load_image(self.raw_idx[idx])
 
