@@ -69,5 +69,9 @@ if __name__ == '__main__':
         cfg['dataset']['train']['dataroot'] = '../' + cfg['dataset']['train']['dataroot']   # 如果是绝对路径，把这一行注释掉
         cfg['dataset']['test']['dataroot'] = '../' + cfg['dataset']['test']['dataroot']   # 如果是绝对路径，把这一行注释掉
         cfg['output_dir'] = '../' + cfg['output_dir']   # 如果是绝对路径，把这一行注释掉
+        if 'vgg19_ckpt1' in cfg['model'].keys():
+            cfg['model']['vgg19_ckpt1'] = '../' + cfg['model']['vgg19_ckpt1']   # 如果是绝对路径，把这一行注释掉
+        if 'vgg19_ckpt2' in cfg['model'].keys():
+            cfg['model']['vgg19_ckpt2'] = '../' + cfg['model']['vgg19_ckpt2']   # 如果是绝对路径，把这一行注释掉
 
     main(args, cfg)

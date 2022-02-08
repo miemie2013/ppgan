@@ -13,6 +13,7 @@ class PastaGANDiscriminator(nn.Layer):
             # use_fp16 = (res >= fp16_resolution)
             use_fp16 = False
 
+3.计算损失时，噪声all_gen_z，先假设num_gpus = 1
 
 
 # 解压mpv3d数据集
@@ -30,7 +31,7 @@ cd ~/w*
 训练模型:
 cd ~/w*
 wget https://paddlegan.bj.bcebos.com/models/starganv2_afhq.pdparams
-python -u tools/main.py -c configs/pastagan_mpv3d.yaml --load starganv2_afhq.pdparams
+python -u tools/main.py -c configs/pastagan_256_mpv3d.yaml --load starganv2_afhq.pdparams
 
 
 python -u tools/main.py -c configs/pastagan_256_mpv3d.yaml
@@ -38,18 +39,15 @@ python -u tools/main.py -c configs/pastagan_256_mpv3d.yaml
 
 恢复训练:
 cd ~/w*
-python -u tools/main.py -c configs/pastagan_mpv3d.yaml --resume output_dir/pastagan_mpv3d-2022-01-20-11-33/epoch_5_checkpoint.pdparams
+python -u tools/main.py -c configs/pastagan_256_mpv3d.yaml --resume output_dir/pastagan_256_mpv3d-2022-01-20-11-33/epoch_5_checkpoint.pdparams
 
 
 测试模型:
 cd ~/w*
-python tools/main.py -c configs/pastagan_mpv3d.yaml --evaluate-only --load output_dir/pastagan_mpv3d-2022-01-19-16-13/epoch_5_checkpoint.pdparams
+python tools/main.py -c configs/pastagan_256_mpv3d.yaml --evaluate-only --load output_dir/pastagan_256_mpv3d-2022-01-19-16-13/epoch_5_checkpoint.pdparams
 
 
 python tools/main.py -c configs/pastagan_256_mpv3d.yaml --evaluate-only --load G_ema_256.pdparams
-
-python tools/main.py -c configs/starganv2_afhq.yaml --evaluate-only --load starganv2_afhq.pdparams
-
 
 
 ======================== StarGANv2 ========================

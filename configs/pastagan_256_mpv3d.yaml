@@ -9,6 +9,17 @@ model:
   lambda_sty: 1
   lambda_ds: 2
   lambda_cyc: 1
+  # loss
+  r1_gamma: 10
+  l1_weight: 40.0
+  vgg_weight: 40.0
+  pl_weight: 0.0
+#  contextual_weight: 0.0   # default is 0
+  contextual_weight: 1.0   # default is 0
+  mask_weight: 20.0
+  style_mixing_prob: 0.0
+  vgg19_ckpt1: checkpoints/vgg19-dcbb9e9d.pdparams
+  vgg19_ckpt2: checkpoints/vgg19_conv.pdparams
   synthesis:
     name: SynthesisNetwork
     w_dim: &W_DIM 512

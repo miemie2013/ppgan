@@ -15,6 +15,301 @@ from ..modules.init import kaiming_normal_, constant_
 from ppgan.utils.visual import make_grid, tensor2img
 
 import numpy as np
+import sys
+
+
+
+
+
+
+
+class VGGLoss(nn.Layer):
+    def __init__(self, ckpt_path, requires_grad=False, weights=[1.0/32, 1.0/16, 1.0/8, 1.0/4, 1.0]):
+        super(VGGLoss, self).__init__()
+        self.vgg = VGG19_Feature(ckpt_path=ckpt_path, requires_grad=requires_grad)
+        self.criterion = nn.L1Loss()
+        self.weights = weights
+
+    def forward(self, x, y):
+        x_vgg, y_vgg = self.vgg(x), self.vgg(y)
+        loss = 0
+        for i in range(len(x_vgg)):
+            loss += self.weights[i] * self.criterion(x_vgg[i], y_vgg[i].detach())
+        return loss
+
+class VGG19_Feature(nn.Layer):
+    def __init__(self, ckpt_path="", pretrained=True, requires_grad=False):
+        super(VGG19_Feature, self).__init__()
+        vgg_pretrained_features = vgg19(pretrained=pretrained, progress=False, ckpt_path=ckpt_path).features  # load from local file
+        vgg_pretrained_features.eval()
+        if not requires_grad:
+            for param in vgg_pretrained_features.parameters():
+                param.stop_gradient = True
+        print('load vgg19 success!')
+
+        self.slice1 = paddle.nn.Sequential()
+        self.slice2 = paddle.nn.Sequential()
+        self.slice3 = paddle.nn.Sequential()
+        self.slice4 = paddle.nn.Sequential()
+        self.slice5 = paddle.nn.Sequential()
+        for x in range(2):
+            self.slice1.add_sublayer(str(x), vgg_pretrained_features[x])
+        for x in range(2, 7):
+            self.slice2.add_sublayer(str(x), vgg_pretrained_features[x])
+        for x in range(7, 12):
+            self.slice3.add_sublayer(str(x), vgg_pretrained_features[x])
+        for x in range(12, 21):
+            self.slice4.add_sublayer(str(x), vgg_pretrained_features[x])
+        for x in range(21, 30):
+            self.slice5.add_sublayer(str(x), vgg_pretrained_features[x])
+
+    def forward(self, X):
+        h_relu1 = self.slice1(X)
+        h_relu2 = self.slice2(h_relu1)
+        h_relu3 = self.slice3(h_relu2)
+        h_relu4 = self.slice4(h_relu3)
+        h_relu5 = self.slice5(h_relu4)
+        out = [h_relu1, h_relu2, h_relu3, h_relu4, h_relu5]
+        return out
+
+
+class VGG(nn.Layer):
+    def __init__(
+        self,
+        features: nn.Layer,
+        num_classes: int = 1000,
+        init_weights: bool = True
+    ) -> None:
+        super(VGG, self).__init__()
+        self.features = features
+        self.avgpool = nn.AdaptiveAvgPool2D((7, 7))
+        self.classifier = nn.Sequential(
+            nn.Linear(512 * 7 * 7, 4096),
+            nn.ReLU(True),
+            nn.Dropout(),
+            nn.Linear(4096, 4096),
+            nn.ReLU(True),
+            nn.Dropout(),
+            nn.Linear(4096, num_classes),
+        )
+        # if init_weights:
+        #     self._initialize_weights()
+
+    def forward(self, x):
+        x = self.features(x)
+        x = self.avgpool(x)
+        x = paddle.flatten(x, 1)
+        x = self.classifier(x)
+        return x
+
+    def _initialize_weights(self) -> None:
+        for m in self.modules():
+            if isinstance(m, nn.Conv2D):
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.BatchNorm2D):
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.Linear):
+                nn.init.normal_(m.weight, 0, 0.01)
+                nn.init.constant_(m.bias, 0)
+
+def make_layers(cfg, batch_norm: bool = False) -> nn.Sequential:
+    layers = []
+    in_channels = 3
+    for v in cfg:
+        if v == 'M':
+            layers += [nn.MaxPool2D(kernel_size=2, stride=2)]
+        else:
+            # v = cast(int, v)
+            conv2d = nn.Conv2D(in_channels, v, kernel_size=3, padding=1)
+            if batch_norm:
+                layers += [conv2d, nn.BatchNorm2D(v), nn.ReLU()]
+            else:
+                layers += [conv2d, nn.ReLU()]
+            in_channels = v
+    return nn.Sequential(*layers)
+
+def vgg19(pretrained: bool = False, progress: bool = True, ckpt_path: str = "", **kwargs) -> VGG:
+    r"""VGG 19-layer model (configuration "E")
+    `"Very Deep Convolutional Networks For Large-Scale Image Recognition" <https://arxiv.org/pdf/1409.1556.pdf>`._
+    Args:
+        pretrained (bool): If True, returns a model pre-trained on ImageNet
+        progress (bool): If True, displays a progress bar of the download to stderr
+    """
+    return _vgg('vgg19', 'E', False, pretrained, progress, ckpt_path, **kwargs)
+
+cfgs = {
+    'A': [64, 'M', 128, 'M', 256, 256, 'M', 512, 512, 'M', 512, 512, 'M'],
+    'B': [64, 64, 'M', 128, 128, 'M', 256, 256, 'M', 512, 512, 'M', 512, 512, 'M'],
+    'D': [64, 64, 'M', 128, 128, 'M', 256, 256, 256, 'M', 512, 512, 512, 'M', 512, 512, 512, 'M'],
+    'E': [64, 64, 'M', 128, 128, 'M', 256, 256, 256, 256, 'M', 512, 512, 512, 512, 'M', 512, 512, 512, 512, 'M'],
+}
+
+def _vgg(arch: str, cfg: str, batch_norm: bool, pretrained: bool, progress: bool, ckpt_path: str = "", **kwargs):
+    if pretrained:
+        kwargs['init_weights'] = False
+    model = VGG(make_layers(cfgs[cfg], batch_norm=batch_norm), **kwargs)
+    if pretrained:
+        # state_dict = load_state_dict_from_url(model_urls[arch],
+        #                                       progress=progress)
+        print("vgg19 ckpt_path from local: ", ckpt_path)
+        state_dict = paddle.load(ckpt_path)
+        model.set_state_dict(state_dict)
+    return model
+
+
+
+def vgg_preprocess(tensor, vgg_normal_correct=False):
+    if vgg_normal_correct:
+        tensor = (tensor + 1) / 2
+    # input is RGB tensor which ranges in [0,1]
+    # output is BGR tensor which ranges in [0,255]
+    tensor_bgr = paddle.concat((tensor[:, 2:3, :, :], tensor[:, 1:2, :, :], tensor[:, 0:1, :, :]), axis=1)
+    # tensor_bgr = tensor[:, [2, 1, 0], ...]
+    tensor_bgr_ml = tensor_bgr - paddle.to_tensor([0.40760392, 0.45795686, 0.48501961]).type_as(tensor_bgr).reshape((1, 3, 1, 1))
+    tensor_rst = tensor_bgr_ml * 255
+    return tensor_rst
+
+class VGG19_feature_color_torchversion(nn.Layer):
+    '''
+    NOTE: there is no need to pre-process the input
+    input tensor should range in [0,1]
+    '''
+
+    def __init__(self, pool='max', vgg_normal_correct=True, ic=3):
+        super(VGG19_feature_color_torchversion, self).__init__()
+        self.vgg_normal_correct = vgg_normal_correct
+
+        self.conv1_1 = nn.Conv2D(ic, 64, kernel_size=3, padding=1)
+        self.conv1_2 = nn.Conv2D(64, 64, kernel_size=3, padding=1)
+        self.conv2_1 = nn.Conv2D(64, 128, kernel_size=3, padding=1)
+        self.conv2_2 = nn.Conv2D(128, 128, kernel_size=3, padding=1)
+        self.conv3_1 = nn.Conv2D(128, 256, kernel_size=3, padding=1)
+        self.conv3_2 = nn.Conv2D(256, 256, kernel_size=3, padding=1)
+        self.conv3_3 = nn.Conv2D(256, 256, kernel_size=3, padding=1)
+        self.conv3_4 = nn.Conv2D(256, 256, kernel_size=3, padding=1)
+        self.conv4_1 = nn.Conv2D(256, 512, kernel_size=3, padding=1)
+        self.conv4_2 = nn.Conv2D(512, 512, kernel_size=3, padding=1)
+        self.conv4_3 = nn.Conv2D(512, 512, kernel_size=3, padding=1)
+        self.conv4_4 = nn.Conv2D(512, 512, kernel_size=3, padding=1)
+        self.conv5_1 = nn.Conv2D(512, 512, kernel_size=3, padding=1)
+        self.conv5_2 = nn.Conv2D(512, 512, kernel_size=3, padding=1)
+        self.conv5_3 = nn.Conv2D(512, 512, kernel_size=3, padding=1)
+        self.conv5_4 = nn.Conv2D(512, 512, kernel_size=3, padding=1)
+        if pool == 'max':
+            self.pool1 = nn.MaxPool2D(kernel_size=2, stride=2)
+            self.pool2 = nn.MaxPool2D(kernel_size=2, stride=2)
+            self.pool3 = nn.MaxPool2D(kernel_size=2, stride=2)
+            self.pool4 = nn.MaxPool2D(kernel_size=2, stride=2)
+            self.pool5 = nn.MaxPool2D(kernel_size=2, stride=2)
+        elif pool == 'avg':
+            self.pool1 = nn.AvgPool2D(kernel_size=2, stride=2)
+            self.pool2 = nn.AvgPool2D(kernel_size=2, stride=2)
+            self.pool3 = nn.AvgPool2D(kernel_size=2, stride=2)
+            self.pool4 = nn.AvgPool2D(kernel_size=2, stride=2)
+            self.pool5 = nn.AvgPool2D(kernel_size=2, stride=2)
+
+    def forward(self, x, out_keys, preprocess=True):
+        '''
+        NOTE: input tensor should range in [0,1]
+        '''
+        out = {}
+        if preprocess:
+            x = vgg_preprocess(x, vgg_normal_correct=self.vgg_normal_correct)
+        out['r11'] = F.relu(self.conv1_1(x))
+        out['r12'] = F.relu(self.conv1_2(out['r11']))
+        out['p1'] = self.pool1(out['r12'])
+        out['r21'] = F.relu(self.conv2_1(out['p1']))
+        out['r22'] = F.relu(self.conv2_2(out['r21']))
+        out['p2'] = self.pool2(out['r22'])
+        out['r31'] = F.relu(self.conv3_1(out['p2']))
+        out['r32'] = F.relu(self.conv3_2(out['r31']))
+        out['r33'] = F.relu(self.conv3_3(out['r32']))
+        out['r34'] = F.relu(self.conv3_4(out['r33']))
+        out['p3'] = self.pool3(out['r34'])
+        out['r41'] = F.relu(self.conv4_1(out['p3']))
+        out['r42'] = F.relu(self.conv4_2(out['r41']))
+        out['r43'] = F.relu(self.conv4_3(out['r42']))
+        out['r44'] = F.relu(self.conv4_4(out['r43']))
+        out['p4'] = self.pool4(out['r44'])
+        out['r51'] = F.relu(self.conv5_1(out['p4']))
+        out['r52'] = F.relu(self.conv5_2(out['r51']))
+        out['r53'] = F.relu(self.conv5_3(out['r52']))
+        out['r54'] = F.relu(self.conv5_4(out['r53']))
+        out['p5'] = self.pool5(out['r54'])
+        return [out[key] for key in out_keys]
+
+
+def feature_normalize(feature_in):
+    feature_in_norm = paddle.norm(feature_in, 2, 1, keepdim=True) + sys.float_info.epsilon
+    feature_in_norm = feature_in / feature_in_norm
+    return feature_in_norm
+
+
+class ContextualLoss_forward(nn.Layer):
+    '''
+        input is Al, Bl, channel = 1, range ~ [0, 255]
+    '''
+
+    def __init__(self, PONO=True):
+        super(ContextualLoss_forward, self).__init__()
+        self.PONO = PONO
+        return None
+
+    def forward(self, X_features, Y_features, h=0.1, feature_centering=True):
+        '''
+        X_features&Y_features are are feature vectors or feature 2d array
+        h: bandwidth
+        return the per-sample loss
+        '''
+        batch_size = X_features.shape[0]
+        feature_depth = X_features.shape[1]
+        feature_size = X_features.shape[2]
+
+        # to normalized feature vectors
+        if feature_centering:
+            if self.PONO:
+                X_features = X_features - Y_features.mean(dim=1).unsqueeze(dim=1)
+                Y_features = Y_features - Y_features.mean(dim=1).unsqueeze(dim=1)
+            else:
+                X_features = X_features - Y_features.reshape((batch_size, feature_depth, -1)).mean(dim=-1).unsqueeze(dim=-1).unsqueeze(dim=-1)
+                Y_features = Y_features - Y_features.reshape((batch_size, feature_depth, -1)).mean(dim=-1).unsqueeze(dim=-1).unsqueeze(dim=-1)
+        X_features = feature_normalize(X_features).reshape((batch_size, feature_depth, -1))  # batch_size * feature_depth * feature_size * feature_size
+        Y_features = feature_normalize(Y_features).reshape((batch_size, feature_depth, -1))  # batch_size * feature_depth * feature_size * feature_size
+
+        # X_features = F.unfold(
+        #     X_features, kernel_size=self.opt.match_kernel, stride=1, padding=int(self.opt.match_kernel // 2))  # batch_size * feature_depth_new * feature_size^2
+        # Y_features = F.unfold(
+        #     Y_features, kernel_size=self.opt.match_kernel, stride=1, padding=int(self.opt.match_kernel // 2))  # batch_size * feature_depth_new * feature_size^2
+
+        # conine distance = 1 - similarity
+        X_features_permute = X_features.permute(0, 2, 1)  # batch_size * feature_size^2 * feature_depth
+        d = 1 - paddle.matmul(X_features_permute, Y_features)  # batch_size * feature_size^2 * feature_size^2
+
+        # normalized distance: dij_bar
+        # d_norm = d
+        d_norm = d / (torch.min(d, dim=-1, keepdim=True)[0] + 1e-3)  # batch_size * feature_size^2 * feature_size^2
+
+        # pairwise affinity
+        w = torch.exp((1 - d_norm) / h)
+        A_ij = w / torch.sum(w, dim=-1, keepdim=True)
+
+        # contextual loss per sample
+        CX = torch.mean(torch.max(A_ij, dim=-1)[0], dim=1)
+        loss = -paddle.log(CX)
+
+        # contextual loss per batch
+        # loss = torch.mean(loss)
+        return loss
+
+
+
+
+
+
+
 
 
 
@@ -189,6 +484,15 @@ class PastaGANModel(BaseModel):
         lambda_sty=1,
         lambda_ds=1,
         lambda_cyc=1,
+        r1_gamma=10,
+        l1_weight=50.0,
+        vgg_weight=50.0,
+        pl_weight=0.0,
+        contextual_weight=1.0,
+        mask_weight=1.0,
+        style_mixing_prob=0.9,
+        vgg19_ckpt1=None,
+        vgg19_ckpt2=None,
     ):
         super(PastaGANModel, self).__init__()
         self.nets_ema = {}
@@ -217,8 +521,47 @@ class PastaGANModel(BaseModel):
         # self.initial_lambda_ds = self.lambda_ds
 
         self.phases = []
+        for name, reg_interval in [('G', G_reg_interval), ('D', D_reg_interval)]:
+            if reg_interval is None:
+                # opt = dnnlib.util.construct_class_by_name(params=module.parameters(),
+                #                                           **opt_kwargs)  # subclass of torch.optim.Optimizer
+                # phases += [dnnlib.EasyDict(name=name + 'both', module=module, opt=opt, interval=1)]
+                pass
+            else:  # Lazy regularization.
+                self.phases += [dict(name=name + 'main', interval=1)]
+                self.phases += [dict(name=name + 'reg', interval=reg_interval)]
+
         self.z_dim = self.nets['mapping'].z_dim
-        print()
+        self.batch_idx = 0
+
+        # loss config.
+        self.r1_gamma = r1_gamma
+        self.l1_weight = l1_weight
+        self.vgg_weight = vgg_weight
+        self.pl_weight = pl_weight
+        self.contextual_weight = contextual_weight
+        self.mask_weight = mask_weight
+        self.style_mixing_prob = style_mixing_prob
+        self.vgg19_ckpt1 = vgg19_ckpt1
+        self.vgg19_ckpt2 = vgg19_ckpt2
+
+        # 每个类别的权重（6个类别）
+        class_weight = paddle.to_tensor([1., 2., 2., 3., 3., 3.])
+        self.ce_parsing = paddle.nn.CrossEntropyLoss(ignore_index=255, weight=class_weight)
+
+        if self.vgg_weight > 0:
+            self.criterionVGG = VGGLoss(ckpt_path=self.vgg19_ckpt1, requires_grad=False)
+
+        if self.contextual_weight > 0:
+            contextual_vgg_path = self.vgg19_ckpt2
+            self.contextual_vgg = VGG19_feature_color_torchversion()
+            self.contextual_vgg.set_state_dict(paddle.load(contextual_vgg_path))
+            self.contextual_vgg.eval()
+            for param in self.contextual_vgg.parameters():
+                param.stop_gradient = True
+            self.contextual_layers = ['r12','r22','r32','r42','r52']
+            self.contextual_forward_loss = ContextualLoss_forward()
+
 
     def setup_input(self, input):
         """Unpack input data from the dataloader and perform necessary pre-processing steps.
@@ -237,6 +580,182 @@ class PastaGANModel(BaseModel):
     def _reset_grad(self, optims):
         for optim in optims.values():
             optim.clear_gradients()
+
+    def run_G(self, z, c, pose, const_feats, denorm_upper_mask, denorm_lower_mask, denorm_upper_input, denorm_lower_input, sync):
+        cat_feats = {}
+        for _, cat_feat in enumerate(const_feats):
+            h, _ = cat_feat.shape[2], cat_feat.shape[3]
+            cat_feats[str(h)] = cat_feat
+
+        pose_feat = self.nets['const_encoding'](pose)
+
+        ws = self.nets['mapping'](z, c)
+        if self.style_mixing_prob > 0:
+            with torch.autograd.profiler.record_function('style_mixing'):
+                cutoff = torch.empty([], dtype=torch.int64, device=ws.device).random_(1, ws.shape[1])
+                cutoff = torch.where(torch.rand([], device=ws.device) < self.style_mixing_prob, cutoff, torch.full_like(cutoff, ws.shape[1]))
+                ws[:, cutoff:] = self.G_mapping(torch.randn_like(z), c, skip_w_avg_update=True)[:, cutoff:]
+
+        img, finetune_img, pred_parsing = self.nets['synthesis'](ws, pose_feat, cat_feats, denorm_upper_input, denorm_lower_input, denorm_upper_mask, denorm_lower_mask)
+
+        return img, finetune_img, pred_parsing, ws
+
+    def run_D(self, img, c, sync):
+        if self.augment_pipe is not None:
+            img = self.augment_pipe(img)
+
+        logits = self.nets['discriminator'](img, c)
+        return logits
+
+    # 梯度累加（变相增大批大小）。
+    def accumulate_gradients(self, phase, real_img, gen_z, style_input, retain, pose, denorm_upper_input,
+                             denorm_lower_input, denorm_upper_mask, denorm_lower_mask, gt_parsing, sync, gain):
+        assert phase in ['Gmain', 'Greg', 'Gboth', 'Dmain', 'Dreg', 'Dboth']
+        do_Gmain = (phase in ['Gmain', 'Gboth'])
+        do_Dmain = (phase in ['Dmain', 'Dboth'])
+        do_Gpl = (phase in ['Greg', 'Gboth']) and (self.pl_weight != 0)
+        do_Dr1 = (phase in ['Dreg', 'Dboth']) and (self.r1_gamma != 0)
+
+        real_c, cat_feats = self.nets['style_encoding'](style_input, retain)
+        gen_c = real_c  # 把 real_c 也当做 gen_c作为CGAN的C
+
+        # Gmain: Maximize logits for generated images.
+        if do_Gmain:
+            gen_img, gen_finetune_img, pred_parsing, _gen_ws = self.run_G(gen_z, gen_c, pose, cat_feats,
+                                                                          denorm_upper_mask, denorm_lower_mask, \
+                                                                          denorm_upper_input, denorm_lower_input,
+                                                                          sync=(sync and not do_Gpl))  # May get synced by Gpl.
+
+            # 这里的conditioned GAN的 (gen_img, gen_c) 和 (real_img, real_c) 不是严格对应的。
+            # 如果加入pose conditioned, 那么应该 gen_img和real_img严格对应，然后 只用一个real pose, 也就是(gen_img, real_pose) 和 (real_img, real_pose)
+            # 视情况, 看是否需要加入L1 和 vgg loss
+
+            gen_logits = self.run_D(gen_img, gen_c, sync=False)
+            gen_finetune_logits = self.run_D(gen_finetune_img, gen_c, sync=False)
+
+            training_stats.report('Loss/scores/fake', gen_logits)
+            training_stats.report('Loss/signs/fake', gen_logits.sign())
+            loss_Gmain = torch.nn.functional.softplus(-gen_logits)  # -log(sigmoid(gen_logits))
+            loss_Gmain = loss_Gmain.mean()
+            training_stats.report('Loss/G/loss', loss_Gmain)
+
+            training_stats.report('Loss/scores/fake_finetune', gen_finetune_logits)
+            training_stats.report('Loss/signs/fake_finetune', gen_finetune_logits.sign())
+            loss_Gmain_finetune = torch.nn.functional.softplus(-gen_finetune_logits)  # -log(sigmoid(gen_logits))
+            loss_Gmain_finetune = loss_Gmain_finetune.mean()
+            training_stats.report('Loss/G/loss_finetune', loss_Gmain_finetune)
+
+            # l1 loss
+            loss_G_L1 = 0
+            loss_G_finetune_L1 = 0
+            if self.l1_weight > 0:
+                loss_G_L1 = torch.nn.L1Loss()(gen_img, real_img) * self.l1_weight
+                # loss_G_L1 = loss_G_L1.mean()
+
+                loss_G_finetune_L1 = torch.nn.L1Loss()(gen_finetune_img, real_img) * self.l1_weight
+                # loss_G_finetune_L1 = loss_G_finetune_L1.mean()
+            training_stats.report('Loss/G/L1', loss_G_L1)
+            training_stats.report('Loss/G/L1_finetune', loss_G_finetune_L1)
+
+            loss_mask = 0
+            if self.mask_weight > 0:
+                aaaaaaaaaaaaa = paddle.cast(gt_parsing, dtype=paddle.int64)[:, 0, :, :]
+                loss_mask = self.ce_parsing(pred_parsing.transpose((0, 2, 3, 1)), aaaaaaaaaaaaa)
+                loss_mask = paddle.mean(loss_mask) * self.mask_weight
+
+            training_stats.report('Loss/G/mask_loss', loss_mask)
+
+            # vgg loss
+            loss_G_VGG = 0
+            loss_G_finetune_VGG = 0
+            if self.vgg_weight > 0:
+                loss_G_VGG = self.criterionVGG(gen_img, real_img) * self.vgg_weight
+                loss_G_VGG = loss_G_VGG.mean()
+
+                loss_G_finetune_VGG = self.criterionVGG(gen_finetune_img, real_img) * self.vgg_weight
+                loss_G_finetune_VGG = loss_G_finetune_VGG.mean()
+            training_stats.report('Loss/G/vgg', loss_G_VGG)
+            training_stats.report('Loss/G/vgg_finetune', loss_G_finetune_VGG)
+
+            loss_G = (loss_Gmain + loss_Gmain_finetune) / 2 + \
+                     (loss_G_L1 + loss_G_finetune_L1) / 2 + \
+                     (loss_G_VGG + loss_G_finetune_VGG) / 2 + loss_mask
+
+            loss_G.mul(gain).backward()  # 咩酱：gain即上文提到的这个阶段的训练间隔。
+
+        # Gpl: Apply path length regularization.
+        if do_Gpl:
+            with torch.autograd.profiler.record_function('Gpl_forward'):
+                batch_size = gen_z.shape[0] // self.pl_batch_shrink
+                # with misc.ddp_sync(self.G_flownet, sync):
+                #     flow = self.G_flownet(torch.cat((cloth[:batch_size], aff_pose[:batch_size]), dim=1))
+                # warp_cloth = F.grid_sample(cloth[:batch_size, :3, :, :], flow)
+
+                gen_img, gen_ws = self.run_G(gen_z[:batch_size], gen_c[:batch_size], pose[:batch_size],
+                                             [cat_feat[:batch_size] for cat_feat in cat_feats], sync=sync)
+                pl_noise = torch.randn_like(gen_img) / np.sqrt(gen_img.shape[2] * gen_img.shape[3])
+                with torch.autograd.profiler.record_function('pl_grads'), conv2d_gradfix.no_weight_gradients():
+                    pl_grads = torch.autograd.grad(outputs=[(gen_img * pl_noise).sum()], inputs=[gen_ws], create_graph=True, only_inputs=True)[0]
+                pl_lengths = pl_grads.square().sum(2).mean(1).sqrt()
+                pl_mean = self.pl_mean.lerp(pl_lengths.mean(), self.pl_decay)
+                self.pl_mean.copy_(pl_mean.detach())
+                pl_penalty = (pl_lengths - pl_mean).square()
+                training_stats.report('Loss/pl_penalty', pl_penalty)
+                loss_Gpl = pl_penalty * self.pl_weight
+                training_stats.report('Loss/G/reg', loss_Gpl)
+            with torch.autograd.profiler.record_function('Gpl_backward'):
+                (gen_img[:, 0, 0, 0] * 0 + loss_Gpl).mean().mul(gain).backward()  # 咩酱：gain即上文提到的这个阶段的训练间隔。
+
+        # Dmain: Minimize logits for generated images.
+        loss_Dgen = 0
+        if do_Dmain:
+            with torch.autograd.profiler.record_function('Dgen_forward'):
+                gen_img, gen_finetune_img, _, _gen_ws = self.run_G(gen_z, gen_c, pose, cat_feats, denorm_upper_mask,
+                                                                   denorm_lower_mask, \
+                                                                   denorm_upper_input, denorm_lower_input, sync=False)
+                gen_logits = self.run_D(gen_img, gen_c, sync=False)  # Gets synced by loss_Dreal.
+                gen_finetune_logits = self.run_D(gen_finetune_img, gen_c, sync=False)
+
+                training_stats.report('Loss/scores/fake', gen_logits)
+                training_stats.report('Loss/signs/fake', gen_logits.sign())
+                loss_Dgen = torch.nn.functional.softplus(gen_logits)  # -log(1 - sigmoid(gen_logits))
+
+                training_stats.report('Loss/scores/fake_finetune', gen_finetune_logits)
+                training_stats.report('Loss/signs/fake_finetune', gen_finetune_logits.sign())
+                loss_Dgen_finetune = torch.nn.functional.softplus(gen_finetune_logits)  # -log(1 - sigmoid(gen_logits))
+
+            with torch.autograd.profiler.record_function('Dgen_backward'):
+                ((loss_Dgen.mean() + loss_Dgen_finetune.mean()) / 2).mul(gain).backward()  # 咩酱：gain即上文提到的这个阶段的训练间隔。
+                # loss_Dgen.mean().mul(gain).backward()
+
+        # Dmain: Maximize logits for real images.
+        # Dr1: Apply R1 regularization.
+        if do_Dmain or do_Dr1:
+            name = 'Dreal_Dr1' if do_Dmain and do_Dr1 else 'Dreal' if do_Dmain else 'Dr1'
+            with torch.autograd.profiler.record_function(name + '_forward'):
+                real_img_tmp = real_img.detach().requires_grad_(do_Dr1)
+                real_logits = self.run_D(real_img_tmp, real_c, sync=sync)
+                training_stats.report('Loss/scores/real', real_logits)
+                training_stats.report('Loss/signs/real', real_logits.sign())
+
+                loss_Dreal = 0
+                if do_Dmain:
+                    loss_Dreal = torch.nn.functional.softplus(-real_logits)  # -log(sigmoid(real_logits))
+                    training_stats.report('Loss/D/loss', loss_Dgen + loss_Dreal)
+
+                loss_Dr1 = 0
+                if do_Dr1:
+                    with torch.autograd.profiler.record_function('r1_grads'), conv2d_gradfix.no_weight_gradients():
+                        r1_grads = \
+                        torch.autograd.grad(outputs=[real_logits.sum()], inputs=[real_img_tmp], create_graph=True,
+                                            only_inputs=True)[0]
+                    r1_penalty = r1_grads.square().sum([1, 2, 3])
+                    loss_Dr1 = r1_penalty * (self.r1_gamma / 2)
+                    training_stats.report('Loss/r1_penalty', r1_penalty)
+                    training_stats.report('Loss/D/reg', loss_Dr1)
+
+            with torch.autograd.profiler.record_function(name + '_backward'):
+                (real_logits * 0 + loss_Dreal + loss_Dr1).mean().mul(gain).backward()  # 咩酱：gain即上文提到的这个阶段的训练间隔。
 
     def train_iter(self, optimizers=None):
         phase_real = self.input[0]
@@ -261,6 +780,7 @@ class PastaGANModel(BaseModel):
         phase_denorm_lower_mask_tensor = paddle.cast(phase_denorm_lower_mask, dtype=paddle.float32)
 
         phase_pose_tensor = paddle.cast(phase_pose, dtype=paddle.float32) / 127.5 - 1
+        phase_retain_mask = paddle.cast(phase_retain_mask, dtype=paddle.float32)
         phase_head_mask = phase_retain_mask
         phase_head_tensor = phase_head_mask * phase_real_tensor - (1 - phase_head_mask)
         phase_pose_tensor = paddle.concat([phase_pose_tensor, phase_head_tensor], 1)
@@ -272,13 +792,66 @@ class PastaGANModel(BaseModel):
 
         phases = self.phases
         batch_size = phase_real_tensor.shape[0]
-        all_gen_z = paddle.randn([len(phases) * batch_size, self.z_dim])  # 咩酱：训练的4个阶段每个gpu的噪声
-        # all_gen_z = [phase_gen_z.split(batch_gpu) for phase_gen_z in all_gen_z.split(batch_size)]  # 咩酱：训练的4个阶段每个gpu的噪声
+
+        all_gen_z = None
+        num_gpus = 1  # 显卡数量
+        batch_gpu = batch_size // num_gpus  # 一张显卡上的批大小
+        if self.z_dim > 0:
+            all_gen_z = paddle.randn([len(phases) * batch_size, self.z_dim])  # 咩酱：训练的4个阶段每个gpu的噪声
+        else:
+            all_gen_z = paddle.randn([len(phases) * batch_size, 1])  # 咩酱：训练的4个阶段每个gpu的噪声
+        phases_all_gen_z = paddle.split(all_gen_z, num_or_sections=len(phases))  # 咩酱：训练的4个阶段的噪声
+        all_gen_z = [paddle.split(phase_gen_z, num_or_sections=num_gpus) for phase_gen_z in phases_all_gen_z]  # 咩酱：训练的4个阶段每个gpu的噪声
+
+        phase_real_tensor = paddle.split(phase_real_tensor, num_or_sections=num_gpus)
+        phase_parts_tensor = paddle.split(phase_parts_tensor, num_or_sections=num_gpus)
+        phase_pose_tensor = paddle.split(phase_pose_tensor, num_or_sections=num_gpus)
+        phase_retain_tensor = paddle.split(phase_retain_tensor, num_or_sections=num_gpus)
+        phase_denorm_upper_img_tensor = paddle.split(phase_denorm_upper_img_tensor, num_or_sections=num_gpus)
+        phase_denorm_lower_img_tensor = paddle.split(phase_denorm_lower_img_tensor, num_or_sections=num_gpus)
+        phase_gt_parsing_tensor = paddle.split(phase_gt_parsing_tensor, num_or_sections=num_gpus)
+        phase_denorm_upper_mask_tensor = paddle.split(phase_denorm_upper_mask_tensor, num_or_sections=num_gpus)
+        phase_denorm_lower_mask_tensor = paddle.split(phase_denorm_lower_mask_tensor, num_or_sections=num_gpus)
 
         del phase_real      # conserve memory
         del phase_pose       # conserve memory
         del phase_head_mask   # conserve memory
         del phase_gt_parsing  # conserve memory
+
+        # Execute training phases.  咩酱：训练的4个阶段。一个批次的图片训练4个阶段。
+        for phase, phase_gen_z in zip(phases, all_gen_z):  # 咩酱：phase_gen_z是这个阶段每个gpu的噪声，是一个元组，元组长度等于gpu数量。
+            if self.batch_idx % phase['interval'] != 0:  # 咩酱：每一个阶段phase有一个属性interval，即训练间隔，每隔几个批次图片才会执行1次这个阶段！
+                continue
+
+            # Initialize gradient accumulation.  咩酱：初始化梯度累加（变相增大批大小）。
+            self._reset_grad(optimizers)  # 梯度清0
+            # phase.module.requires_grad_(True)      # 网络参数需要梯度
+
+            # 梯度累加。一个总的批次的图片分开{显卡数量}次遍历。
+            # Accumulate gradients over multiple rounds.  咩酱：遍历每一个gpu上的批次图片。这样写好奇葩啊！round_idx是gpu_id
+            for round_idx, (real_img, gen_z, style_input, retain, pose, denorm_upper_input, denorm_lower_input, \
+                            denorm_upper_mask, denorm_lower_mask, gt_parsing) \
+                    in enumerate(zip(phase_real_tensor, phase_gen_z, phase_parts_tensor, \
+                                     phase_retain_tensor, phase_pose_tensor, phase_denorm_upper_img_tensor,\
+                                     phase_denorm_lower_img_tensor, phase_denorm_upper_mask_tensor, \
+                                     phase_denorm_lower_mask_tensor, phase_gt_parsing_tensor)):
+                sync = (round_idx == batch_size // (batch_gpu * num_gpus) - 1)   # 咩酱：右边的式子结果一定是0。即只有0号gpu做同步。这是梯度累加的固定写法。
+                gain = phase['interval']     # 咩酱：即上文提到的训练间隔。
+                # 把style_input当做 real_c 和 gen_c。为了增加可变性, gen_z还是保留
+
+                # 梯度累加（变相增大批大小）。
+                self.accumulate_gradients(phase=phase['name'], real_img=real_img, gen_z=gen_z, style_input=style_input,
+                                          retain=retain, pose=pose, denorm_upper_input=denorm_upper_input,
+                                          denorm_lower_input=denorm_lower_input, denorm_upper_mask=denorm_upper_mask,
+                                          denorm_lower_mask=denorm_lower_mask, gt_parsing=gt_parsing, sync=sync, gain=gain)
+
+            # Update weights.
+            # phase.module.requires_grad_(False)
+            # 梯度裁剪
+            # for param in phase.module.parameters():
+            #     if param.grad is not None:
+            #         misc.nan_to_num(param.grad, nan=0, posinf=1e5, neginf=-1e5, out=param.grad)
+            phase.opt.step()
 
         # x_real [N, 3, 256, 256]
         # y_org  [N, ]  x_real的类别id
@@ -401,6 +974,7 @@ class PastaGANModel(BaseModel):
                 self.losses[prefix + key] = value
         self.losses['G/lambda_ds'] = self.lambda_ds
         self.losses['Total iter'] = int(self.total_iter)
+        self.batch_idx += 1
 
     def test_iter(self, metrics=None):
         #TODO
