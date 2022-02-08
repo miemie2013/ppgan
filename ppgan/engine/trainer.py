@@ -23,6 +23,7 @@ import paddle
 from paddle.distributed import ParallelEnv
 
 from ..datasets.builder import build_dataloader
+from ..models import PastaGANModel
 from ..models.builder import build_model
 from ..utils.visual import tensor2img, save_image
 from ..utils.filesystem import makedirs, save, load
@@ -122,13 +123,56 @@ class Trainer:
 
         # build lr scheduler
         # TODO: has a better way?
-        if 'lr_scheduler' in cfg and 'iters_per_epoch' in cfg.lr_scheduler:
-            cfg.lr_scheduler.iters_per_epoch = self.iters_per_epoch
-        self.lr_schedulers = self.model.setup_lr_schedulers(cfg.lr_scheduler)
+        if isinstance(self.model, PastaGANModel):
+            learning_rate = cfg.lr_scheduler_G.learning_rate
+            beta1 = cfg.optimizer.generator.beta1
+            beta2 = cfg.optimizer.generator.beta2
 
-        # build optimizers
-        self.optimizers = self.model.setup_optimizers(self.lr_schedulers,
-                                                      cfg.optimizer)
+            G_reg_interval = cfg.model.G_reg_interval
+            D_reg_interval = cfg.model.D_reg_interval
+
+            for name, reg_interval in [('G', G_reg_interval), ('D', D_reg_interval)]:
+                if reg_interval is None:
+                    pass
+                    # opt = dnnlib.util.construct_class_by_name(params=module.parameters(),
+                    #                                           **opt_kwargs)  # subclass of torch.optim.Optimizer
+                    # phases += [dnnlib.EasyDict(name=name + 'both', module=module, opt=opt, interval=1)]
+                else:  # Lazy regularization.
+                    mb_ratio = reg_interval / (reg_interval + 1)
+                    new_lr = learning_rate * mb_ratio
+                    new_beta1 = beta1 ** mb_ratio
+                    new_beta2 = beta2 ** mb_ratio
+                # print(new_lr)
+                # print(new_beta1)
+                # print(new_beta2)
+                if name == 'G':
+                    cfg.lr_scheduler_G.learning_rate = new_lr
+                    cfg.optimizer.generator.beta1 = new_beta1
+                    cfg.optimizer.generator.beta2 = new_beta2
+                elif name == 'D':
+                    cfg.lr_scheduler_D.learning_rate = new_lr
+                    cfg.optimizer.discriminator.beta1 = new_beta1
+                    cfg.optimizer.discriminator.beta2 = new_beta2
+
+            if 'lr_scheduler_G' in cfg and 'iters_per_epoch' in cfg.lr_scheduler_G:
+                cfg.lr_scheduler_G.iters_per_epoch = self.iters_per_epoch
+            self.lr_schedulers_G = self.model.setup_lr_schedulers(cfg.lr_scheduler_G)
+
+            if 'lr_scheduler_D' in cfg and 'iters_per_epoch' in cfg.lr_scheduler_D:
+                cfg.lr_scheduler_D.iters_per_epoch = self.iters_per_epoch
+            self.lr_schedulers_D = self.model.setup_lr_schedulers(cfg.lr_scheduler_D)
+
+            # build optimizers
+            self.optimizers = self.model.setup_optimizers(self.lr_schedulers_G, self.lr_schedulers_D,
+                                                          cfg.optimizer)
+        else:
+            if 'lr_scheduler' in cfg and 'iters_per_epoch' in cfg.lr_scheduler:
+                cfg.lr_scheduler.iters_per_epoch = self.iters_per_epoch
+            self.lr_schedulers = self.model.setup_lr_schedulers(cfg.lr_scheduler)
+
+            # build optimizers
+            self.optimizers = self.model.setup_optimizers(self.lr_schedulers,
+                                                          cfg.optimizer)
 
         self.epochs = cfg.get('epochs', None)
         if self.epochs:
