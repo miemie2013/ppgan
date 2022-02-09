@@ -503,9 +503,10 @@ class FullyConnectedLayer(nn.Layer):
         return x
 
 
-
-
-
+'''
+兼容原版仓库的
+StyleEncoderNetworkV16
+'''
 @GENERATORS.register()
 class StyleEncoderNetwork(nn.Layer):
     def __init__(self, input_nc, output_nc, ngf=64, n_downsampling=4):
@@ -951,7 +952,48 @@ class ToRGBLayerV18(nn.Layer):
         return x, upper_mask, lower_mask
 
 
+class ToRGBLayerFull(nn.Layer):
+    def __init__(self, in_channels, out_channels, w_dim, kernel_size=1, conv_clamp=None, channels_last=False, is_last=False, is_style=False):
+        super().__init__()
+        self.conv_clamp = conv_clamp
+        self.affine = FullyConnectedLayer(w_dim, in_channels, bias_init=1)
+        # 假设屎山的channels_last都是False
+        assert channels_last == False
+        # memory_format = torch.channels_last if channels_last else torch.contiguous_format
+        # self.weight = torch.nn.Parameter(torch.randn([out_channels, in_channels, kernel_size, kernel_size]).to(memory_format=memory_format))
+        self.weight = self.create_parameter([out_channels, in_channels, kernel_size, kernel_size],
+                                            default_initializer=paddle.nn.initializer.Normal())
+        self.bias = self.create_parameter([out_channels, ],
+                                          default_initializer=paddle.nn.initializer.Constant(0.0))
+        self.weight_gain = 1 / np.sqrt(in_channels * (kernel_size ** 2))
+        self.is_last = is_last
+        self.is_style = is_style
 
+        if self.is_last and self.is_style:
+            self.m_weight1 = self.create_parameter([6, in_channels, kernel_size, kernel_size],
+                                                   default_initializer=paddle.nn.initializer.Normal())
+            self.m_bias1 = self.create_parameter([6, ],
+                                                 default_initializer=paddle.nn.initializer.Constant(0.0))
+
+
+    def forward(self, x, w, fused_modconv=True):
+        styles = self.affine(w) * self.weight_gain
+
+        pred_parsing = None
+        if self.is_last and self.is_style:
+            pred_parsing = modulated_conv2d(x=x, weight=self.m_weight1, styles=styles, demodulate=False, fused_modconv=fused_modconv)
+            pred_parsing = bias_act(pred_parsing, paddle.cast(self.m_bias1, dtype=x.dtype), clamp=self.conv_clamp)
+
+        x = modulated_conv2d(x=x, weight=self.weight, styles=styles, demodulate=False, fused_modconv=fused_modconv)
+        x = bias_act(x, paddle.cast(self.bias, dtype=x.dtype), clamp=self.conv_clamp)
+        return x, pred_parsing
+
+
+'''
+兼容原版仓库的
+SynthesisBlockFull
+SynthesisBlockV18
+'''
 class SynthesisBlock(nn.Layer):
     def __init__(self,
                  in_channels,  # Number of input channels, 0 = first block.
@@ -960,11 +1002,13 @@ class SynthesisBlock(nn.Layer):
                  resolution,  # Resolution of this block.
                  img_channels,  # Number of output color channels.
                  is_last,  # Is this the last block?
+                 is_style=False,  # Is this the block in the sytle synthesis branch
                  architecture='skip',  # Architecture: 'orig', 'skip', 'resnet'.
                  resample_filter=[1, 3, 3, 1],  # Low-pass filter to apply when resampling activations.
                  conv_clamp=None,  # Clamp the output of convolution layers to +-X, None = disable clamping.
                  use_fp16=False,  # Use FP16 for this block?
                  fp16_channels_last=False,  # Use channels-last memory format with FP16?
+                 version='Full',  # miemie2013
                  **layer_kwargs,  # Arguments for SynthesisLayer.
                  ):
         assert architecture in ['orig', 'skip', 'resnet']
@@ -980,6 +1024,7 @@ class SynthesisBlock(nn.Layer):
         self.register_buffer('resample_filter', upfirdn2d_setup_filter(resample_filter))
         self.num_conv = 0
         self.num_torgb = 0
+        self.version = version
 
         # CONST here
         if in_channels == 0:
@@ -997,8 +1042,14 @@ class SynthesisBlock(nn.Layer):
         self.num_conv += 1
 
         if is_last or architecture == 'skip':
-            self.torgb = ToRGBLayerV18(out_channels, img_channels, w_dim=w_dim,
-                                       conv_clamp=conv_clamp, channels_last=self.channels_last, is_last=is_last)
+            if self.version == 'Full':
+                self.torgb = ToRGBLayerFull(out_channels, img_channels, w_dim=w_dim,
+                                            conv_clamp=conv_clamp, channels_last=self.channels_last, is_last=is_last, is_style=is_style)
+            elif self.version == 'V18':
+                self.torgb = ToRGBLayerV18(out_channels, img_channels, w_dim=w_dim,
+                                           conv_clamp=conv_clamp, channels_last=self.channels_last, is_last=is_last)
+            else:
+                raise NotImplementedError("version \'{}\' is not implemented.".format(self.version))
             self.num_torgb += 1
 
         if in_channels != 0 and architecture == 'resnet':
@@ -1049,14 +1100,20 @@ class SynthesisBlock(nn.Layer):
         if img is not None:
             img = upsample2d(img, self.resample_filter)
         if self.is_last or self.architecture == 'skip':
-            y, upper_mask, lower_mask = self.torgb(x, next(w_iter), fused_modconv=fused_modconv)
+            if self.version == 'Full':
+                y, pred_parsing = self.torgb(x, next(w_iter), fused_modconv=fused_modconv)
+            elif self.version == 'V18':
+                y, upper_mask, lower_mask = self.torgb(x, next(w_iter), fused_modconv=fused_modconv)
             # y = y.to(dtype=torch.float32, memory_format=torch.contiguous_format)
             y = paddle.cast(y, dtype='float32')
             img = img.add_(y) if img is not None else y
 
         assert x.dtype == dtype
         assert img is None or img.dtype == paddle.float32
-        return x, img, upper_mask, lower_mask
+        if self.version == 'Full':
+            return x, img, pred_parsing
+        elif self.version == 'V18':
+            return x, img, upper_mask, lower_mask
 
 
 class ResBlock(nn.Layer):
@@ -1092,6 +1149,11 @@ class ResBlock(nn.Layer):
 
 
 
+'''
+兼容原版仓库的
+SynthesisNetworkFull
+SynthesisNetworkV18
+'''
 @GENERATORS.register()
 class SynthesisNetwork(nn.Layer):
     def __init__(self,
@@ -1101,6 +1163,7 @@ class SynthesisNetwork(nn.Layer):
         channel_base    = 32768,    # Overall multiplier for the number of channels.
         channel_max     = 512,      # Maximum number of channels in any layer.
         num_fp16_res    = 0,        # Use FP16 for the N highest resolutions.
+        version='Full',  # miemie2013
         **block_kwargs,             # Arguments for SynthesisBlock.
     ):
         assert img_resolution >= 4 and img_resolution & (img_resolution - 1) == 0  # 分辨率是2的n次方
@@ -1112,6 +1175,7 @@ class SynthesisNetwork(nn.Layer):
         self.block_resolutions = [2 ** i for i in range(2, self.img_resolution_log2 + 1)]
         channels_dict = {res: min(channel_base // res, channel_max) for res in self.block_resolutions}
         fp16_resolution = max(2 ** (self.img_resolution_log2 + 1 - num_fp16_res), 8)
+        self.version = version
 
         self.num_ws = 0
         for res in self.block_resolutions:
@@ -1121,7 +1185,7 @@ class SynthesisNetwork(nn.Layer):
             use_fp16 = False
             is_last = (res == self.img_resolution)
             block = SynthesisBlock(in_channels, out_channels, w_dim=w_dim, resolution=res,
-                img_channels=img_channels, is_last=is_last, use_fp16=use_fp16, **block_kwargs)
+                img_channels=img_channels, is_last=is_last, use_fp16=use_fp16, is_style=True, version=self.version, **block_kwargs)
             self.num_ws += block.num_conv
             if is_last:
                 self.num_ws += block.num_torgb
@@ -1138,7 +1202,7 @@ class SynthesisNetwork(nn.Layer):
         in_channels = channels_dict[res//2]
         out_channels = channels_dict[res]
         self.texture_b256 = SynthesisBlock(in_channels, out_channels, w_dim=w_dim, resolution=res,
-                img_channels=img_channels, is_last=True, use_fp16=False, **block_kwargs)
+                img_channels=img_channels, is_last=True, use_fp16=False, is_style=False, version=self.version, **block_kwargs)
 
         spade_encoder = []
         ngf = 64
@@ -1187,9 +1251,20 @@ class SynthesisNetwork(nn.Layer):
         x = img = None
         for res, cur_ws in zip(self.block_resolutions, block_ws):
             block = getattr(self, f'b{res}')
-            x, img, upper_mask, lower_mask = block(x, img, cur_ws, pose_feat, cat_feat, force_fp32=True, **block_kwargs)
+            if self.version == 'Full':
+                x, img, pred_parsing = block(x, img, cur_ws, pose_feat, cat_feat, force_fp32=True, **block_kwargs)
+            elif self.version == 'V18':
+                x, img, upper_mask, lower_mask = block(x, img, cur_ws, pose_feat, cat_feat, force_fp32=True, **block_kwargs)
             if res == 128:
                 x_128, img_128 = x.clone(), img.clone()
+
+        if self.version == 'Full':
+            softmax = paddle.nn.Softmax(axis=1)
+            aaaaaaaaaaaaaa = softmax(pred_parsing.detach())
+            bbbbbbbbbb = paddle.argmax(aaaaaaaaaaaaaa, axis=1)
+            parsing_index = bbbbbbbbbb.unsqueeze(1)
+            upper_mask = paddle.cast(parsing_index == 1, dtype=paddle.float32)
+            lower_mask = paddle.cast(parsing_index == 2, dtype=paddle.float32)
 
         spade_upper_feat = self.get_spade_feat(upper_mask.detach(), denorm_upper_mask, denorm_upper_input)
         spade_lower_feat = self.get_spade_feat(lower_mask.detach(), denorm_lower_mask, denorm_lower_input)
@@ -1201,8 +1276,12 @@ class SynthesisNetwork(nn.Layer):
         x_spade_128 = self.spade_b128_3(x_spade_128, spade_feat)
 
         cur_ws = block_ws[-1]
-        finetune_x, finetune_img, _, _ = self.texture_b256(x_spade_128, img_128, cur_ws, pose_feat, cat_feat, force_fp32=True, **block_kwargs)
 
-        return img, finetune_img, upper_mask, lower_mask
+        if self.version == 'Full':
+            finetune_x, finetune_img, _ = self.texture_b256(x_spade_128, img_128, cur_ws, pose_feat, cat_feat, force_fp32=True, **block_kwargs)
+            return img, finetune_img, pred_parsing
+        elif self.version == 'V18':
+            finetune_x, finetune_img, _, _ = self.texture_b256(x_spade_128, img_128, cur_ws, pose_feat, cat_feat, force_fp32=True, **block_kwargs)
+            return img, finetune_img, upper_mask, lower_mask
 
 

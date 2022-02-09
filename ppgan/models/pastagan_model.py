@@ -562,6 +562,8 @@ class PastaGANModel(BaseModel):
             self.contextual_layers = ['r12','r22','r32','r42','r52']
             self.contextual_forward_loss = ContextualLoss_forward()
 
+        self.augment_pipe = None
+
 
     def setup_input(self, input):
         """Unpack input data from the dataloader and perform necessary pre-processing steps.

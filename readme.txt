@@ -15,6 +15,10 @@ class PastaGANDiscriminator(nn.Layer):
 
 3.计算损失时，噪声all_gen_z，先假设num_gpus = 1
 
+4.先假设  self.augment_pipe = None
+
+
+
 
 # 解压mpv3d数据集
 cd ~/w*
@@ -47,7 +51,7 @@ cd ~/w*
 python tools/main.py -c configs/pastagan_256_mpv3d.yaml --evaluate-only --load output_dir/pastagan_256_mpv3d-2022-01-19-16-13/epoch_5_checkpoint.pdparams
 
 
-python tools/main.py -c configs/pastagan_256_mpv3d.yaml --evaluate-only --load G_ema_256.pdparams
+python tools/main.py -c configs/pastagan_256_mpv3d_pretrained.yaml --evaluate-only --load G_ema_256.pdparams
 
 
 ======================== StarGANv2 ========================

@@ -30,7 +30,7 @@ model:
     num_fp16_res: &NUM_FP16_RES 3
     conv_clamp: &CONV_CLAMP 256
     use_noise: true
-    version: Full  # miemie2013
+    version: V18  # miemie2013
   mapping:
     name: MappingNetwork
     z_dim: &Z_DIM 0
@@ -46,7 +46,7 @@ model:
     n_downsampling: &N_DOWN 6
   style_encoding:
     name: StyleEncoderNetwork
-    input_nc: 42
+    input_nc: 60
     output_nc: *OC
     ngf: *NGF
     n_downsampling: *N_DOWN
