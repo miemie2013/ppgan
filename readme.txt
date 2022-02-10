@@ -18,6 +18,14 @@ class PastaGANDiscriminator(nn.Layer):
 4.先假设  self.augment_pipe = None
 
 
+5.
+x = y.add_(x)
+这种表达式没有二阶梯度，需要改写为
+x = y + x
+
+
+
+
 
 
 # 解压mpv3d数据集

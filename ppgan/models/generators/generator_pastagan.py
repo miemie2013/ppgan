@@ -834,7 +834,7 @@ class Spade_ResBlock(nn.Layer):
         x = self.conv0(self.spade0(x, denorm_feat))
         x = self.conv1(self.spade1(x, denorm_feat), gain=np.sqrt(0.5))
 
-        x = y.add_(x)
+        x = y + x
         return x
 
 class SynthesisLayer(nn.Layer):
@@ -1086,7 +1086,7 @@ class SynthesisBlock(nn.Layer):
             y = self.skip(x, gain=np.sqrt(0.5))
             x = self.conv0(x, next(w_iter), fused_modconv=fused_modconv, **layer_kwargs)
             x = self.conv1(x, next(w_iter), fused_modconv=fused_modconv, gain=np.sqrt(0.5), **layer_kwargs)
-            x = y.add_(x)
+            x = y + x
         else:
             x = self.conv0(x, next(w_iter), fused_modconv=fused_modconv, **layer_kwargs)
             x = self.conv1(x, next(w_iter), fused_modconv=fused_modconv, **layer_kwargs)
@@ -1108,7 +1108,7 @@ class SynthesisBlock(nn.Layer):
                 y, upper_mask, lower_mask = self.torgb(x, next(w_iter), fused_modconv=fused_modconv)
             # y = y.to(dtype=torch.float32, memory_format=torch.contiguous_format)
             y = paddle.cast(y, dtype='float32')
-            img = img.add_(y) if img is not None else y
+            img = img + y if img is not None else y
 
         assert x.dtype == dtype
         assert img is None or img.dtype == paddle.float32

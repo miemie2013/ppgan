@@ -82,7 +82,7 @@ class DiscriminatorBlock(nn.Layer):
             y = self.skip(x, gain=np.sqrt(0.5))
             x = self.conv0(x)
             x = self.conv1(x, gain=np.sqrt(0.5))
-            x = y.add_(x)
+            x = y + x
         else:
             x = self.conv0(x)
             x = self.conv1(x)
