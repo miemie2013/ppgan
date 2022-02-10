@@ -618,6 +618,9 @@ class PastaGANModel(BaseModel):
         do_Gpl = (phase in ['Greg', 'Gboth']) and (self.pl_weight != 0)
         do_Dr1 = (phase in ['Dreg', 'Dboth']) and (self.r1_gamma != 0)
 
+        dic2 = np.load('../data77.npz')
+
+
         real_c, cat_feats = self.nets['style_encoding'](style_input, retain)
         gen_c = real_c  # 把 real_c 也当做 gen_c作为CGAN的C
 
@@ -628,136 +631,154 @@ class PastaGANModel(BaseModel):
                                                                           denorm_upper_input, denorm_lower_input,
                                                                           sync=(sync and not do_Gpl))  # May get synced by Gpl.
 
+            gen_img2 = dic2['gen_img']
+            ddd = np.sum((gen_img2 - gen_img.numpy()) ** 2)
+            print('ddd=%.6f' % ddd)
+            gen_finetune_img2 = dic2['gen_finetune_img']
+            ddd = np.sum((gen_finetune_img2 - gen_finetune_img.numpy()) ** 2)
+            print('ddd=%.6f' % ddd)
+            pred_parsing2 = dic2['pred_parsing']
+            ddd = np.sum((pred_parsing2 - pred_parsing.numpy()) ** 2)
+            print('ddd=%.6f' % ddd)
+            _gen_ws2 = dic2['_gen_ws']
+            ddd = np.sum((_gen_ws2 - _gen_ws.numpy()) ** 2)
+            print('ddd=%.6f' % ddd)
+
             # 这里的conditioned GAN的 (gen_img, gen_c) 和 (real_img, real_c) 不是严格对应的。
             # 如果加入pose conditioned, 那么应该 gen_img和real_img严格对应，然后 只用一个real pose, 也就是(gen_img, real_pose) 和 (real_img, real_pose)
             # 视情况, 看是否需要加入L1 和 vgg loss
 
             gen_logits = self.run_D(gen_img, gen_c, sync=False)
             gen_finetune_logits = self.run_D(gen_finetune_img, gen_c, sync=False)
+            ddd = np.sum((dic2['gen_logits'] - gen_logits.numpy()) ** 2)
+            print('ddd=%.6f' % ddd)
+            ddd = np.sum((dic2['gen_finetune_logits'] - gen_finetune_logits.numpy()) ** 2)
+            print('ddd=%.6f' % ddd)
 
-            training_stats.report('Loss/scores/fake', gen_logits)
-            training_stats.report('Loss/signs/fake', gen_logits.sign())
-            loss_Gmain = torch.nn.functional.softplus(-gen_logits)  # -log(sigmoid(gen_logits))
+            loss_Gmain = paddle.nn.functional.softplus(-gen_logits)  # -log(sigmoid(gen_logits))
+            ddd = np.sum((dic2['loss_Gmain'] - loss_Gmain.numpy()) ** 2)
+            print('ddd=%.6f' % ddd)
             loss_Gmain = loss_Gmain.mean()
-            training_stats.report('Loss/G/loss', loss_Gmain)
 
-            training_stats.report('Loss/scores/fake_finetune', gen_finetune_logits)
-            training_stats.report('Loss/signs/fake_finetune', gen_finetune_logits.sign())
-            loss_Gmain_finetune = torch.nn.functional.softplus(-gen_finetune_logits)  # -log(sigmoid(gen_logits))
+            loss_Gmain_finetune = paddle.nn.functional.softplus(-gen_finetune_logits)  # -log(sigmoid(gen_logits))
+            ddd = np.sum((dic2['loss_Gmain_finetune'] - loss_Gmain_finetune.numpy()) ** 2)
+            print('ddd=%.6f' % ddd)
             loss_Gmain_finetune = loss_Gmain_finetune.mean()
-            training_stats.report('Loss/G/loss_finetune', loss_Gmain_finetune)
 
             # l1 loss
             loss_G_L1 = 0
             loss_G_finetune_L1 = 0
             if self.l1_weight > 0:
-                loss_G_L1 = torch.nn.L1Loss()(gen_img, real_img) * self.l1_weight
-                # loss_G_L1 = loss_G_L1.mean()
+                loss_G_L1 = paddle.nn.L1Loss()(gen_img, real_img) * self.l1_weight
+                ddd = np.sum((dic2['loss_G_L1'] - loss_G_L1.numpy()) ** 2)
+                print('ddd=%.6f' % ddd)
 
-                loss_G_finetune_L1 = torch.nn.L1Loss()(gen_finetune_img, real_img) * self.l1_weight
-                # loss_G_finetune_L1 = loss_G_finetune_L1.mean()
-            training_stats.report('Loss/G/L1', loss_G_L1)
-            training_stats.report('Loss/G/L1_finetune', loss_G_finetune_L1)
+                loss_G_finetune_L1 = paddle.nn.L1Loss()(gen_finetune_img, real_img) * self.l1_weight
+                ddd = np.sum((dic2['loss_G_finetune_L1'] - loss_G_finetune_L1.numpy()) ** 2)
+                print('ddd=%.6f' % ddd)
 
             loss_mask = 0
             if self.mask_weight > 0:
                 aaaaaaaaaaaaa = paddle.cast(gt_parsing, dtype=paddle.int64)[:, 0, :, :]
                 loss_mask = self.ce_parsing(pred_parsing.transpose((0, 2, 3, 1)), aaaaaaaaaaaaa)
                 loss_mask = paddle.mean(loss_mask) * self.mask_weight
+                ddd = np.sum((dic2['loss_mask'] - loss_mask.numpy()) ** 2)
+                print('ddd=%.6f' % ddd)
 
-            training_stats.report('Loss/G/mask_loss', loss_mask)
 
             # vgg loss
             loss_G_VGG = 0
             loss_G_finetune_VGG = 0
             if self.vgg_weight > 0:
                 loss_G_VGG = self.criterionVGG(gen_img, real_img) * self.vgg_weight
+                ddd = np.sum((dic2['loss_G_VGG'] - loss_G_VGG.numpy()) ** 2)
+                print('ddd=%.6f' % ddd)
                 loss_G_VGG = loss_G_VGG.mean()
 
                 loss_G_finetune_VGG = self.criterionVGG(gen_finetune_img, real_img) * self.vgg_weight
+                ddd = np.sum((dic2['loss_G_finetune_VGG'] - loss_G_finetune_VGG.numpy()) ** 2)
+                print('ddd=%.6f' % ddd)
                 loss_G_finetune_VGG = loss_G_finetune_VGG.mean()
-            training_stats.report('Loss/G/vgg', loss_G_VGG)
-            training_stats.report('Loss/G/vgg_finetune', loss_G_finetune_VGG)
 
             loss_G = (loss_Gmain + loss_Gmain_finetune) / 2 + \
                      (loss_G_L1 + loss_G_finetune_L1) / 2 + \
                      (loss_G_VGG + loss_G_finetune_VGG) / 2 + loss_mask
 
-            loss_G.mul(gain).backward()  # 咩酱：gain即上文提到的这个阶段的训练间隔。
+            loss_G = loss_G * float(gain)
+            loss_G.backward()  # 咩酱：gain即上文提到的这个阶段的训练间隔。
 
         # Gpl: Apply path length regularization.
         if do_Gpl:
-            with torch.autograd.profiler.record_function('Gpl_forward'):
-                batch_size = gen_z.shape[0] // self.pl_batch_shrink
-                # with misc.ddp_sync(self.G_flownet, sync):
-                #     flow = self.G_flownet(torch.cat((cloth[:batch_size], aff_pose[:batch_size]), dim=1))
-                # warp_cloth = F.grid_sample(cloth[:batch_size, :3, :, :], flow)
+            batch_size = gen_z.shape[0] // self.pl_batch_shrink
+            # with misc.ddp_sync(self.G_flownet, sync):
+            #     flow = self.G_flownet(torch.cat((cloth[:batch_size], aff_pose[:batch_size]), dim=1))
+            # warp_cloth = F.grid_sample(cloth[:batch_size, :3, :, :], flow)
 
-                gen_img, gen_ws = self.run_G(gen_z[:batch_size], gen_c[:batch_size], pose[:batch_size],
-                                             [cat_feat[:batch_size] for cat_feat in cat_feats], sync=sync)
-                pl_noise = torch.randn_like(gen_img) / np.sqrt(gen_img.shape[2] * gen_img.shape[3])
-                with torch.autograd.profiler.record_function('pl_grads'), conv2d_gradfix.no_weight_gradients():
-                    pl_grads = torch.autograd.grad(outputs=[(gen_img * pl_noise).sum()], inputs=[gen_ws], create_graph=True, only_inputs=True)[0]
-                pl_lengths = pl_grads.square().sum(2).mean(1).sqrt()
-                pl_mean = self.pl_mean.lerp(pl_lengths.mean(), self.pl_decay)
-                self.pl_mean.copy_(pl_mean.detach())
-                pl_penalty = (pl_lengths - pl_mean).square()
-                training_stats.report('Loss/pl_penalty', pl_penalty)
-                loss_Gpl = pl_penalty * self.pl_weight
-                training_stats.report('Loss/G/reg', loss_Gpl)
-            with torch.autograd.profiler.record_function('Gpl_backward'):
-                (gen_img[:, 0, 0, 0] * 0 + loss_Gpl).mean().mul(gain).backward()  # 咩酱：gain即上文提到的这个阶段的训练间隔。
+            gen_img, gen_ws = self.run_G(gen_z[:batch_size], gen_c[:batch_size], pose[:batch_size],
+                                         [cat_feat[:batch_size] for cat_feat in cat_feats], sync=sync)
+            pl_noise = paddle.randn_like(gen_img) / np.sqrt(gen_img.shape[2] * gen_img.shape[3])
+            pl_grads = paddle.grad(
+                outputs=[(gen_img * pl_noise).sum()],
+                inputs=[gen_ws],
+                create_graph=True,  # 最终loss里包含梯度，需要求梯度的梯度，所以肯定需要建立反向图。
+                retain_graph=True)[0]
+            pl_lengths = pl_grads.square().sum(2).mean(1).sqrt()
+            pl_mean = self.pl_mean.lerp(pl_lengths.mean(), self.pl_decay)
+            self.pl_mean.copy_(pl_mean.detach())
+            pl_penalty = (pl_lengths - pl_mean).square()
+            loss_Gpl = pl_penalty * self.pl_weight
+
+            loss_Gpl = (gen_img[:, 0, 0, 0] * 0 + loss_Gpl).mean() * float(gain)
+            loss_Gpl.backward()  # 咩酱：gain即上文提到的这个阶段的训练间隔。
 
         # Dmain: Minimize logits for generated images.
         loss_Dgen = 0
+        loss3 = 0.0
         if do_Dmain:
-            with torch.autograd.profiler.record_function('Dgen_forward'):
-                gen_img, gen_finetune_img, _, _gen_ws = self.run_G(gen_z, gen_c, pose, cat_feats, denorm_upper_mask,
-                                                                   denorm_lower_mask, \
-                                                                   denorm_upper_input, denorm_lower_input, sync=False)
-                gen_logits = self.run_D(gen_img, gen_c, sync=False)  # Gets synced by loss_Dreal.
-                gen_finetune_logits = self.run_D(gen_finetune_img, gen_c, sync=False)
+            gen_img, gen_finetune_img, _, _gen_ws = self.run_G(gen_z, gen_c, pose, cat_feats, denorm_upper_mask,
+                                                               denorm_lower_mask, \
+                                                               denorm_upper_input, denorm_lower_input, sync=False)
+            gen_logits = self.run_D(gen_img, gen_c, sync=False)  # Gets synced by loss_Dreal.
+            gen_finetune_logits = self.run_D(gen_finetune_img, gen_c, sync=False)
 
-                training_stats.report('Loss/scores/fake', gen_logits)
-                training_stats.report('Loss/signs/fake', gen_logits.sign())
-                loss_Dgen = torch.nn.functional.softplus(gen_logits)  # -log(1 - sigmoid(gen_logits))
+            loss_Dgen = paddle.nn.functional.softplus(gen_logits)  # -log(1 - sigmoid(gen_logits))
 
-                training_stats.report('Loss/scores/fake_finetune', gen_finetune_logits)
-                training_stats.report('Loss/signs/fake_finetune', gen_finetune_logits.sign())
-                loss_Dgen_finetune = torch.nn.functional.softplus(gen_finetune_logits)  # -log(1 - sigmoid(gen_logits))
+            loss_Dgen_finetune = paddle.nn.functional.softplus(gen_finetune_logits)  # -log(1 - sigmoid(gen_logits))
 
-            with torch.autograd.profiler.record_function('Dgen_backward'):
-                ((loss_Dgen.mean() + loss_Dgen_finetune.mean()) / 2).mul(gain).backward()  # 咩酱：gain即上文提到的这个阶段的训练间隔。
-                # loss_Dgen.mean().mul(gain).backward()
+            loss3 = ((loss_Dgen.mean() + loss_Dgen_finetune.mean()) / 2) * float(gain)
 
         # Dmain: Maximize logits for real images.
         # Dr1: Apply R1 regularization.
         if do_Dmain or do_Dr1:
             name = 'Dreal_Dr1' if do_Dmain and do_Dr1 else 'Dreal' if do_Dmain else 'Dr1'
-            with torch.autograd.profiler.record_function(name + '_forward'):
-                real_img_tmp = real_img.detach().requires_grad_(do_Dr1)
-                real_logits = self.run_D(real_img_tmp, real_c, sync=sync)
-                training_stats.report('Loss/scores/real', real_logits)
-                training_stats.report('Loss/signs/real', real_logits.sign())
 
-                loss_Dreal = 0
-                if do_Dmain:
-                    loss_Dreal = torch.nn.functional.softplus(-real_logits)  # -log(sigmoid(real_logits))
-                    training_stats.report('Loss/D/loss', loss_Dgen + loss_Dreal)
+            real_img_tmp = real_img.detach()
+            real_img_tmp.stop_gradient = not do_Dr1
+            real_logits = self.run_D(real_img_tmp, real_c, sync=sync)
 
-                loss_Dr1 = 0
-                if do_Dr1:
-                    with torch.autograd.profiler.record_function('r1_grads'), conv2d_gradfix.no_weight_gradients():
-                        r1_grads = \
-                        torch.autograd.grad(outputs=[real_logits.sum()], inputs=[real_img_tmp], create_graph=True,
-                                            only_inputs=True)[0]
-                    r1_penalty = r1_grads.square().sum([1, 2, 3])
-                    loss_Dr1 = r1_penalty * (self.r1_gamma / 2)
-                    training_stats.report('Loss/r1_penalty', r1_penalty)
-                    training_stats.report('Loss/D/reg', loss_Dr1)
+            loss_Dreal = 0
+            if do_Dmain:
+                loss_Dreal = paddle.nn.functional.softplus(-real_logits)  # -log(sigmoid(real_logits))
 
-            with torch.autograd.profiler.record_function(name + '_backward'):
-                (real_logits * 0 + loss_Dreal + loss_Dr1).mean().mul(gain).backward()  # 咩酱：gain即上文提到的这个阶段的训练间隔。
+            loss_Dr1 = 0
+            if do_Dr1:
+                r1_grads = paddle.grad(
+                    outputs=[real_logits.sum()],
+                    inputs=[real_img_tmp],
+                    create_graph=True,  # 最终loss里包含梯度，需要求梯度的梯度，所以肯定需要建立反向图。
+                    retain_graph=True)[0]
+
+                # r1_grads = paddle.grad(outputs=real_logits.sum(),
+                #                        inputs=real_img_tmp,
+                #                        create_graph=True)[0]  # 最终loss里包含梯度，需要求梯度的梯度，所以肯定需要建立反向图。
+
+                r1_penalty = r1_grads.square().sum([1, 2, 3])
+                loss_Dr1 = r1_penalty * (self.r1_gamma / 2)
+
+            loss4 = (loss_Dreal + loss_Dr1).mean() * float(gain)
+            if do_Dmain:
+                loss4 += loss3
+            loss4.backward()  # 咩酱：gain即上文提到的这个阶段的训练间隔。
 
     def train_iter(self, optimizers=None):
         phase_real = self.input[0]
@@ -770,6 +791,31 @@ class PastaGANModel(BaseModel):
         phase_denorm_upper_mask = self.input[8]
         phase_denorm_lower_mask = self.input[9]
         phase_retain_mask = self.input[12]
+
+        # miemie2013: 调试的代码
+        dic2 = np.load('../train_data.npz')
+        phase_real = paddle.to_tensor(dic2['phase_real'], dtype=phase_real.dtype)
+        phase_pose = paddle.to_tensor(dic2['phase_pose'], dtype=phase_pose.dtype)
+        phase_norm_img = paddle.to_tensor(dic2['phase_norm_img'], dtype=phase_norm_img.dtype)
+        phase_norm_img_lower = paddle.to_tensor(dic2['phase_norm_img_lower'], dtype=phase_norm_img_lower.dtype)
+        phase_denorm_upper_img = paddle.to_tensor(dic2['phase_denorm_upper_img'], dtype=phase_denorm_upper_img.dtype)
+        phase_denorm_lower_img = paddle.to_tensor(dic2['phase_denorm_lower_img'], dtype=phase_denorm_lower_img.dtype)
+        phase_gt_parsing = paddle.to_tensor(dic2['phase_gt_parsing'], dtype=phase_gt_parsing.dtype)
+        phase_denorm_upper_mask = paddle.to_tensor(dic2['phase_denorm_upper_mask'], dtype=phase_denorm_upper_mask.dtype)
+        phase_denorm_lower_mask = paddle.to_tensor(dic2['phase_denorm_lower_mask'], dtype=phase_denorm_lower_mask.dtype)
+        phase_retain_mask = paddle.to_tensor(dic2['phase_retain_mask'], dtype=phase_retain_mask.dtype)
+
+        # phase_real2 = paddle.to_tensor(dic2['phase_real'], dtype=phase_real.dtype)
+        # phase_pose2 = paddle.to_tensor(dic2['phase_pose'], dtype=phase_pose.dtype)
+        # phase_norm_img2 = paddle.to_tensor(dic2['phase_norm_img'], dtype=phase_norm_img.dtype)
+        # phase_norm_img_lower2 = paddle.to_tensor(dic2['phase_norm_img_lower'], dtype=phase_norm_img_lower.dtype)
+        # phase_denorm_upper_img2 = paddle.to_tensor(dic2['phase_denorm_upper_img'], dtype=phase_denorm_upper_img.dtype)
+        # phase_denorm_lower_img2 = paddle.to_tensor(dic2['phase_denorm_lower_img'], dtype=phase_denorm_lower_img.dtype)
+        # phase_gt_parsing2 = paddle.to_tensor(dic2['phase_gt_parsing'], dtype=phase_gt_parsing.dtype)
+        # phase_denorm_upper_mask2 = paddle.to_tensor(dic2['phase_denorm_upper_mask'], dtype=phase_denorm_upper_mask.dtype)
+        # phase_denorm_lower_mask2 = paddle.to_tensor(dic2['phase_denorm_lower_mask'], dtype=phase_denorm_lower_mask.dtype)
+        # phase_retain_mask2 = paddle.to_tensor(dic2['phase_retain_mask'], dtype=phase_retain_mask.dtype)
+
 
         phase_real_tensor = paddle.cast(phase_real, dtype=paddle.float32) / 127.5 - 1
         phase_parts_tensor = paddle.cast(phase_norm_img, dtype=paddle.float32) / 127.5 - 1
@@ -853,7 +899,10 @@ class PastaGANModel(BaseModel):
             # for param in phase.module.parameters():
             #     if param.grad is not None:
             #         misc.nan_to_num(param.grad, nan=0, posinf=1e5, neginf=-1e5, out=param.grad)
-            phase.opt.step()
+            if 'G' in phase['name']:
+                optimizers['generator'].step()  # 更新参数
+            elif 'D' in phase['name']:
+                optimizers['discriminator'].step()  # 更新参数
 
         # x_real [N, 3, 256, 256]
         # y_org  [N, ]  x_real的类别id
@@ -931,6 +980,7 @@ class PastaGANModel(BaseModel):
                                                  self.lambda_cyc,
                                                  x_real,
                                                  y_org,
+                                                 y_trg,
                                                  y_trg,
                                                  z_trgs=[z_trg, z_trg2],
                                                  masks=masks)

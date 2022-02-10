@@ -194,6 +194,15 @@ class Trainer:
         self.model.set_total_iter(self.total_iters)
         self.profiler_options = cfg.profiler_options
 
+        # miemie2013: 调试的代码
+        state_dicts222 = paddle.load("../G_temp_256.pdparams")
+        for net_name, net in self.model.nets.items():
+            if net_name == 'discriminator':
+                continue
+            net.set_state_dict(state_dicts222[net_name])
+        self.model.nets['discriminator'].set_state_dict(paddle.load("../D_temp_256.pdparams"))
+        print()
+
     def distributed_data_parallel(self):
         paddle.distributed.init_parallel_env()
         find_unused_parameters = self.cfg.get('find_unused_parameters', False)

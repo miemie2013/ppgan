@@ -496,7 +496,8 @@ class FullyConnectedLayer(nn.Layer):
                 b = b * self.bias_gain
 
         if self.activation == 'linear' and b is not None:
-            x = paddle.addmm(b.unsqueeze(0), x, w.t())
+            # x = paddle.addmm(b.unsqueeze(0), x, w.t())   # 因为paddle.addmm()没有实现二阶梯度，所以用其它等价实现。
+            x = paddle.matmul(x, w, transpose_y=True) + b.unsqueeze(0)
         else:
             x = x.matmul(w.t())
             x = bias_act(x, b, act=self.activation)
@@ -854,6 +855,7 @@ class SynthesisLayer(nn.Layer):
         self.resolution = resolution
         self.up = up
         self.use_noise = use_noise
+        # self.use_noise = False
         self.activation = activation
         self.conv_clamp = conv_clamp
         self.register_buffer('resample_filter', upfirdn2d_setup_filter(resample_filter))
@@ -1240,6 +1242,7 @@ class SynthesisNetwork(nn.Layer):
     def forward(self, ws, pose_feat, cat_feat, denorm_upper_input, denorm_lower_input, denorm_upper_mask, \
                 denorm_lower_mask, **block_kwargs):
         block_ws = []
+
         ws = paddle.cast(ws, dtype='float32')
         w_idx = 0
         for res in self.block_resolutions:

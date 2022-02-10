@@ -72,7 +72,7 @@ dataset:
     use_labels: true
     xflip: False
     num_workers: 0
-    batch_size: 2
+    batch_size: 1
     test_count: -1
     preprocess: None
 

@@ -157,7 +157,10 @@ class DiscriminatorEpilogue(nn.Layer):
         if self.mbstd is not None:
             x = self.mbstd(x)
         x = self.conv(x)
-        x = self.fc(x.flatten(1))
+        # flatten_x = x.flatten(1)   # 因为flatten()没有实现二阶梯度，所以用其它等价实现。
+        batch_size = x.shape[0]
+        flatten_x = x.reshape((batch_size, -1))
+        x = self.fc(flatten_x)
         x = self.out(x)
 
         # Conditioning.

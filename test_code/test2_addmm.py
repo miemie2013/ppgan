@@ -25,9 +25,8 @@ x = paddle.to_tensor(x)
 w = paddle.to_tensor(w)
 b = paddle.to_tensor(b)
 
-x = paddle.addmm(b.unsqueeze(0), x, w.t())
-
-
+# x = paddle.addmm(b.unsqueeze(0), x, w.t())   # 因为paddle.addmm()没有实现二阶梯度，所以用其它等价实现。
+x = paddle.matmul(x, w, transpose_y=True) + b.unsqueeze(0)
 
 ddd = np.sum((x2.cpu().detach().numpy() - x.numpy())**2)
 print('ddd=%.6f' % ddd)
