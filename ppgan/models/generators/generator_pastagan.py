@@ -217,7 +217,29 @@ def upfirdn2d(x, filter, up=1, down=1, padding=0, flip_filter=False, gain=1):
         x = F.conv2d(x, weight=filter.unsqueeze(3), groups=num_channels)
 
     # Downsample by throwing away pixels.
-    x = x[:, :, ::downy, ::downx]
+    # 因为:: （paddle.strided_slice()）没有实现二阶梯度，所以用其它等价实现。
+    x222 = x[:, :, ::downy, ::downx]  # RuntimeError: (NotFound) The Op strided_slice_grad doesn't have any grad op.
+    assert downy == downx
+    if downy == 1:
+        pass
+    elif downy == 2:
+        N, C, H, W = x.shape
+        # print('rrrrrrrrrrrrrrrrrrr')
+        # print(N, C, H, W)
+        assert H == W
+        pad_height_bottom = 0
+        pad_width_right = 0
+        if H % 2 == 1:
+            pad_height_bottom = 1
+            pad_width_right = 1
+        stride2_kernel = np.zeros((C, 1, 2, 2), dtype=np.float32)
+        stride2_kernel[:, :, 0, 0] = 1.0
+        stride2_kernel = paddle.to_tensor(stride2_kernel)
+        stride2_kernel.stop_gradient = True
+        x = F.conv2d(x, stride2_kernel, bias=None, stride=2, groups=C,
+                     padding=[[0, 0], [0, 0], [0, pad_height_bottom], [0, pad_width_right]])
+    else:
+        raise NotImplementedError("downy \'{}\' is not implemented.".format(downy))
     return x
 
 

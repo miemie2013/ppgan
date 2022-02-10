@@ -306,68 +306,6 @@ class ContextualLoss_forward(nn.Layer):
 
 
 
-
-
-
-
-
-
-
-def compute_d_loss(nets,
-                   lambda_reg,
-                   x_real,
-                   y_org,
-                   y_trg,
-                   z_trg=None,
-                   x_ref=None,
-                   masks=None):
-    assert (z_trg is None) != (x_ref is None)
-    # with real images
-    x_real.stop_gradient = False   # x_real [N, 3, 256, 256]
-    out = nets['discriminator'](x_real, y_org)  # [N, ]  输出只取真实类别处的输出。
-    loss_real = adv_loss(out, 1)  # [N, ]  交叉熵损失。这是真的图像
-    loss_reg = r1_reg(out, x_real)  # [N, ]  梯度惩罚损失
-
-    # with fake images
-    with paddle.no_grad():  # 训练判别器时，生成器前向传播应停止梯度。
-        if z_trg is not None:
-            s_trg = nets['mapping_network'](z_trg, y_trg)   # (N, style_dim)  随机噪声z_trg生成风格编码s_trg，只取目标domain的输出
-        else:  # x_ref is not None
-            s_trg = nets['style_encoder'](x_ref, y_trg)   # (N, style_dim)  目标domain真实图像x_ref生成风格编码s_trg
-
-        x_fake = nets['generator'](x_real, s_trg, masks=masks)  # 风格编码s_trg和真实图像生成目标domain的图像x_fake
-    out = nets['discriminator'](x_fake, y_trg)  # x_fake [N, 3, 256, 256]  注意，x_fake已经停止梯度。   out [N, ]  输出只取真实(目标domain)类别处的输出。
-    loss_fake = adv_loss(out, 0)  # [N, ]  交叉熵损失。这是假的图像
-
-    loss = loss_real + loss_fake + lambda_reg * loss_reg   # lambda_reg是梯度惩罚损失的权重
-    return loss, {
-        'real': loss_real.numpy(),
-        'fake': loss_fake.numpy(),
-        'reg': loss_reg.numpy()
-    }
-
-
-def adv_loss(logits, target):
-    assert target in [1, 0]
-    targets = paddle.full_like(logits, fill_value=target)  # [N, ]  标记
-    loss = F.binary_cross_entropy_with_logits(logits, targets)  # [N, ]  交叉熵损失
-    return loss
-
-
-def r1_reg(d_out, x_in):
-    # zero-centered gradient penalty for real images
-    batch_size = x_in.shape[0]
-    grad_dout = paddle.grad(outputs=d_out.sum(),
-                            inputs=x_in,
-                            create_graph=True,
-                            retain_graph=True,
-                            only_inputs=True)[0]
-    grad_dout2 = grad_dout.pow(2)
-    assert (grad_dout2.shape == x_in.shape)
-    reg = 0.5 * paddle.reshape(grad_dout2, (batch_size, -1)).sum(1).mean(0)
-    return reg
-
-
 def soft_update(source, target, beta=1.0):
     '''
     ema:
@@ -393,68 +331,6 @@ def dump_model(model):
             params[k] = model.state_dict()[k].shape
     return params
 
-
-def compute_g_loss(nets,
-                   w_hpf,
-                   lambda_sty,
-                   lambda_ds,
-                   lambda_cyc,
-                   x_real,
-                   y_org,
-                   y_trg,
-                   z_trgs=None,
-                   x_refs=None,
-                   masks=None):
-    assert (z_trgs is None) != (x_refs is None)
-    if z_trgs is not None:
-        z_trg, z_trg2 = z_trgs
-    if x_refs is not None:
-        x_ref, x_ref2 = x_refs
-
-    # adversarial loss。对抗损失
-    if z_trgs is not None:
-        s_trg = nets['mapping_network'](z_trg, y_trg)   # 第1个随机噪声z_trg 生成风格编码s_trg
-    else:
-        s_trg = nets['style_encoder'](x_ref, y_trg)   # 目标domain的第1张真实图像x_ref 生成风格编码s_trg
-
-    x_fake = nets['generator'](x_real, s_trg, masks=masks)   # 真实图像和第1个风格编码s_trg生成第1张假图像
-    # 这里不先把discriminator冻结起来吗？懂了，后面没有optimizers['discriminator'].step()这句代码，所以discriminator的参数不会更新的。
-    out = nets['discriminator'](x_fake, y_trg)
-    loss_adv = adv_loss(out, 1)
-
-    # style reconstruction loss。风格重构损失
-    s_pred = nets['style_encoder'](x_fake, y_trg)   # (N, style_dim)  假图像生成对应domain的风格编码s_pred
-    loss_sty = paddle.mean(paddle.abs(s_pred - s_trg))   # 假图像生成对应domain的风格编码s_pred 和 s_trg 取绝对值损失。
-
-    # diversity sensitive loss。差异敏感损失
-    if z_trgs is not None:
-        s_trg2 = nets['mapping_network'](z_trg2, y_trg)   # 第2个随机噪声z_trg2 生成风格编码s_trg2
-    else:
-        s_trg2 = nets['style_encoder'](x_ref2, y_trg)   # 目标domain的第2张真实图像x_ref2 生成风格编码s_trg2
-    x_fake2 = nets['generator'](x_real, s_trg2, masks=masks)   # 真实图像和第2个风格编码s_trg2生成第2张假图像
-    loss_ds = paddle.mean(paddle.abs(x_fake - x_fake2))   # 第1张假图像 和 第2张假图像 取绝对值损失。
-
-    # cycle-consistency loss。循环一致性损失
-    if w_hpf > 0:
-        if isinstance(nets['fan'], paddle.DataParallel):
-            masks = nets['fan']._layers.get_heatmap(x_fake)
-        else:
-            masks = nets['fan'].get_heatmap(x_fake)
-    else:
-        masks = None
-
-    s_org = nets['style_encoder'](x_real, y_org)   # x_real 生成风格编码s_org
-    x_rec = nets['generator'](x_fake, s_org, masks=masks)   # x_fake“变回”x_real(x_rec)
-    loss_cyc = paddle.mean(paddle.abs(x_rec - x_real))   # x_real 和 x_rec 取绝对值损失。
-
-    loss = loss_adv + lambda_sty * loss_sty \
-        - lambda_ds * loss_ds + lambda_cyc * loss_cyc
-    return loss, {
-        'adv': loss_adv.numpy(),
-        'sty': loss_sty.numpy(),
-        'ds:': loss_ds.numpy(),
-        'cyc': loss_cyc.numpy()
-    }
 
 
 def he_init(module):
@@ -485,6 +361,7 @@ class PastaGANModel(BaseModel):
         lambda_ds=1,
         lambda_cyc=1,
         r1_gamma=10,
+        pl_batch_shrink=2,
         l1_weight=50.0,
         vgg_weight=50.0,
         pl_weight=0.0,
@@ -509,16 +386,12 @@ class PastaGANModel(BaseModel):
         self.latent_dim = latent_dim
         self.lambda_reg = lambda_reg
         self.lambda_sty = lambda_sty
-        self.lambda_ds = lambda_ds
         self.lambda_cyc = lambda_cyc
 
         # self.nets['generator'].apply(he_init)
         # self.nets['style_encoder'].apply(he_init)
         # self.nets['mapping_network'].apply(he_init)
         # self.nets['discriminator'].apply(he_init)
-
-        # remember the initial value of ds weight
-        # self.initial_lambda_ds = self.lambda_ds
 
         self.phases = []
         for name, reg_interval in [('G', G_reg_interval), ('D', D_reg_interval)]:
@@ -544,6 +417,7 @@ class PastaGANModel(BaseModel):
         self.style_mixing_prob = style_mixing_prob
         self.vgg19_ckpt1 = vgg19_ckpt1
         self.vgg19_ckpt2 = vgg19_ckpt2
+        self.pl_batch_shrink = pl_batch_shrink
 
         # 每个类别的权重（6个类别）
         class_weight = paddle.to_tensor([1., 2., 2., 3., 3., 3.])
@@ -618,11 +492,13 @@ class PastaGANModel(BaseModel):
         do_Gpl = (phase in ['Greg', 'Gboth']) and (self.pl_weight != 0)
         do_Dr1 = (phase in ['Dreg', 'Dboth']) and (self.r1_gamma != 0)
 
-        dic2 = np.load('../data77.npz')
+        # dic2 = np.load('../data77.npz')
 
 
         real_c, cat_feats = self.nets['style_encoding'](style_input, retain)
         gen_c = real_c  # 把 real_c 也当做 gen_c作为CGAN的C
+
+        loss_numpy = {}
 
         # Gmain: Maximize logits for generated images.
         if do_Gmain:
@@ -631,59 +507,37 @@ class PastaGANModel(BaseModel):
                                                                           denorm_upper_input, denorm_lower_input,
                                                                           sync=(sync and not do_Gpl))  # May get synced by Gpl.
 
-            gen_img2 = dic2['gen_img']
-            ddd = np.sum((gen_img2 - gen_img.numpy()) ** 2)
-            print('ddd=%.6f' % ddd)
-            gen_finetune_img2 = dic2['gen_finetune_img']
-            ddd = np.sum((gen_finetune_img2 - gen_finetune_img.numpy()) ** 2)
-            print('ddd=%.6f' % ddd)
-            pred_parsing2 = dic2['pred_parsing']
-            ddd = np.sum((pred_parsing2 - pred_parsing.numpy()) ** 2)
-            print('ddd=%.6f' % ddd)
-            _gen_ws2 = dic2['_gen_ws']
-            ddd = np.sum((_gen_ws2 - _gen_ws.numpy()) ** 2)
-            print('ddd=%.6f' % ddd)
-
             # 这里的conditioned GAN的 (gen_img, gen_c) 和 (real_img, real_c) 不是严格对应的。
             # 如果加入pose conditioned, 那么应该 gen_img和real_img严格对应，然后 只用一个real pose, 也就是(gen_img, real_pose) 和 (real_img, real_pose)
             # 视情况, 看是否需要加入L1 和 vgg loss
 
             gen_logits = self.run_D(gen_img, gen_c, sync=False)
             gen_finetune_logits = self.run_D(gen_finetune_img, gen_c, sync=False)
-            ddd = np.sum((dic2['gen_logits'] - gen_logits.numpy()) ** 2)
-            print('ddd=%.6f' % ddd)
-            ddd = np.sum((dic2['gen_finetune_logits'] - gen_finetune_logits.numpy()) ** 2)
-            print('ddd=%.6f' % ddd)
 
             loss_Gmain = paddle.nn.functional.softplus(-gen_logits)  # -log(sigmoid(gen_logits))
-            ddd = np.sum((dic2['loss_Gmain'] - loss_Gmain.numpy()) ** 2)
-            print('ddd=%.6f' % ddd)
             loss_Gmain = loss_Gmain.mean()
 
             loss_Gmain_finetune = paddle.nn.functional.softplus(-gen_finetune_logits)  # -log(sigmoid(gen_logits))
-            ddd = np.sum((dic2['loss_Gmain_finetune'] - loss_Gmain_finetune.numpy()) ** 2)
-            print('ddd=%.6f' % ddd)
             loss_Gmain_finetune = loss_Gmain_finetune.mean()
+
+            loss_numpy['loss_Gmain'] = loss_Gmain.numpy()
+            loss_numpy['loss_Gmain_finetune'] = loss_Gmain_finetune.numpy()
 
             # l1 loss
             loss_G_L1 = 0
             loss_G_finetune_L1 = 0
             if self.l1_weight > 0:
                 loss_G_L1 = paddle.nn.L1Loss()(gen_img, real_img) * self.l1_weight
-                ddd = np.sum((dic2['loss_G_L1'] - loss_G_L1.numpy()) ** 2)
-                print('ddd=%.6f' % ddd)
-
                 loss_G_finetune_L1 = paddle.nn.L1Loss()(gen_finetune_img, real_img) * self.l1_weight
-                ddd = np.sum((dic2['loss_G_finetune_L1'] - loss_G_finetune_L1.numpy()) ** 2)
-                print('ddd=%.6f' % ddd)
+                loss_numpy['loss_G_L1'] = loss_G_L1.numpy()
+                loss_numpy['loss_G_finetune_L1'] = loss_G_finetune_L1.numpy()
 
             loss_mask = 0
             if self.mask_weight > 0:
                 aaaaaaaaaaaaa = paddle.cast(gt_parsing, dtype=paddle.int64)[:, 0, :, :]
                 loss_mask = self.ce_parsing(pred_parsing.transpose((0, 2, 3, 1)), aaaaaaaaaaaaa)
                 loss_mask = paddle.mean(loss_mask) * self.mask_weight
-                ddd = np.sum((dic2['loss_mask'] - loss_mask.numpy()) ** 2)
-                print('ddd=%.6f' % ddd)
+                loss_numpy['loss_mask'] = loss_mask.numpy()
 
 
             # vgg loss
@@ -691,18 +545,18 @@ class PastaGANModel(BaseModel):
             loss_G_finetune_VGG = 0
             if self.vgg_weight > 0:
                 loss_G_VGG = self.criterionVGG(gen_img, real_img) * self.vgg_weight
-                ddd = np.sum((dic2['loss_G_VGG'] - loss_G_VGG.numpy()) ** 2)
-                print('ddd=%.6f' % ddd)
                 loss_G_VGG = loss_G_VGG.mean()
 
                 loss_G_finetune_VGG = self.criterionVGG(gen_finetune_img, real_img) * self.vgg_weight
-                ddd = np.sum((dic2['loss_G_finetune_VGG'] - loss_G_finetune_VGG.numpy()) ** 2)
-                print('ddd=%.6f' % ddd)
                 loss_G_finetune_VGG = loss_G_finetune_VGG.mean()
+
+                loss_numpy['loss_G_VGG'] = loss_G_VGG.numpy()
+                loss_numpy['loss_G_finetune_VGG'] = loss_G_finetune_VGG.numpy()
 
             loss_G = (loss_Gmain + loss_Gmain_finetune) / 2 + \
                      (loss_G_L1 + loss_G_finetune_L1) / 2 + \
                      (loss_G_VGG + loss_G_finetune_VGG) / 2 + loss_mask
+
 
             loss_G = loss_G * float(gain)
             loss_G.backward()  # 咩酱：gain即上文提到的这个阶段的训练间隔。
@@ -727,6 +581,7 @@ class PastaGANModel(BaseModel):
             self.pl_mean.copy_(pl_mean.detach())
             pl_penalty = (pl_lengths - pl_mean).square()
             loss_Gpl = pl_penalty * self.pl_weight
+            # loss_numpy['loss_Gpl'] = loss_Gpl.numpy()
 
             loss_Gpl = (gen_img[:, 0, 0, 0] * 0 + loss_Gpl).mean() * float(gain)
             loss_Gpl.backward()  # 咩酱：gain即上文提到的这个阶段的训练间隔。
@@ -745,7 +600,13 @@ class PastaGANModel(BaseModel):
 
             loss_Dgen_finetune = paddle.nn.functional.softplus(gen_finetune_logits)  # -log(1 - sigmoid(gen_logits))
 
-            loss3 = ((loss_Dgen.mean() + loss_Dgen_finetune.mean()) / 2) * float(gain)
+            loss_Dgen = loss_Dgen.mean()
+            loss_Dgen_finetune = loss_Dgen_finetune.mean()
+
+            loss_numpy['loss_Dgen'] = loss_Dgen.numpy()
+            loss_numpy['loss_Dgen_finetune'] = loss_Dgen_finetune.numpy()
+
+            loss3 = ((loss_Dgen + loss_Dgen_finetune) / 2) * float(gain)
 
         # Dmain: Maximize logits for real images.
         # Dr1: Apply R1 regularization.
@@ -759,6 +620,7 @@ class PastaGANModel(BaseModel):
             loss_Dreal = 0
             if do_Dmain:
                 loss_Dreal = paddle.nn.functional.softplus(-real_logits)  # -log(sigmoid(real_logits))
+                loss_numpy['loss_Dreal'] = loss_Dreal.numpy().mean()
 
             loss_Dr1 = 0
             if do_Dr1:
@@ -774,11 +636,13 @@ class PastaGANModel(BaseModel):
 
                 r1_penalty = r1_grads.square().sum([1, 2, 3])
                 loss_Dr1 = r1_penalty * (self.r1_gamma / 2)
+                loss_numpy['loss_Dr1'] = loss_Dr1.numpy().mean()
 
             loss4 = (loss_Dreal + loss_Dr1).mean() * float(gain)
             if do_Dmain:
                 loss4 += loss3
             loss4.backward()  # 咩酱：gain即上文提到的这个阶段的训练间隔。
+        return loss_numpy
 
     def train_iter(self, optimizers=None):
         phase_real = self.input[0]
@@ -793,17 +657,17 @@ class PastaGANModel(BaseModel):
         phase_retain_mask = self.input[12]
 
         # miemie2013: 调试的代码
-        dic2 = np.load('../train_data.npz')
-        phase_real = paddle.to_tensor(dic2['phase_real'], dtype=phase_real.dtype)
-        phase_pose = paddle.to_tensor(dic2['phase_pose'], dtype=phase_pose.dtype)
-        phase_norm_img = paddle.to_tensor(dic2['phase_norm_img'], dtype=phase_norm_img.dtype)
-        phase_norm_img_lower = paddle.to_tensor(dic2['phase_norm_img_lower'], dtype=phase_norm_img_lower.dtype)
-        phase_denorm_upper_img = paddle.to_tensor(dic2['phase_denorm_upper_img'], dtype=phase_denorm_upper_img.dtype)
-        phase_denorm_lower_img = paddle.to_tensor(dic2['phase_denorm_lower_img'], dtype=phase_denorm_lower_img.dtype)
-        phase_gt_parsing = paddle.to_tensor(dic2['phase_gt_parsing'], dtype=phase_gt_parsing.dtype)
-        phase_denorm_upper_mask = paddle.to_tensor(dic2['phase_denorm_upper_mask'], dtype=phase_denorm_upper_mask.dtype)
-        phase_denorm_lower_mask = paddle.to_tensor(dic2['phase_denorm_lower_mask'], dtype=phase_denorm_lower_mask.dtype)
-        phase_retain_mask = paddle.to_tensor(dic2['phase_retain_mask'], dtype=phase_retain_mask.dtype)
+        # dic2 = np.load('../train_data.npz')
+        # phase_real = paddle.to_tensor(dic2['phase_real'], dtype=phase_real.dtype)
+        # phase_pose = paddle.to_tensor(dic2['phase_pose'], dtype=phase_pose.dtype)
+        # phase_norm_img = paddle.to_tensor(dic2['phase_norm_img'], dtype=phase_norm_img.dtype)
+        # phase_norm_img_lower = paddle.to_tensor(dic2['phase_norm_img_lower'], dtype=phase_norm_img_lower.dtype)
+        # phase_denorm_upper_img = paddle.to_tensor(dic2['phase_denorm_upper_img'], dtype=phase_denorm_upper_img.dtype)
+        # phase_denorm_lower_img = paddle.to_tensor(dic2['phase_denorm_lower_img'], dtype=phase_denorm_lower_img.dtype)
+        # phase_gt_parsing = paddle.to_tensor(dic2['phase_gt_parsing'], dtype=phase_gt_parsing.dtype)
+        # phase_denorm_upper_mask = paddle.to_tensor(dic2['phase_denorm_upper_mask'], dtype=phase_denorm_upper_mask.dtype)
+        # phase_denorm_lower_mask = paddle.to_tensor(dic2['phase_denorm_lower_mask'], dtype=phase_denorm_lower_mask.dtype)
+        # phase_retain_mask = paddle.to_tensor(dic2['phase_retain_mask'], dtype=phase_retain_mask.dtype)
 
         # phase_real2 = paddle.to_tensor(dic2['phase_real'], dtype=phase_real.dtype)
         # phase_pose2 = paddle.to_tensor(dic2['phase_pose'], dtype=phase_pose.dtype)
@@ -867,6 +731,8 @@ class PastaGANModel(BaseModel):
         del phase_gt_parsing  # conserve memory
 
         # Execute training phases.  咩酱：训练的4个阶段。一个批次的图片训练4个阶段。
+        loss_numpys = []
+        loss_phase_name = []
         for phase, phase_gen_z in zip(phases, all_gen_z):  # 咩酱：phase_gen_z是这个阶段每个gpu的噪声，是一个元组，元组长度等于gpu数量。
             if self.batch_idx % phase['interval'] != 0:  # 咩酱：每一个阶段phase有一个属性interval，即训练间隔，每隔几个批次图片才会执行1次这个阶段！
                 continue
@@ -888,10 +754,12 @@ class PastaGANModel(BaseModel):
                 # 把style_input当做 real_c 和 gen_c。为了增加可变性, gen_z还是保留
 
                 # 梯度累加（变相增大批大小）。
-                self.accumulate_gradients(phase=phase['name'], real_img=real_img, gen_z=gen_z, style_input=style_input,
+                loss_numpy = self.accumulate_gradients(phase=phase['name'], real_img=real_img, gen_z=gen_z, style_input=style_input,
                                           retain=retain, pose=pose, denorm_upper_input=denorm_upper_input,
                                           denorm_lower_input=denorm_lower_input, denorm_upper_mask=denorm_upper_mask,
                                           denorm_lower_mask=denorm_lower_mask, gt_parsing=gt_parsing, sync=sync, gain=gain)
+                loss_numpys.append(loss_numpy)
+                loss_phase_name.append(phase['name'])
 
             # Update weights.
             # phase.module.requires_grad_(False)
@@ -904,128 +772,25 @@ class PastaGANModel(BaseModel):
             elif 'D' in phase['name']:
                 optimizers['discriminator'].step()  # 更新参数
 
-        # x_real [N, 3, 256, 256]
-        # y_org  [N, ]  x_real的类别id
-        x_real, y_org = self.input['src'], self.input['src_cls']
-        # x_ref  [N, 3, 256, 256]
-        # x_ref2 [N, 3, 256, 256]  x_real的类别id
-        # y_trg  [N, ]  x_ref和x_ref2的类别id
-        x_ref, x_ref2, y_trg = self.input['ref'], self.input['ref2'], self.input['ref_cls']
-        # z_trg  [N, 16]  随机噪声z
-        # z_trg2 [N, 16]  随机噪声z2
-        z_trg, z_trg2 = self.input['z_trg'], self.input['z_trg2']
-
-        if self.w_hpf > 0:
-            if isinstance(self.nets['fan'], paddle.DataParallel):
-                masks = self.nets['fan']._layers.get_heatmap(x_real)
-            else:
-                masks = self.nets['fan'].get_heatmap(x_real)
-        else:
-            masks = None
-
-        # 查看masks
-        # m0, m1 = masks
-        # aaa = x_real.numpy()[0]
-        # aaa = aaa.transpose(1, 2, 0)
-        # aaa = (aaa + 1.0) * 127.5
-        # aaa = cv2.cvtColor(aaa, cv2.COLOR_RGB2BGR)
-        # cv2.imwrite('aaa1.png', aaa)
-        # m0 = m0.numpy()[0][0]
-        # m1 = m1.numpy()[0][0]
-        # cv2.imwrite('aaa2.png', m0 * 255.0)
-        # cv2.imwrite('aaa3.png', m1 * 255.0)
-
-        # ================ train the discriminator ================
-        # 训练了2次判别器。第1次和第2次的区别是如何生成假图像：
-        # 第1次用      随机噪声z_trg     经过mapping_network生成 风格编码s_trg，再用s_trg和真实图像x_real生成假图像；
-        # 第2次用 目标domain真实图像x_ref  经过style_encoder生成  风格编码s_trg，再用s_trg和真实图像x_real生成假图像；
-
-        # lambda_reg是梯度惩罚损失的权重。包括计算
-        # (1)真实图像的判断损失（交叉熵）；(2)真实图像的梯度惩罚损失；
-        # (3)随机噪声z_trg和真实图像x_real生成的假图像的判断损失（交叉熵）；
-        d_loss, d_losses_latent = compute_d_loss(self.nets,
-                                                 self.lambda_reg,
-                                                 x_real,
-                                                 y_org,
-                                                 y_trg,
-                                                 z_trg=z_trg,
-                                                 masks=masks)
-        self._reset_grad(optimizers)  # 梯度清0
-        d_loss.backward()  # 反向传播
-        optimizers['discriminator'].minimize(d_loss)  # 更新参数
-
-        # lambda_reg是梯度惩罚损失的权重。包括计算
-        # (1)真实图像的判断损失（交叉熵）；(2)真实图像的梯度惩罚损失；
-        # (3)目标domain真实图像x_ref和真实图像x_real生成的假图像的判断损失（交叉熵）；
-        d_loss, d_losses_ref = compute_d_loss(self.nets,
-                                              self.lambda_reg,
-                                              x_real,
-                                              y_org,
-                                              y_trg,
-                                              x_ref=x_ref,
-                                              masks=masks)
-        self._reset_grad(optimizers)  # 梯度清0
-        d_loss.backward()  # 反向传播
-        optimizers['discriminator'].step()  # 更新参数
-
-        # ================ train the generator ================
-        # 训练了2次生成器。第1次和第2次的区别是如何生成假图像：
-        # 第1次用      随机噪声z_trg     经过mapping_network生成 风格编码s_trg，再用s_trg和真实图像x_real生成假图像；
-        # 第2次用 目标domain真实图像x_ref  经过style_encoder生成  风格编码s_trg，再用s_trg和真实图像x_real生成假图像；
-
-        g_loss, g_losses_latent = compute_g_loss(self.nets,
-                                                 self.w_hpf,
-                                                 self.lambda_sty,
-                                                 self.lambda_ds,
-                                                 self.lambda_cyc,
-                                                 x_real,
-                                                 y_org,
-                                                 y_trg,
-                                                 y_trg,
-                                                 z_trgs=[z_trg, z_trg2],
-                                                 masks=masks)
-        self._reset_grad(optimizers)
-        g_loss.backward()
-        optimizers['generator'].step()
-        optimizers['mapping_network'].step()
-        optimizers['style_encoder'].step()
-
-        g_loss, g_losses_ref = compute_g_loss(self.nets,
-                                              self.w_hpf,
-                                              self.lambda_sty,
-                                              self.lambda_ds,
-                                              self.lambda_cyc,
-                                              x_real,
-                                              y_org,
-                                              y_trg,
-                                              x_refs=[x_ref, x_ref2],
-                                              masks=masks)
-        self._reset_grad(optimizers)
-        g_loss.backward()
-        optimizers['generator'].step()
-
         # compute moving average of network parameters。指数滑动平均
-        soft_update(self.nets['generator'],
-                    self.nets_ema['generator'],
+        soft_update(self.nets['synthesis'],
+                    self.nets_ema['synthesis'],
                     beta=0.999)
-        soft_update(self.nets['mapping_network'],
-                    self.nets_ema['mapping_network'],
+        soft_update(self.nets['mapping'],
+                    self.nets_ema['mapping'],
                     beta=0.999)
-        soft_update(self.nets['style_encoder'],
-                    self.nets_ema['style_encoder'],
+        soft_update(self.nets['const_encoding'],
+                    self.nets_ema['const_encoding'],
                     beta=0.999)
-
-        # decay weight for diversity sensitive loss
-        if self.lambda_ds > 0:
-            self.lambda_ds -= (self.initial_lambda_ds / self.total_iter)
+        soft_update(self.nets['style_encoding'],
+                    self.nets_ema['style_encoding'],
+                    beta=0.999)
 
         for loss, prefix in zip(
-            [d_losses_latent, d_losses_ref, g_losses_latent, g_losses_ref],
-            ['D/latent_', 'D/ref_', 'G/latent_', 'G/ref_']):
+            loss_numpys,
+            loss_phase_name):
             for key, value in loss.items():
-                self.losses[prefix + key] = value
-        self.losses['G/lambda_ds'] = self.lambda_ds
-        self.losses['Total iter'] = int(self.total_iter)
+                self.losses[prefix + '_' + key] = value
         self.batch_idx += 1
 
     def test_iter(self, metrics=None):

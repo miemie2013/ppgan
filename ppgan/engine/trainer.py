@@ -195,13 +195,13 @@ class Trainer:
         self.profiler_options = cfg.profiler_options
 
         # miemie2013: 调试的代码
-        state_dicts222 = paddle.load("../G_temp_256.pdparams")
-        for net_name, net in self.model.nets.items():
-            if net_name == 'discriminator':
-                continue
-            net.set_state_dict(state_dicts222[net_name])
-        self.model.nets['discriminator'].set_state_dict(paddle.load("../D_temp_256.pdparams"))
-        print()
+        # state_dicts222 = paddle.load("../G_temp_256.pdparams")
+        # for net_name, net in self.model.nets.items():
+        #     if net_name == 'discriminator':
+        #         continue
+        #     net.set_state_dict(state_dicts222[net_name])
+        # self.model.nets['discriminator'].set_state_dict(paddle.load("../D_temp_256.pdparams"))
+        # print()
 
     def distributed_data_parallel(self):
         paddle.distributed.init_parallel_env()
@@ -268,7 +268,7 @@ class Trainer:
 
             if self.current_iter % self.weight_interval == 0:
                 # self.save(self.current_iter, 'weight', keep=-1)
-                self.save(self.current_iter)
+                self.save(self.current_iter, keep=-1)
 
             self.current_iter += 1
 
