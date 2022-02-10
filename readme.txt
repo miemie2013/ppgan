@@ -25,6 +25,19 @@ x = y + x
 
 
 
+创建虚拟环境
+conda create -n pasta python=3.8
+
+conda activate pasta
+export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/cuda-10.2/lib64
+
+
+export CUDA_VISIBLE_DEVICES=0
+
+export CUDA_VISIBLE_DEVICES=1
+
+export CUDA_VISIBLE_DEVICES=4
+
 
 
 
@@ -40,13 +53,16 @@ unzip MPV3D_starganv2.zip
 cd ~/w*
 
 
-训练模型:
+训练模型（微调）:
 cd ~/w*
-wget https://paddlegan.bj.bcebos.com/models/starganv2_afhq.pdparams
-python tools/main.py -c configs/pastagan_256_mpv3d.yaml --load starganv2_afhq.pdparams
+python tools/main.py -c configs/pastagan_256_mpv3d.yaml --load G_ema_256.pdparams
 
 
+从头训练：
+cd ~/w*
 python tools/main.py -c configs/pastagan_256_mpv3d.yaml
+
+
 
 
 恢复训练:

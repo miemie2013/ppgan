@@ -268,7 +268,8 @@ class Trainer:
 
             if self.current_iter % self.weight_interval == 0:
                 # self.save(self.current_iter, 'weight', keep=-1)
-                self.save(self.current_iter, keep=-1)
+                # self.save(self.current_iter, keep=-1)
+                self.save(self.current_iter, keep=1)
 
             self.current_iter += 1
 

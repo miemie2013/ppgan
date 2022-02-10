@@ -134,12 +134,12 @@ optimizer:
     epsilon: 1e-8
 
 validate:
-  interval: 3000   # test iters
+  interval: 175   # test iters
   save_img: true
 
 log_config:
   interval: 10   # log iters
-  visiual_interval: 3000   # visual iters
+  visiual_interval: 175   # visual iters
 
 snapshot_config:
   interval: 1   # save epochs
