@@ -844,7 +844,11 @@ class PastaGANModel(BaseModel):
         gen_z = None
 
         with paddle.no_grad():
-            gen_c, cat_feat_list = self.nets['style_encoding'](norm_img_c, retain_tensor)
+            norm_img1 = norm_img_c[:, :30, :, :]
+            # 看pastagan_dataset.py的normalize()，很奇怪，为什么训练时是试穿者下装（裤子、裙子等）的图片，预测时是试穿者骨骼图？？？
+            gugetu = norm_img_c[:, 48:, :, :]
+            aaaaaaaaaaa = paddle.concat([norm_img1, gugetu], 1)
+            gen_c, cat_feat_list = self.nets['style_encoding'](aaaaaaaaaaa, retain_tensor)
             pose_feat = self.nets['const_encoding'](pose_tensor)
             ws = self.nets['mapping'](gen_z, gen_c)
             cat_feats = {}

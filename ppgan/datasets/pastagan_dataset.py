@@ -136,10 +136,14 @@ class PastaGANDataset(BaseDataset):
         return (joint >= 0.1).all()
 
     def get_crop(self, keypoints, bpart, order, wh, o_w, o_h, ar=1.0):
+        '''
+        bpart是 遍历10次，每次要用到的关键点名称
+        order是 18个关键点，各个关键点指示的位置的名称
+        '''
         joints = keypoints
-        bpart_indices = [order.index(b) for b in bpart]
-        part_src = np.float32(joints[bpart_indices][:, :2])
-        # fall backs
+        bpart_indices = [order.index(b) for b in bpart]  # 根据关键点名称获得关键点的下标。所以要求图片人物一定要有18个关键点。
+        part_src = np.float32(joints[bpart_indices][:, :2])  # bpart指示的关键点的xy坐标
+        # 有的关键点的置信度低于0.1时，执行if下的代码块。都大于等于0.1时不用执行。
         if not self.valid_joints(joints[bpart_indices][:, 2]):
             if self.is_train:
                 if bpart[0] == "lhip" and bpart[1] == "lknee":
@@ -176,9 +180,11 @@ class PastaGANDataset(BaseDataset):
                     bpart_indices = [order.index(b) for b in bpart]
                     part_src = np.float32(joints[bpart_indices][:, :2])
 
+        # 有的关键点的置信度低于0.1时，执行if下的代码块。都大于等于0.1时不用执行。
         if not self.valid_joints(joints[bpart_indices][:, 2]):
             return None, None
 
+        # 当图片人物有18个关键点时，肯定不会执行if下的代码块。跳过不理。
         if part_src.shape[0] == 1:
             # leg fallback
             a = part_src[0]
@@ -227,9 +233,10 @@ class PastaGANDataset(BaseDataset):
             d = part_src[1] + alpha*normal
             part_src = np.float32([a, b, c, d])
 
-        dst = np.float32([[0., 0.], [0., 1.], [1., 1.], [1., 0.]])
-        part_dst = np.float32(wh * dst)
+        dst = np.float32([[0., 0.], [0., 1.], [1., 1.], [1., 0.]])  # shape=[4, 2]
+        part_dst = np.float32(wh * dst)                             # shape=[4, 2]
 
+        # 透视变换?
         M = cv2.getPerspectiveTransform(part_src, part_dst)
         M_inv = cv2.getPerspectiveTransform(part_dst, part_src)
         return M, M_inv
@@ -238,6 +245,17 @@ class PastaGANDataset(BaseDataset):
                   upper_pose=None, lower_pose=None, upper_keypoints=None, lower_keypoints=None, box_factor=2):
 
         '''
+        训练时：
+        upper_img            [256, 256, 3]    试穿者上衣的图片
+        lower_img            [256, 256, 3]    试穿者下装（裤子、裙子等）的图片
+        upper_clothes_mask   [256, 256, 3]    试穿者上衣的掩码*255
+        lower_clothes_mask   [256, 256, 3]    试穿者下装（裤子、裙子等）的掩码*255
+        lower_keypoints      [18, 3]    试穿者关键点
+        Return:
+        norm_img             xxxxxxxxxxx
+        norm_pose            xxxxxxxxxxx
+
+        预测时：
         upper_img            [256, 256, 3]    被扒者上衣的图片
         lower_img            [256, 256, 3]    试穿者下装（裤子、裙子等）的图片
         upper_clothes_mask   [256, 256, 3]    被扒者上衣的掩码
@@ -261,6 +279,7 @@ class PastaGANDataset(BaseDataset):
         wh = np.array([w, h])
         wh = np.expand_dims(wh, 0)
 
+        # 遍历10次，每次要用到的关键点名称
         bparts = [
             ["lshoulder", "lhip", "rhip", "rshoulder"],
             ["lshoulder", "rshoulder", "cnose"],
@@ -273,6 +292,7 @@ class PastaGANDataset(BaseDataset):
             ["rhip", "rknee"],
             ["rknee", "rankle"]]
 
+        # 18个关键点，各个关键点指示的位置的名称
         order = ['cnose', 'cneck', 'rshoulder', 'relbow', 'rwrist', 'lshoulder',
                  'lelbow', 'lwrist', 'rhip', 'rknee', 'rankle', 'lhip', 'lknee',
                  'lankle', 'reye', 'leye', 'rear', 'lear']
@@ -294,7 +314,7 @@ class PastaGANDataset(BaseDataset):
                 part_img_lower = np.zeros((h, w, 3)).astype(np.uint8)
                 part_clothes_mask = np.zeros((h, w, 3)).astype(np.uint8)
                 part_clothes_mask_lower = np.zeros((h, w, 3)).astype(np.uint8)
-                M, M_inv = self.get_crop(lower_keypoints, bpart, order, wh, o_w, o_h, ar)
+                M, M_inv = self.get_crop(lower_keypoints, bpart, order, wh, o_w, o_h, ar)  # 根据 试穿者关键点 [18, 3], aaa
 
                 if M is not None:
                     part_img = cv2.warpPerspective(upper_img, M, (w, h), borderMode=cv2.BORDER_REPLICATE)
