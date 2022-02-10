@@ -43,20 +43,20 @@ cd ~/w*
 训练模型:
 cd ~/w*
 wget https://paddlegan.bj.bcebos.com/models/starganv2_afhq.pdparams
-python -u tools/main.py -c configs/pastagan_256_mpv3d.yaml --load starganv2_afhq.pdparams
+python tools/main.py -c configs/pastagan_256_mpv3d.yaml --load starganv2_afhq.pdparams
 
 
-python -u tools/main.py -c configs/pastagan_256_mpv3d.yaml
+python tools/main.py -c configs/pastagan_256_mpv3d.yaml
 
 
 恢复训练:
 cd ~/w*
-python -u tools/main.py -c configs/pastagan_256_mpv3d.yaml --resume output_dir/pastagan_256_mpv3d-2022-01-20-11-33/epoch_5_checkpoint.pdparams
+python tools/main.py -c configs/pastagan_256_mpv3d.yaml --resume output_dir/pastagan_256_mpv3d-2022-02-10-14-32/epoch_4_checkpoint.pdparams
 
 
 测试模型:
 cd ~/w*
-python tools/main.py -c configs/pastagan_256_mpv3d.yaml --evaluate-only --load output_dir/pastagan_256_mpv3d-2022-01-19-16-13/epoch_5_checkpoint.pdparams
+python tools/main.py -c configs/pastagan_256_mpv3d.yaml --evaluate-only --load output_dir/pastagan_256_mpv3d-2022-02-10-14-32/epoch_4_checkpoint.pdparams
 
 
 python tools/main.py -c configs/pastagan_256_mpv3d_pretrained.yaml --evaluate-only --load G_ema_256.pdparams

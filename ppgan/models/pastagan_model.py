@@ -865,7 +865,14 @@ class PastaGANModel(BaseModel):
                 h = cat_feat.shape[2]
                 cat_feats[str(h)] = cat_feat
             # 因为有噪声，所以每一次的结果有点小差别
-            gen_coarse_imgs, gen_imgs, _, _ = self.nets['synthesis'](ws,
+            version = self.nets['synthesis'].version
+            if version == 'Full':
+                gen_coarse_imgs, gen_imgs, _ = self.nets['synthesis'](ws,
+                                                                         pose_feat, cat_feats, denorm_upper_clothes,
+                                                                         denorm_lower_clothes, denorm_upper_mask,
+                                                                         denorm_lower_mask)
+            elif version == 'V18':
+                gen_coarse_imgs, gen_imgs, _, _ = self.nets['synthesis'](ws,
                                                                          pose_feat, cat_feats, denorm_upper_clothes,
                                                                          denorm_lower_clothes, denorm_upper_mask,
                                                                          denorm_lower_mask)
@@ -883,5 +890,7 @@ class PastaGANModel(BaseModel):
                 result_img = result_img[:, :, [2, 1, 0]]  # BGR->RGB  ppgan是将RGB格式的图片进行保存的。
 
         self.visual_items['reference'] = result_img
-        # self.nets_ema['generator'].train()
-        # self.nets_ema['style_encoder'].train()
+        self.nets_ema['synthesis'].train()
+        self.nets_ema['mapping'].train()
+        self.nets_ema['const_encoding'].train()
+        self.nets_ema['style_encoding'].train()
