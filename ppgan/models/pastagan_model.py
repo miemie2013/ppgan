@@ -794,23 +794,10 @@ class PastaGANModel(BaseModel):
         self.batch_idx += 1
 
     def test_iter(self, metrics=None):
-        #TODO
         self.nets_ema['synthesis'].eval()
         self.nets_ema['mapping'].eval()
         self.nets_ema['const_encoding'].eval()
         self.nets_ema['style_encoding'].eval()
-        # soft_update(self.nets['synthesis'],
-        #             self.nets_ema['synthesis'],
-        #             beta=0.999)
-        # soft_update(self.nets['mapping'],
-        #             self.nets_ema['mapping'],
-        #             beta=0.999)
-        # soft_update(self.nets['const_encoding'],
-        #             self.nets_ema['const_encoding'],
-        #             beta=0.999)
-        # soft_update(self.nets['style_encoding'],
-        #             self.nets_ema['style_encoding'],
-        #             beta=0.999)
 
         image = self.input['image']
         pose = self.input['pose']
