@@ -60,6 +60,22 @@ python tools/main.py -c configs/pastagan_256_mpv3d.yaml --load G_ema_256.pdparam
 nohup python tools/main.py -c configs/pastagan_256_mpv3d.yaml --load G_ema_256.pdparams > nohup.log 2>&1 &
 
 
+单机双卡训练：
+CUDA_VISIBLE_DEVICES=0,1 python -m paddle.distributed.launch tools/main.py -c configs/pastagan_256_mpv3d.yaml --load G_ema_256.pdparams
+
+
+可能报错：
+You may need to install 'nccl2' from NVIDIA official website: https://developer.nvidia.com/nccl/nccl-downloadbefore
+
+安装nccl2
+https://blog.csdn.net/sinat_29957455/article/details/112507826
+
+临时环境变量：
+export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/cuda-10.2/lib64
+export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/lib/x86_64-linux-gnu
+
+
+
 从头训练：
 cd ~/w*
 python tools/main.py -c configs/pastagan_256_mpv3d.yaml
@@ -290,6 +306,7 @@ lr_scheduler:
 
 训练模型:
 cd ~/w*
+wget https://paddlegan.bj.bcebos.com/InceptionV3.pdparams
 python tools/main.py -c configs/stylegan_v2_256_ffhq.yaml
 
 
