@@ -927,8 +927,9 @@ class SynthesisLayer(nn.Layer):
         return x
 
 
-class ToRGBLayerV18(nn.Layer):
-    def __init__(self, in_channels, out_channels, w_dim, kernel_size=1, conv_clamp=None, channels_last=False, is_last=False):
+
+class ToRGBLayer(nn.Layer):
+    def __init__(self, in_channels, out_channels, w_dim, kernel_size=1, conv_clamp=None, channels_last=False):
         super().__init__()
         self.conv_clamp = conv_clamp
         self.affine = FullyConnectedLayer(w_dim, in_channels, bias_init=1)
@@ -941,76 +942,13 @@ class ToRGBLayerV18(nn.Layer):
         self.bias = self.create_parameter([out_channels, ],
                                           default_initializer=paddle.nn.initializer.Constant(0.0))
         self.weight_gain = 1 / np.sqrt(in_channels * (kernel_size ** 2))
-        self.is_last = is_last
-
-        if self.is_last:
-            # self.m_weight1 = torch.nn.Parameter(torch.randn([1, in_channels, kernel_size, kernel_size]).to(memory_format=memory_format))
-            # self.m_bias1 = torch.nn.Parameter(torch.zeros([1]))
-            self.m_weight1 = self.create_parameter([1, in_channels, kernel_size, kernel_size],
-                                                   default_initializer=paddle.nn.initializer.Normal())
-            self.m_bias1 = self.create_parameter([1, ],
-                                                 default_initializer=paddle.nn.initializer.Constant(0.0))
-
-            # self.m_weight2 = torch.nn.Parameter(torch.randn([1, in_channels, kernel_size, kernel_size]).to(memory_format=memory_format))
-            # self.m_bias2 = torch.nn.Parameter(torch.zeros([1]))
-            self.m_weight2 = self.create_parameter([1, in_channels, kernel_size, kernel_size],
-                                                   default_initializer=paddle.nn.initializer.Normal())
-            self.m_bias2 = self.create_parameter([1, ],
-                                                 default_initializer=paddle.nn.initializer.Constant(0.0))
 
 
     def forward(self, x, w, fused_modconv=True):
         styles = self.affine(w) * self.weight_gain
-
-        upper_mask = None
-        lower_mask = None
-        if self.is_last:
-            upper_mask = modulated_conv2d(x=x, weight=self.m_weight1, styles=styles, demodulate=False, fused_modconv=fused_modconv)
-            upper_mask = bias_act(upper_mask, paddle.cast(self.m_bias1, dtype=x.dtype), clamp=self.conv_clamp, act='sigmoid')
-
-            lower_mask = modulated_conv2d(x=x, weight=self.m_weight2, styles=styles, demodulate=False, fused_modconv=fused_modconv)
-            lower_mask = bias_act(lower_mask, paddle.cast(self.m_bias2, dtype=x.dtype), clamp=self.conv_clamp, act='sigmoid')
-
         x = modulated_conv2d(x=x, weight=self.weight, styles=styles, demodulate=False, fused_modconv=fused_modconv)
         x = bias_act(x, paddle.cast(self.bias, dtype=x.dtype), clamp=self.conv_clamp)
-        return x, upper_mask, lower_mask
-
-
-class ToRGBLayerFull(nn.Layer):
-    def __init__(self, in_channels, out_channels, w_dim, kernel_size=1, conv_clamp=None, channels_last=False, is_last=False, is_style=False):
-        super().__init__()
-        self.conv_clamp = conv_clamp
-        self.affine = FullyConnectedLayer(w_dim, in_channels, bias_init=1)
-        # 假设屎山的channels_last都是False
-        assert channels_last == False
-        # memory_format = torch.channels_last if channels_last else torch.contiguous_format
-        # self.weight = torch.nn.Parameter(torch.randn([out_channels, in_channels, kernel_size, kernel_size]).to(memory_format=memory_format))
-        self.weight = self.create_parameter([out_channels, in_channels, kernel_size, kernel_size],
-                                            default_initializer=paddle.nn.initializer.Normal())
-        self.bias = self.create_parameter([out_channels, ],
-                                          default_initializer=paddle.nn.initializer.Constant(0.0))
-        self.weight_gain = 1 / np.sqrt(in_channels * (kernel_size ** 2))
-        self.is_last = is_last
-        self.is_style = is_style
-
-        if self.is_last and self.is_style:
-            self.m_weight1 = self.create_parameter([6, in_channels, kernel_size, kernel_size],
-                                                   default_initializer=paddle.nn.initializer.Normal())
-            self.m_bias1 = self.create_parameter([6, ],
-                                                 default_initializer=paddle.nn.initializer.Constant(0.0))
-
-
-    def forward(self, x, w, fused_modconv=True):
-        styles = self.affine(w) * self.weight_gain
-
-        pred_parsing = None
-        if self.is_last and self.is_style:
-            pred_parsing = modulated_conv2d(x=x, weight=self.m_weight1, styles=styles, demodulate=False, fused_modconv=fused_modconv)
-            pred_parsing = bias_act(pred_parsing, paddle.cast(self.m_bias1, dtype=x.dtype), clamp=self.conv_clamp)
-
-        x = modulated_conv2d(x=x, weight=self.weight, styles=styles, demodulate=False, fused_modconv=fused_modconv)
-        x = bias_act(x, paddle.cast(self.bias, dtype=x.dtype), clamp=self.conv_clamp)
-        return x, pred_parsing
+        return x
 
 
 '''
@@ -1020,20 +958,19 @@ SynthesisBlockV18
 '''
 class SynthesisBlock(nn.Layer):
     def __init__(self,
-                 in_channels,  # Number of input channels, 0 = first block.
-                 out_channels,  # Number of output channels.
-                 w_dim,  # Intermediate latent (W) dimensionality.
-                 resolution,  # Resolution of this block.
-                 img_channels,  # Number of output color channels.
-                 is_last,  # Is this the last block?
-                 is_style=False,  # Is this the block in the sytle synthesis branch
-                 architecture='skip',  # Architecture: 'orig', 'skip', 'resnet'.
-                 resample_filter=[1, 3, 3, 1],  # Low-pass filter to apply when resampling activations.
-                 conv_clamp=None,  # Clamp the output of convolution layers to +-X, None = disable clamping.
-                 use_fp16=False,  # Use FP16 for this block?
-                 fp16_channels_last=False,  # Use channels-last memory format with FP16?
-                 **layer_kwargs,  # Arguments for SynthesisLayer.
-                 ):
+        in_channels,                        # Number of input channels, 0 = first block.
+        out_channels,                       # Number of output channels.
+        w_dim,                              # Intermediate latent (W) dimensionality.
+        resolution,                         # Resolution of this block.
+        img_channels,                       # Number of output color channels.
+        is_last,                            # Is this the last block?
+        architecture        = 'skip',       # Architecture: 'orig', 'skip', 'resnet'.
+        resample_filter     = [1,3,3,1],    # Low-pass filter to apply when resampling activations.
+        conv_clamp          = None,         # Clamp the output of convolution layers to +-X, None = disable clamping.
+        use_fp16            = False,        # Use FP16 for this block?
+        fp16_channels_last  = False,        # Use channels-last memory format with FP16?
+        **layer_kwargs,                     # Arguments for SynthesisLayer.
+    ):
         assert architecture in ['orig', 'skip', 'resnet']
         super().__init__()
         self.in_channels = in_channels
@@ -1044,58 +981,45 @@ class SynthesisBlock(nn.Layer):
         self.architecture = architecture
         self.use_fp16 = use_fp16
         self.channels_last = (use_fp16 and fp16_channels_last)
-        self.register_buffer('resample_filter', upfirdn2d_setup_filter(resample_filter))
+        self.register_buffer('resample_filter', upfirdn2d.setup_filter(resample_filter))
         self.num_conv = 0
         self.num_torgb = 0
 
-        # CONST here
         if in_channels == 0:
             self.const = self.create_parameter([out_channels, resolution, resolution],
                                                default_initializer=paddle.nn.initializer.Normal())
 
         if in_channels != 0:
             self.conv0 = SynthesisLayer(in_channels, out_channels, w_dim=w_dim, resolution=resolution, up=2,
-                                        resample_filter=resample_filter, conv_clamp=conv_clamp,
-                                        channels_last=self.channels_last, **layer_kwargs)
+                resample_filter=resample_filter, conv_clamp=conv_clamp, channels_last=self.channels_last, **layer_kwargs)
             self.num_conv += 1
 
         self.conv1 = SynthesisLayer(out_channels, out_channels, w_dim=w_dim, resolution=resolution,
-                                    conv_clamp=conv_clamp, channels_last=self.channels_last, **layer_kwargs)
+            conv_clamp=conv_clamp, channels_last=self.channels_last, **layer_kwargs)
         self.num_conv += 1
 
         if is_last or architecture == 'skip':
-            if self.version == 'Full':
-                self.torgb = ToRGBLayerFull(out_channels, img_channels, w_dim=w_dim,
-                                            conv_clamp=conv_clamp, channels_last=self.channels_last, is_last=is_last, is_style=is_style)
-            elif self.version == 'V18':
-                self.torgb = ToRGBLayerV18(out_channels, img_channels, w_dim=w_dim,
-                                           conv_clamp=conv_clamp, channels_last=self.channels_last, is_last=is_last)
-            else:
-                raise NotImplementedError("version \'{}\' is not implemented.".format(self.version))
+            self.torgb = ToRGBLayer(out_channels, img_channels, w_dim=w_dim,
+                conv_clamp=conv_clamp, channels_last=self.channels_last)
             self.num_torgb += 1
 
         if in_channels != 0 and architecture == 'resnet':
             self.skip = Conv2dLayer(in_channels, out_channels, kernel_size=1, bias=False, up=2,
-                                    resample_filter=resample_filter, channels_last=self.channels_last)
+                resample_filter=resample_filter, channels_last=self.channels_last)
 
-        if self.resolution > 16:
-            self.merge_conv = Conv2dLayer(out_channels + 64, out_channels, kernel_size=1,
-                                          resample_filter=resample_filter, channels_last=self.channels_last)
-
-    def forward(self, x, img, ws, pose_feature, cat_feat, force_fp32=False, fused_modconv=None, **layer_kwargs):
+    def forward(self, x, img, ws, force_fp32=False, fused_modconv=None, **layer_kwargs):
         w_iter = iter(ws.unbind(axis=1))
         dtype = paddle.float16 if self.use_fp16 and not force_fp32 else paddle.float32
         # 假设屎山的channels_last都是False
         assert self.channels_last == False
         # memory_format = torch.channels_last if self.channels_last and not force_fp32 else torch.contiguous_format
         if fused_modconv is None:
-            # with misc.suppress_tracer_warnings():  # this value will be treated as a constant
             fused_modconv = (not self.training) and (dtype == paddle.float32 or int(x.shape[0]) == 1)
 
         # Input.
         if self.in_channels == 0:
-            # CONST here
-            x = paddle.cast(pose_feature, dtype=dtype)
+            x = paddle.cast(self.const, dtype=dtype)
+            x = x.unsqueeze(0).tile([ws.shape[0], 1, 1, 1])
         else:
             x = paddle.cast(x, dtype=dtype)
 
@@ -1106,68 +1030,22 @@ class SynthesisBlock(nn.Layer):
             y = self.skip(x, gain=np.sqrt(0.5))
             x = self.conv0(x, next(w_iter), fused_modconv=fused_modconv, **layer_kwargs)
             x = self.conv1(x, next(w_iter), fused_modconv=fused_modconv, gain=np.sqrt(0.5), **layer_kwargs)
-            x = y + x
+            x = y.add_(x)
         else:
             x = self.conv0(x, next(w_iter), fused_modconv=fused_modconv, **layer_kwargs)
             x = self.conv1(x, next(w_iter), fused_modconv=fused_modconv, **layer_kwargs)
-
-            # add warped feature here
-            if x.shape[2] > 16:
-                # paddle.cast(styles, dtype=x.dtype)
-                # x = paddle.concat([x, cat_feat[str(x.shape[2])].to(dtype=dtype, memory_format=memory_format)], axis=1)
-                x = paddle.concat([x, paddle.cast(cat_feat[str(x.shape[2])], dtype=dtype)], axis=1)
-                x = self.merge_conv(x)
 
         # ToRGB.
         if img is not None:
             img = upsample2d(img, self.resample_filter)
         if self.is_last or self.architecture == 'skip':
-            if self.version == 'Full':
-                y, pred_parsing = self.torgb(x, next(w_iter), fused_modconv=fused_modconv)
-            elif self.version == 'V18':
-                y, upper_mask, lower_mask = self.torgb(x, next(w_iter), fused_modconv=fused_modconv)
-            # y = y.to(dtype=torch.float32, memory_format=torch.contiguous_format)
-            y = paddle.cast(y, dtype='float32')
+            y = self.torgb(x, next(w_iter), fused_modconv=fused_modconv)
+            y = paddle.cast(y, dtype=paddle.float32)
             img = img + y if img is not None else y
 
         assert x.dtype == dtype
         assert img is None or img.dtype == paddle.float32
-        if self.version == 'Full':
-            return x, img, pred_parsing
-        elif self.version == 'V18':
-            return x, img, upper_mask, lower_mask
-
-
-class ResBlock(nn.Layer):
-    def __init__(self,
-        in_channels,                    # Number of input channels.
-        out_channels,                   # Number of output channels.
-        kernel_size,                    # Width and height of the convolution kernel.
-        bias            = True,         # Apply additive bias before the activation function?
-        activation      = 'linear',     # Activation function: 'relu', 'lrelu', etc.
-        up              = 1,            # Integer upsampling factor.
-        down            = 1,            # Integer downsampling factor.
-        resample_filter = [1,3,3,1],    # Low-pass filter to apply when resampling activations.
-        conv_clamp      = None,         # Clamp the output to +-X, None = disable clamping.
-        channels_last   = False,        # Expect the input to have memory_format=channels_last?
-        trainable       = True,         # Update the weights of this layer during training?
-    ):
-        super().__init__()
-        self.register_buffer('resample_filter', upfirdn2d_setup_filter(resample_filter))
-
-        self.conv0 = Conv2dLayer(in_channels, out_channels, kernel_size=3, activation=activation, up=up, down=down, bias=bias,
-                                resample_filter=resample_filter, conv_clamp=conv_clamp, channels_last=channels_last)
-        self.conv1 = Conv2dLayer(out_channels, out_channels, kernel_size=3, activation=activation, bias=bias, resample_filter=resample_filter,
-                                conv_clamp=conv_clamp, channels_last=channels_last)
-        self.skip = Conv2dLayer(in_channels, out_channels, kernel_size=1, bias=False, up=up, down=down, resample_filter=resample_filter,
-                                conv_clamp=conv_clamp, channels_last=channels_last)
-
-    def forward(self, x):
-        y = self.skip(x, gain=np.sqrt(0.5))
-        x = self.conv0(x)
-        x = self.conv1(x, gain=np.sqrt(0.5))
-        x = y + x
-        return x
+        return x, img
 
 
 
