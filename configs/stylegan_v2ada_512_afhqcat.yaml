@@ -1,0 +1,135 @@
+epochs: 200
+output_dir: output_dir
+
+model:
+  name: StyleGAN2ADAModel
+  latent_dim: &LATENT_DIM 16
+  G_reg_interval: 4
+  D_reg_interval: 16
+  lambda_sty: 1
+  lambda_ds: 2
+  lambda_cyc: 1
+  # loss
+  r1_gamma: 10
+  l1_weight: 40.0
+  vgg_weight: 40.0
+  pl_weight: 0.0
+#  contextual_weight: 0.0   # default is 0
+  contextual_weight: 1.0   # default is 0
+  mask_weight: 20.0
+  style_mixing_prob: 0.0
+  vgg19_ckpt1: checkpoints/vgg19-dcbb9e9d.pdparams
+  vgg19_ckpt2: checkpoints/vgg19_conv.pdparams
+  synthesis:
+    name: SynthesisNetwork
+    w_dim: &W_DIM 512
+    img_resolution: &IMAGE_SIZE 256
+    img_channels: &IMG_CHANNELS 3
+    channel_base: &CHANNEL_BASE 16384
+    channel_max: &CHANNEL_MAX 512
+    num_fp16_res: &NUM_FP16_RES 3
+    conv_clamp: &CONV_CLAMP 256
+    use_noise: true
+    version: Full  # miemie2013
+  mapping:
+    name: MappingNetwork
+    z_dim: &Z_DIM 0
+    c_dim: &C_DIM 512
+    w_dim: *W_DIM
+    num_ws: 14
+    num_layers: 1
+  const_encoding:
+    name: ConstEncoderNetwork
+    input_nc: 6
+    output_nc: &OC 512
+    ngf: &NGF 64
+    n_downsampling: &N_DOWN 6
+  style_encoding:
+    name: StyleEncoderNetwork
+    input_nc: 42
+    output_nc: *OC
+    ngf: *NGF
+    n_downsampling: *N_DOWN
+  discriminator:
+    name: StyleGAN2ADADiscriminator
+    c_dim: *C_DIM
+    img_resolution: *IMAGE_SIZE
+    img_channels: *IMG_CHANNELS
+    channel_base: *CHANNEL_BASE
+    channel_max: *CHANNEL_MAX
+    num_fp16_res: *NUM_FP16_RES
+    conv_clamp: *CONV_CLAMP
+    block_kwargs: {}
+    mapping_kwargs: {}
+    epilogue_kwargs: {mbstd_group_size: 4}
+
+dataset:
+  train:
+    name: StyleGAN2ADADataset
+    dataroot: ../UPT_256_192_my2/Zalando_256_192
+    txt_name: train_pairs_front_list_0508.txt
+    is_train: True
+    use_labels: true
+    xflip: False
+    num_workers: 0
+    batch_size: 1
+    test_count: -1
+    preprocess: None
+
+  test:
+    name: StyleGAN2ADADataset
+    dataroot: ../UPT_256_192_my2/Zalando_256_192
+    txt_name: test_pairs_front_list_shuffle_0508.txt
+    is_train: False
+    use_labels: true
+    xflip: False
+    num_workers: 0
+    batch_size: 1
+    test_count: 16
+    preprocess: None
+
+lr_scheduler_G:
+  name: LinearDecay
+  learning_rate: 0.002
+  start_epoch: 100
+  decay_epochs: 100
+  # will get from real dataset
+  iters_per_epoch: 365
+
+lr_scheduler_D:
+  name: LinearDecay
+  learning_rate: 0.002
+  start_epoch: 100
+  decay_epochs: 100
+  # will get from real dataset
+  iters_per_epoch: 365
+
+optimizer:
+  generator:
+    name: Adam
+    net_names:
+      - synthesis
+      - mapping
+      - const_encoding
+      - style_encoding
+    beta1: 0.0
+    beta2: 0.99
+    epsilon: 1e-8
+  discriminator:
+    name: Adam
+    net_names:
+      - discriminator
+    beta1: 0.0
+    beta2: 0.99
+    epsilon: 1e-8
+
+validate:
+  interval: 175   # test iters
+  save_img: true
+
+log_config:
+  interval: 10   # log iters
+  visiual_interval: 175   # visual iters
+
+snapshot_config:
+  interval: 1   # save epochs

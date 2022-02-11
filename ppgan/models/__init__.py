@@ -24,6 +24,7 @@ from .dc_gan_model import DCGANModel
 from .drn_model import DRN
 from .animeganv2_model import AnimeGANV2Model, AnimeGANV2PreTrainModel
 from .styleganv2_model import StyleGAN2Model
+from .styleganv2ada_model import StyleGAN2ADAModel
 from .wav2lip_model import Wav2LipModel
 from .wav2lip_hq_model import Wav2LipModelHq
 from .starganv2_model import StarGANv2Model
