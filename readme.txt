@@ -57,6 +57,8 @@ cd ~/w*
 cd ~/w*
 python tools/main.py -c configs/pastagan_256_mpv3d.yaml --load G_ema_256.pdparams
 
+nohup python tools/main.py -c configs/pastagan_256_mpv3d.yaml --load G_ema_256.pdparams > nohup.log 2>&1 &
+
 
 从头训练：
 cd ~/w*
