@@ -1032,7 +1032,6 @@ class SynthesisBlock(nn.Layer):
                  conv_clamp=None,  # Clamp the output of convolution layers to +-X, None = disable clamping.
                  use_fp16=False,  # Use FP16 for this block?
                  fp16_channels_last=False,  # Use channels-last memory format with FP16?
-                 version='Full',  # miemie2013
                  **layer_kwargs,  # Arguments for SynthesisLayer.
                  ):
         assert architecture in ['orig', 'skip', 'resnet']
@@ -1048,7 +1047,6 @@ class SynthesisBlock(nn.Layer):
         self.register_buffer('resample_filter', upfirdn2d_setup_filter(resample_filter))
         self.num_conv = 0
         self.num_torgb = 0
-        self.version = version
 
         # CONST here
         if in_channels == 0:
