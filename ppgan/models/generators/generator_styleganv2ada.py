@@ -1211,36 +1211,8 @@ class SynthesisNetwork(nn.Layer):
                 self.num_ws += block.num_torgb
             setattr(self, f'b{res}', block)
 
-    def get_spade_feat(self, mask_256, denorm_mask, denorm_input):
-        mask_256 = paddle.cast(mask_256 > 0.9, dtype=mask_256.dtype)
-        mask_128 = F.interpolate(mask_256, scale_factor=0.5)
-        denorm_mask_128 = F.interpolate(denorm_mask, scale_factor=0.5)
-        mask_128 = paddle.cast(mask_128 > 0.9, dtype=mask_256.dtype)
-        denorm_mask_128 = paddle.cast(denorm_mask_128 > 0.9, dtype=mask_256.dtype)
-
-        valid_mask = paddle.cast((mask_128 + denorm_mask_128) == 2.0, dtype=mask_256.dtype)
-        res_mask = paddle.cast((mask_128 - valid_mask), dtype=mask_256.dtype)
-
-        denorm_input = denorm_input * mask_256 - (1-mask_256)
-        spade_denorm_feat = self.spade_encoder(denorm_input)
-        spade_denorm_valid_feat = spade_denorm_feat * valid_mask
-
-        valid_feat_sum = paddle.sum(spade_denorm_valid_feat, axis=[2, 3], keepdim=True)
-        valid_mask_sum = paddle.sum(valid_mask, axis=[2, 3], keepdim=True)
-
-        valid_index = paddle.cast(valid_mask_sum > 10, dtype=mask_256.dtype)
-        valid_mask_sum = valid_mask_sum * valid_index + (128*128) * (1-valid_index)
-        spade_average_feat = valid_feat_sum / valid_mask_sum
-
-        spade_feat = spade_denorm_feat * (1-res_mask) + spade_average_feat * res_mask
-
-        return spade_feat
-
-
-    def forward(self, ws, pose_feat, cat_feat, denorm_upper_input, denorm_lower_input, denorm_upper_mask, \
-                denorm_lower_mask, **block_kwargs):
+    def forward(self, ws, **block_kwargs):
         block_ws = []
-
         ws = paddle.cast(ws, dtype='float32')
         w_idx = 0
         for res in self.block_resolutions:
@@ -1252,37 +1224,7 @@ class SynthesisNetwork(nn.Layer):
         x = img = None
         for res, cur_ws in zip(self.block_resolutions, block_ws):
             block = getattr(self, f'b{res}')
-            if self.version == 'Full':
-                x, img, pred_parsing = block(x, img, cur_ws, pose_feat, cat_feat, force_fp32=True, **block_kwargs)
-            elif self.version == 'V18':
-                x, img, upper_mask, lower_mask = block(x, img, cur_ws, pose_feat, cat_feat, force_fp32=True, **block_kwargs)
-            if res == 128:
-                x_128, img_128 = x.clone(), img.clone()
-
-        if self.version == 'Full':
-            softmax = paddle.nn.Softmax(axis=1)
-            aaaaaaaaaaaaaa = softmax(pred_parsing.detach())
-            bbbbbbbbbb = paddle.argmax(aaaaaaaaaaaaaa, axis=1)
-            parsing_index = bbbbbbbbbb.unsqueeze(1)
-            upper_mask = paddle.cast(parsing_index == 1, dtype=paddle.float32)
-            lower_mask = paddle.cast(parsing_index == 2, dtype=paddle.float32)
-
-        spade_upper_feat = self.get_spade_feat(upper_mask.detach(), denorm_upper_mask, denorm_upper_input)
-        spade_lower_feat = self.get_spade_feat(lower_mask.detach(), denorm_lower_mask, denorm_lower_input)
-
-        spade_feat = paddle.concat([spade_upper_feat, spade_lower_feat], 1)
-
-        x_spade_128 = self.spade_b128_1(x_128, spade_feat)
-        x_spade_128 = self.spade_b128_2(x_spade_128, spade_feat)
-        x_spade_128 = self.spade_b128_3(x_spade_128, spade_feat)
-
-        cur_ws = block_ws[-1]
-
-        if self.version == 'Full':
-            finetune_x, finetune_img, _ = self.texture_b256(x_spade_128, img_128, cur_ws, pose_feat, cat_feat, force_fp32=True, **block_kwargs)
-            return img, finetune_img, pred_parsing
-        elif self.version == 'V18':
-            finetune_x, finetune_img, _, _ = self.texture_b256(x_spade_128, img_128, cur_ws, pose_feat, cat_feat, force_fp32=True, **block_kwargs)
-            return img, finetune_img, upper_mask, lower_mask
+            x, img = block(x, img, cur_ws, **block_kwargs)
+        return img
 
 
