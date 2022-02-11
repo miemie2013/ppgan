@@ -2,8 +2,7 @@ import paddle
 import cv2
 
 from ppgan.utils.filesystem import save
-from ppgan.models.generators.generator_pastagan import ConstEncoderNetwork, StyleEncoderNetwork, MappingNetwork, SynthesisNetwork
-# from ppgan.models.pastagan_model import PastaGANModel
+from ppgan.models.generators.generator_styleganv2ada import ConstEncoderNetwork, StyleEncoderNetwork, MappingNetwork, SynthesisNetwork
 
 import numpy as np
 import torch
@@ -24,31 +23,31 @@ def copy(name, w, std):
 
 
 '''
-在 https://github.com/xiezhy6/PASTA-GAN 的legacy.py的load_network_pkl()方法里data = _LegacyUnpickler(f).load()
-后面的代码打断点，超参数全部在data里。
+在 https://github.com/NVlabs/stylegan2-ada-pytorch 的training_loop.py的
+    common_kwargs = dict(c_dim=training_set.label_dim, img_resolution=training_set.resolution, img_channels=training_set.num_channels)
+    G = dnnlib.util.construct_class_by_name(**G_kwargs, **common_kwargs).train().requires_grad_(False).to(device) # subclass of torch.nn.Module
+    D = dnnlib.util.construct_class_by_name(**D_kwargs, **common_kwargs).train().requires_grad_(False).to(device) # subclass of torch.nn.Module
+    G_ema = copy.deepcopy(G).eval()
 
-def load_network_pkl(f, force_fp16=False):
-    data = _LegacyUnpickler(f).load()
+处打断点，超参数即可看见。
 
 '''
-img_resolution = 256
+img_resolution = 512
 img_channels = 3
 
 synthesis_kwargs = dict(
-    channel_base=16384,
+    channel_base=32768,
     channel_max=512,
-    num_fp16_res=3,
+    num_fp16_res=4,
     conv_clamp=256,
-    use_noise=True,
 )
 
-z_dim = 0
-c_dim = 512
+z_dim = 512
+c_dim = 0
 w_dim = 512
-num_ws = 14
 
 mapping_kwargs = dict(
-    num_layers=1,
+    num_layers=8,
 )
 
 
@@ -65,6 +64,7 @@ mapping_kwargs = dict(
 
 # class GeneratorV18(torch.nn.Module):
 synthesis = SynthesisNetwork(w_dim=w_dim, img_resolution=img_resolution, img_channels=img_channels, **synthesis_kwargs)
+num_ws = synthesis.num_ws
 mapping = MappingNetwork(z_dim=z_dim, c_dim=c_dim, w_dim=w_dim, num_ws=num_ws, **mapping_kwargs)
 const_encoding = ConstEncoderNetwork(input_nc=3 + 3, output_nc=512, ngf=64, n_downsampling=6)
 style_encoding = StyleEncoderNetwork(input_nc=30 * 2, output_nc=512, ngf=64, n_downsampling=6)
@@ -95,8 +95,8 @@ def load_network_pkl(f, force_fp16=False):
     torch.save(data['D'].state_dict(), "D_256.pth")
 
 '''
-ckpt_file = 'G_ema_256.pth'
-save_name = 'G_ema_256.pdparams'
+ckpt_file = '../G_ema_afhqcat.pth'
+save_name = '../G_ema_afhqcat.pdparams'
 state_dict = torch.load(ckpt_file, map_location=torch.device('cpu'))
 
 
