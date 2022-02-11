@@ -30,6 +30,8 @@ conda create -n pasta python=3.8
 
 conda activate pasta
 export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/cuda-10.2/lib64
+export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/lib/x86_64-linux-gnu
+
 
 
 export CUDA_VISIBLE_DEVICES=0
@@ -308,6 +310,10 @@ lr_scheduler:
 cd ~/w*
 wget https://paddlegan.bj.bcebos.com/InceptionV3.pdparams
 python tools/main.py -c configs/stylegan_v2_256_ffhq.yaml
+
+
+单机双卡训练：
+CUDA_VISIBLE_DEVICES=0,1 python -m paddle.distributed.launch tools/main.py -c configs/stylegan_v2_256_ffhq.yaml
 
 
 # 恢复训练

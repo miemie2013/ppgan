@@ -80,8 +80,8 @@ class Trainer:
         self.output_dir = cfg.output_dir
         self.max_eval_steps = cfg.model.get('max_eval_steps', None)
 
-        self.local_rank = ParallelEnv().local_rank
-        self.world_size = ParallelEnv().nranks
+        self.local_rank = ParallelEnv().local_rank  # 咩酱：当前训练进程的编号。
+        self.world_size = ParallelEnv().nranks      # 咩酱：参与训练进程的数量，一般也是训练所使用GPU卡的数量。
         self.log_interval = cfg.log_config.interval
         self.visual_interval = cfg.log_config.visiual_interval
         self.weight_interval = cfg.snapshot_config.interval
