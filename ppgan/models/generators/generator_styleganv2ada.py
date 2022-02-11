@@ -1203,35 +1203,15 @@ class SynthesisNetwork(nn.Layer):
         for res in self.block_resolutions:
             in_channels = channels_dict[res // 2] if res > 4 else 0
             out_channels = channels_dict[res]
-            # use_fp16 = (res >= fp16_resolution)
-            use_fp16 = False
+            use_fp16 = (res >= fp16_resolution)
+            # use_fp16 = False
             is_last = (res == self.img_resolution)
             block = SynthesisBlock(in_channels, out_channels, w_dim=w_dim, resolution=res,
-                img_channels=img_channels, is_last=is_last, use_fp16=use_fp16, is_style=True, version=self.version, **block_kwargs)
+                img_channels=img_channels, is_last=is_last, use_fp16=use_fp16, version=self.version, **block_kwargs)
             self.num_ws += block.num_conv
             if is_last:
                 self.num_ws += block.num_torgb
             setattr(self, f'b{res}', block)
-
-        res = self.block_resolutions[-2]
-        in_channels = channels_dict[res]
-        out_channels = channels_dict[res]
-        self.spade_b128_1 = Spade_ResBlock(in_channels, out_channels)
-        self.spade_b128_2 = Spade_ResBlock(in_channels, out_channels)
-        self.spade_b128_3 = Spade_ResBlock(in_channels, out_channels)
-
-        res = self.block_resolutions[-1]
-        in_channels = channels_dict[res//2]
-        out_channels = channels_dict[res]
-        self.texture_b256 = SynthesisBlock(in_channels, out_channels, w_dim=w_dim, resolution=res,
-                img_channels=img_channels, is_last=True, use_fp16=False, is_style=False, version=self.version, **block_kwargs)
-
-        spade_encoder = []
-        ngf = 64
-        spade_encoder += [Conv2dLayer(3, ngf, kernel_size=7, activation='relu')]
-        spade_encoder += [ResBlock(ngf, ngf, kernel_size=4, activation='relu')]                 # 256
-        spade_encoder += [ResBlock(ngf, ngf*2, kernel_size=4, activation='relu', down=2)]       # 128
-        self.spade_encoder = nn.Sequential(*spade_encoder)
 
     def get_spade_feat(self, mask_256, denorm_mask, denorm_input):
         mask_256 = paddle.cast(mask_256 > 0.9, dtype=mask_256.dtype)
