@@ -685,8 +685,13 @@ def modulated_conv2d(
 
     # Pre-normalize inputs to avoid FP16 overflow.
     if x.dtype == paddle.float16 and demodulate:
-        weight = weight * (1 / np.sqrt(in_channels * kh * kw) / weight.norm(float('inf'), dim=[1,2,3], keepdim=True)) # max_Ikk
-        styles = styles / styles.norm(float('inf'), dim=1, keepdim=True) # max_I
+        d0, d1, d2, d3 = weight.shape
+        weight_temp = weight.reshape((d0, d1, d2 * d3))
+        weight_temp = paddle.norm(weight_temp, p=np.inf, axis=[1, 2], keepdim=True)
+        weight_temp = weight_temp.reshape((d0, 1, 1, 1))
+        weight = weight * (1 / np.sqrt(in_channels * kh * kw) / weight_temp) # max_Ikk
+        styles_temp = paddle.norm(styles, p=np.inf, axis=1, keepdim=True)
+        styles = styles / styles_temp # max_I
 
     # Calculate per-sample weights and demodulation coefficients.
     w = None

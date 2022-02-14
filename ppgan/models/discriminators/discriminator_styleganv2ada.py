@@ -2,7 +2,7 @@ import paddle.nn as nn
 import paddle
 
 from .builder import DISCRIMINATORS
-from ..generators.generator_styleganv2ada import MappingNetwork, upfirdn2d_setup_filter, Conv2dLayer, FullyConnectedLayer, downsample2d
+from ..generators.generator_styleganv2ada import StyleGANv2ADA_MappingNetwork, upfirdn2d_setup_filter, Conv2dLayer, FullyConnectedLayer, downsample2d
 
 import numpy as np
 
@@ -172,7 +172,7 @@ class DiscriminatorEpilogue(nn.Layer):
 
 
 @DISCRIMINATORS.register()
-class StyleGAN2ADADiscriminator(nn.Layer):
+class StyleGANv2ADA_Discriminator(nn.Layer):
     def __init__(self,
         c_dim,                          # Conditioning label (C) dimensionality.
         img_resolution,                 # Input resolution.
@@ -214,7 +214,7 @@ class StyleGAN2ADADiscriminator(nn.Layer):
             setattr(self, f'b{res}', block)
             cur_layer_idx += block.num_layers
         if c_dim > 0:
-            self.mapping = MappingNetwork(z_dim=0, c_dim=c_dim, w_dim=cmap_dim, num_ws=None, w_avg_beta=None, **mapping_kwargs)
+            self.mapping = StyleGANv2ADA_MappingNetwork(z_dim=0, c_dim=c_dim, w_dim=cmap_dim, num_ws=None, w_avg_beta=None, **mapping_kwargs)
         self.b4 = DiscriminatorEpilogue(channels_dict[4], cmap_dim=cmap_dim, resolution=4, **epilogue_kwargs, **common_kwargs)
 
     def forward(self, img, c, **block_kwargs):

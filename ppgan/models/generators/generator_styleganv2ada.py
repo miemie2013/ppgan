@@ -451,27 +451,6 @@ class Conv2dLayer(nn.Layer):
         return x
 
 
-@GENERATORS.register()
-class ConstEncoderNetwork(nn.Layer):
-    def __init__(self, input_nc, output_nc, ngf=64, n_downsampling=4):
-        super().__init__()
-
-        encoder = []
-        encoder += [Conv2dLayer(input_nc, ngf, kernel_size=1)]
-        mult_ins = [1, 2, 4, 4, 4, 8]
-        mult_outs = [2, 4, 4, 4, 8, 8]
-        for i in range(n_downsampling):
-            mult_in = mult_ins[i]
-            mult_out = mult_outs[i]
-            encoder += [Conv2dLayer(ngf * mult_in, ngf * mult_out, kernel_size=3, down=2)]
-
-        self.model = nn.Sequential(*encoder)
-
-    def forward(self, x):
-        x = self.model(x)
-        return x
-
-
 class Dense(nn.Layer):
     def __init__(self, in_channels, out_channels):
         super().__init__()
@@ -526,66 +505,12 @@ class FullyConnectedLayer(nn.Layer):
         return x
 
 
-'''
-兼容原版仓库的
-StyleEncoderNetworkV16
-'''
-@GENERATORS.register()
-class StyleEncoderNetwork(nn.Layer):
-    def __init__(self, input_nc, output_nc, ngf=64, n_downsampling=4):
-        super().__init__()
-        encoder = []
-        encoder += [Conv2dLayer(input_nc, ngf, kernel_size=1)]
-        mult_ins = [1, 2, 4]
-        mult_outs = [2, 4, 8]
-        for i in range(3):
-            mult_in = mult_ins[i]
-            mult_out = mult_outs[i]
-            encoder += [Dense(ngf * mult_in, ngf * mult_in),
-                        Conv2dLayer(ngf * mult_in, ngf * mult_out, kernel_size=3, down=2)]
-        mult_ins = [8, 8, 8]
-        mult_outs = [8, 8, 8]
-        for i in range(3):
-            mult_in = mult_ins[i]
-            mult_out = mult_outs[i]
-            encoder += [Dense(ngf * mult_in, ngf * mult_in),
-                        Conv2dLayer(ngf * mult_in, ngf * mult_out, kernel_size=3)]
-
-        encoder += [nn.AdaptiveAvgPool2D(1)]
-        self.model = nn.Sequential(*encoder)
-        self.fc = FullyConnectedLayer(output_nc, output_nc)
-
-        feat_enc = []
-        feat_enc += [Conv2dLayer(3, ngf, kernel_size=3)]
-        mult_ins = [1, 1, 1]
-        mult_outs = [1, 1, 1]
-        for i in range(3):
-            mult_in = mult_ins[i]
-            mult_out = mult_outs[i]
-            feat_enc += [Conv2dLayer(ngf * mult_in, ngf * mult_out, kernel_size=3, down=2)]
-
-        self.feat_enc = nn.Sequential(*feat_enc)
-
-    def forward(self, x, const_input):
-        const_feats = []
-        for _, module in enumerate(self.feat_enc):
-            const_input = module(const_input)
-            const_feats.append(const_input)
-
-        for _, module in enumerate(self.model):
-            x = module(x)
-        x = x.reshape((x.shape[0], -1))
-        x = self.fc(x)
-
-        return x, const_feats
-
-
 def normalize_2nd_moment(x, dim=1, eps=1e-8):
     return x * (x.square().mean(axis=dim, keepdim=True) + eps).rsqrt()
 
 
 @GENERATORS.register()
-class MappingNetwork(nn.Layer):
+class StyleGANv2ADA_MappingNetwork(nn.Layer):
     def __init__(self,
         z_dim,                      # Input latent (Z) dimensionality, 0 = no latent.
         c_dim,                      # Conditioning label (C) dimensionality, 0 = no label.
@@ -685,8 +610,13 @@ def modulated_conv2d(
 
     # Pre-normalize inputs to avoid FP16 overflow.
     if x.dtype == paddle.float16 and demodulate:
-        weight = weight * (1 / np.sqrt(in_channels * kh * kw) / weight.norm(float('inf'), dim=[1,2,3], keepdim=True)) # max_Ikk
-        styles = styles / styles.norm(float('inf'), dim=1, keepdim=True) # max_I
+        d0, d1, d2, d3 = weight.shape
+        weight_temp = weight.reshape((d0, d1, d2 * d3))
+        weight_temp = paddle.norm(weight_temp, p=np.inf, axis=[1, 2], keepdim=True)
+        weight_temp = weight_temp.reshape((d0, 1, 1, 1))
+        weight = weight * (1 / np.sqrt(in_channels * kh * kw) / weight_temp) # max_Ikk
+        styles_temp = paddle.norm(styles, p=np.inf, axis=1, keepdim=True)
+        styles = styles / styles_temp # max_I
 
     # Calculate per-sample weights and demodulation coefficients.
     w = None
@@ -981,7 +911,7 @@ class SynthesisBlock(nn.Layer):
         self.architecture = architecture
         self.use_fp16 = use_fp16
         self.channels_last = (use_fp16 and fp16_channels_last)
-        self.register_buffer('resample_filter', upfirdn2d.setup_filter(resample_filter))
+        self.register_buffer('resample_filter', upfirdn2d_setup_filter(resample_filter))
         self.num_conv = 0
         self.num_torgb = 0
 
@@ -1055,7 +985,7 @@ SynthesisNetworkFull
 SynthesisNetworkV18
 '''
 @GENERATORS.register()
-class SynthesisNetwork(nn.Layer):
+class StyleGANv2ADA_SynthesisNetwork(nn.Layer):
     def __init__(self,
         w_dim,                      # Intermediate latent (W) dimensionality.
         img_resolution,             # Output image resolution.
@@ -1080,7 +1010,7 @@ class SynthesisNetwork(nn.Layer):
             in_channels = channels_dict[res // 2] if res > 4 else 0
             out_channels = channels_dict[res]
             use_fp16 = (res >= fp16_resolution)
-            # use_fp16 = False
+            use_fp16 = False
             is_last = (res == self.img_resolution)
             block = SynthesisBlock(in_channels, out_channels, w_dim=w_dim, resolution=res,
                 img_channels=img_channels, is_last=is_last, use_fp16=use_fp16, **block_kwargs)

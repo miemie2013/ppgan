@@ -2,7 +2,7 @@ epochs: 200
 output_dir: output_dir
 
 model:
-  name: StyleGAN2ADAModel
+  name: StyleGANv2ADAModel
   latent_dim: &LATENT_DIM 16
   G_reg_interval: 4
   D_reg_interval: 16
@@ -21,7 +21,7 @@ model:
   vgg19_ckpt1: checkpoints/vgg19-dcbb9e9d.pdparams
   vgg19_ckpt2: checkpoints/vgg19_conv.pdparams
   synthesis:
-    name: SynthesisNetwork
+    name: StyleGANv2ADA_SynthesisNetwork
     w_dim: &W_DIM 512
     img_resolution: &IMAGE_SIZE 256
     img_channels: &IMG_CHANNELS 3
@@ -32,26 +32,14 @@ model:
     use_noise: true
     version: Full  # miemie2013
   mapping:
-    name: MappingNetwork
+    name: StyleGANv2ADA_MappingNetwork
     z_dim: &Z_DIM 0
     c_dim: &C_DIM 512
     w_dim: *W_DIM
     num_ws: 14
     num_layers: 1
-  const_encoding:
-    name: ConstEncoderNetwork
-    input_nc: 6
-    output_nc: &OC 512
-    ngf: &NGF 64
-    n_downsampling: &N_DOWN 6
-  style_encoding:
-    name: StyleEncoderNetwork
-    input_nc: 42
-    output_nc: *OC
-    ngf: *NGF
-    n_downsampling: *N_DOWN
   discriminator:
-    name: StyleGAN2ADADiscriminator
+    name: StyleGANv2ADA_Discriminator
     c_dim: *C_DIM
     img_resolution: *IMAGE_SIZE
     img_channels: *IMG_CHANNELS

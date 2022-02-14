@@ -345,7 +345,7 @@ def he_init(module):
 
 
 @MODELS.register()
-class StyleGAN2ADAModel(BaseModel):
+class StyleGANv2ADAModel(BaseModel):
     def __init__(
         self,
         synthesis,

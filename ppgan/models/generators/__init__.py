@@ -28,7 +28,7 @@ from .generator_pixel2style2pixel import Pixel2Style2Pixel
 from .drn import DRNGenerator
 from .generator_starganv2 import StarGANv2Generator, StarGANv2Style, StarGANv2Mapping, FAN
 from .generator_pastagan import StyleEncoderNetwork, MappingNetwork, ConstEncoderNetwork, SynthesisNetwork
-from .generator_styleganv2ada import StyleEncoderNetwork, MappingNetwork, ConstEncoderNetwork, SynthesisNetwork
+from .generator_styleganv2ada import StyleGANv2ADA_MappingNetwork, StyleGANv2ADA_SynthesisNetwork
 from .edvr import EDVRNet
 from .generator_firstorder import FirstOrderGenerator
 from .generater_lapstyle import DecoderNet, Encoder, RevisionNet

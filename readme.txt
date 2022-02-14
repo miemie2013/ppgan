@@ -3,7 +3,19 @@
 
 ======================== StyleGANv2_ADA ========================
 
+1.因为会报错 ValueError: (InvalidArgument) float16 can only be used when CUDNN or NPU is used
+所以强制设置StyleGANv2ADA_SynthesisNetwork的use_fp16 = False
+class StyleGANv2ADA_SynthesisNetwork(nn.Layer):
+    def __init__(self,
+    ):
+        ...
+        for res in self.block_resolutions:
+            ...
+            use_fp16 = False
 
+
+
+StyleGANv2ADA_
 styleganv2ada
 
 afhqcat
