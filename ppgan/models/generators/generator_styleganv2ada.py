@@ -451,25 +451,6 @@ class Conv2dLayer(nn.Layer):
         return x
 
 
-class Dense(nn.Layer):
-    def __init__(self, in_channels, out_channels):
-        super().__init__()
-        self.in_channels = in_channels
-        self.out_channels = out_channels
-        # pytorch的nn.InstanceNorm2d()默认是不使用scale和offset的，只做归一化。所以这里设为False。
-        self.in_ = nn.InstanceNorm2D(out_channels, weight_attr=False, bias_attr=False)
-        self.activation = nn.LeakyReLU()
-        self.linear = nn.Linear(in_channels, out_channels)
-
-    def forward(self, x):
-        x = x.transpose((0, 2, 3, 1))
-        out = self.linear(x)
-        out = out.transpose((0, 3, 1, 2))
-        out = self.in_(out)
-        out = self.activation(out)
-        return out
-
-
 class FullyConnectedLayer(nn.Layer):
     def __init__(self,
         in_features,                # Number of input features.

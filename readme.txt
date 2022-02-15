@@ -26,6 +26,11 @@ cd ~/w*
 python tools/main.py -c configs/stylegan_v2ada_512_afhqcat.yaml
 
 
+训练模型（微调）:
+cd ~/w*
+python tools/main.py -c configs/stylegan_v2ada_512_afhqcat.yaml --load G_ema_afhqcat.pdparams
+
+
 
 ======================== PastaGAN ========================
 

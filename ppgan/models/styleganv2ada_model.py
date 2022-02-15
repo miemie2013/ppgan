@@ -85,6 +85,9 @@ class StyleGANv2ADAModel(BaseModel):
         self.nets_ema['mapping'] = build_generator(mapping)
         if discriminator:
             self.nets['discriminator'] = build_discriminator(discriminator)
+        self.c_dim = mapping.c_dim
+        self.z_dim = mapping.z_dim
+        self.w_dim = mapping.w_dim
 
         # self.nets['generator'].apply(he_init)
         # self.nets['style_encoder'].apply(he_init)
@@ -386,87 +389,29 @@ class StyleGANv2ADAModel(BaseModel):
         self.nets_ema['synthesis'].eval()
         self.nets_ema['mapping'].eval()
 
-        image = self.input['image']
-        pose = self.input['pose']
-        norm_img = self.input['norm_img']
-        denorm_upper_clothes = self.input['denorm_upper_img']
-        denorm_lower_clothes = self.input['denorm_lower_img']
-        denorm_upper_mask = self.input['denorm_upper_mask']
-        denorm_lower_mask = self.input['denorm_lower_mask']
-        batchsize = image.shape[0]
-        # batchsize > 1时，还要实现一下两两之间的换装。
-        assert batchsize == 1
-        person_name = self.input['person_name'][0]
-        clothes_name = self.input['clothes_name'][0]
-        src_img = self.input['src_img']
-        trg_img = self.input['trg_img']
-        src_img = src_img.numpy()[0]
-        trg_img = trg_img.numpy()[0]
+        z = self.input['z']
 
-        im_shape = src_img.shape
-        h, w = im_shape[0], im_shape[1]
-        left_padding = (h - w) // 2
-        right_padding = h - w - left_padding
-        gray_img = np.ones((h, w, 3), np.uint8) * 127
+        class_idx = None
+        label = paddle.zeros([1, self.c_dim])
+        if self.c_dim != 0:
+            if class_idx is None:
+                print('Must specify class label with --class when using a conditional network')
+            label[:, class_idx] = 1
+        else:
+            if class_idx is not None:
+                print('warn: --class=lbl ignored when running on an unconditional network')
+        # noise_mode = ['const', 'random', 'none']
+        noise_mode = 'const'
+        truncation_psi = 1.0
 
+        ws = self.nets_ema['mapping'](z, label, truncation_psi=truncation_psi, truncation_cutoff=None)
+        img = self.nets_ema['synthesis'](ws, noise_mode=noise_mode)
 
-        image = paddle.cast(image, dtype=paddle.float32)
-        pose = paddle.cast(pose, dtype=image.dtype)
-        norm_img = paddle.cast(norm_img, dtype=image.dtype)
-        denorm_upper_clothes = paddle.cast(denorm_upper_clothes, dtype=image.dtype)
-        denorm_lower_clothes = paddle.cast(denorm_lower_clothes, dtype=image.dtype)
-        denorm_upper_mask = paddle.cast(denorm_upper_mask, dtype=image.dtype)
-        denorm_lower_mask = paddle.cast(denorm_lower_mask, dtype=image.dtype)
+        img = (paddle.transpose(img, (0, 2, 3, 1)) * 127.5 + 128)
+        img = paddle.clip(img, 0, 255)
+        img = paddle.cast(img, dtype=paddle.uint8)
+        img_rgb = img.numpy()[0]  # pgan是将RGB格式的图片进行保存的。
 
-        image = image / 127.5 - 1
-        pose = pose / 127.5 - 1
-        norm_img_c = norm_img / 127.5 - 1
-        denorm_upper_clothes = denorm_upper_clothes / 127.5 - 1
-        denorm_lower_clothes = denorm_lower_clothes / 127.5 - 1
-
-
-        retain_tensor = image
-        pose_tensor = paddle.concat([pose, retain_tensor], 1)
-        # gen_z = paddle.randn([batchsize, 0])
-        gen_z = None
-
-        with paddle.no_grad():
-            norm_img1 = norm_img_c[:, :30, :, :]
-            # 看pastagan_dataset.py的normalize()，很奇怪，为什么训练时是试穿者下装（裤子、裙子等）的图片，预测时是试穿者骨骼图？？？
-            gugetu = norm_img_c[:, 48:, :, :]
-            aaaaaaaaaaa = paddle.concat([norm_img1, gugetu], 1)
-            gen_c, cat_feat_list = self.nets['style_encoding'](aaaaaaaaaaa, retain_tensor)
-            pose_feat = self.nets['const_encoding'](pose_tensor)
-            ws = self.nets['mapping'](gen_z, gen_c)
-            cat_feats = {}
-            for cat_feat in cat_feat_list:
-                h = cat_feat.shape[2]
-                cat_feats[str(h)] = cat_feat
-            # 因为有噪声，所以每一次的结果有点小差别
-            version = self.nets['synthesis'].version
-            if version == 'Full':
-                gen_coarse_imgs, gen_imgs, _ = self.nets['synthesis'](ws,
-                                                                         pose_feat, cat_feats, denorm_upper_clothes,
-                                                                         denorm_lower_clothes, denorm_upper_mask,
-                                                                         denorm_lower_mask)
-            elif version == 'V18':
-                gen_coarse_imgs, gen_imgs, _, _ = self.nets['synthesis'](ws,
-                                                                         pose_feat, cat_feats, denorm_upper_clothes,
-                                                                         denorm_lower_clothes, denorm_upper_mask,
-                                                                         denorm_lower_mask)
-            gen_imgs = gen_imgs.numpy()
-            for ii in range(batchsize):
-                gen_img = gen_imgs[ii]
-                gen_img = (gen_img.transpose(1, 2, 0) + 1.0) * 127.5
-                gen_img = gen_img[:, left_padding:left_padding+w, [2, 1, 0]]
-                gen_img = np.clip(gen_img, 0, 255)
-                gen_img = gen_img.astype(np.uint8)
-
-                row0 = np.concatenate([gray_img, trg_img], 1)
-                row1 = np.concatenate([src_img, gen_img], 1)
-                result_img = np.concatenate([row0, row1], 0)
-                result_img = result_img[:, :, [2, 1, 0]]  # BGR->RGB  ppgan是将RGB格式的图片进行保存的。
-
-        self.visual_items['reference'] = result_img
+        self.visual_items['reference'] = img_rgb
         self.nets_ema['synthesis'].train()
         self.nets_ema['mapping'].train()

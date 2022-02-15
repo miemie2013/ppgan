@@ -175,3 +175,37 @@ class StyleGANv2ADADataset(BaseDataset):
 
     def prepare_data_infos(self, dataroot):
         pass
+
+
+
+@DATASETS.register()
+class StyleGANv2ADATestDataset(BaseDataset):
+    """
+    """
+    def __init__(self, seeds, z_dim, preprocess=None):
+        """Initialize single dataset class.
+
+        Args:
+            seeds (list[int]): seeds.
+            z_dim (int): z_dim.
+        """
+        super(StyleGANv2ADATestDataset, self).__init__(preprocess)
+        self.seeds = seeds
+        self.z_dim = z_dim
+
+    def __getitem__(self, idx):
+        seed = self.seeds[idx]
+        z = np.random.RandomState(seed).randn(self.z_dim, )
+        datas = {
+            'z': z,
+        }
+        return datas
+
+    def __len__(self):
+        size = len(self.seeds)
+        return size
+
+    def prepare_data_infos(self, dataroot):
+        pass
+
+

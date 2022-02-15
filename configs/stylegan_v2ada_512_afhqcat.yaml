@@ -1,4 +1,4 @@
-epochs: 200
+kimgs: 25000
 output_dir: output_dir
 
 model:
@@ -7,6 +7,7 @@ model:
   D_reg_interval: 16
   # loss
   r1_gamma: 0.5
+  pl_batch_shrink: 2  # default is 2. when train batch_size is 1, set to 1.
   synthesis:
     name: StyleGANv2ADA_SynthesisNetwork
     w_dim: &W_DIM 512
@@ -44,38 +45,27 @@ dataset:
     resolution: *IMAGE_SIZE
     use_labels: False
     xflip: False
-    num_workers: 0
+    num_workers: 2
     batch_size: 2
     len_phases: 4
     preprocess: None
 
   test:
-    name: StyleGANv2ADADataset
-    dataroot: ../data/data42681/afhq/train/cat
-    is_train: False
-    resolution: *IMAGE_SIZE
-    use_labels: False
-    xflip: False
-    num_workers: 0
-    batch_size: 1
-    len_phases: 4
-    preprocess: None
+    name: StyleGANv2ADATestDataset
+    seeds: [85, 100, 75, 458, 1500]
+    z_dim: *Z_DIM
 
 lr_scheduler_G:
-  name: LinearDecay
+  name: MultiStepDecay
   learning_rate: 0.0025
-  start_epoch: 100
-  decay_epochs: 100
-  # will get from real dataset
-  iters_per_epoch: 365
+  milestones: [99999000]
+  gamma: 0.5
 
 lr_scheduler_D:
-  name: LinearDecay
+  name: MultiStepDecay
   learning_rate: 0.0025
-  start_epoch: 100
-  decay_epochs: 100
-  # will get from real dataset
-  iters_per_epoch: 365
+  milestones: [99999000]
+  gamma: 0.5
 
 optimizer:
   generator:
@@ -95,12 +85,12 @@ optimizer:
     epsilon: 1e-8
 
 validate:
-  interval: 175   # test iters
+  interval: 10   # test iters
   save_img: true
 
 log_config:
   interval: 10   # log iters
-  visiual_interval: 175   # visual iters
+  visiual_interval: 10   # visual iters
 
 snapshot_config:
-  interval: 1   # save epochs
+  interval: 20   # save epochs when use 'epochs'; save iters when use 'total_iters' or 'kimgs'.

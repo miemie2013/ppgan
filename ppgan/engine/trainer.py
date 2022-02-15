@@ -180,7 +180,12 @@ class Trainer:
             self.by_epoch = True
         else:
             self.by_epoch = False
-            self.total_iters = cfg.total_iters
+            self.total_iters = cfg.get('total_iters', None)
+            if self.total_iters is None:
+                kimgs = cfg.get('kimgs', None)
+                kimgs = kimgs * 1000
+                batch_size = self.cfg.dataset.train.batch_size
+                self.total_iters = kimgs // batch_size
 
         if self.by_epoch:
             self.weight_interval *= self.iters_per_epoch
@@ -412,7 +417,7 @@ class Trainer:
                     if self.by_epoch:
                         msg = 'epoch%.3d_' % self.current_epoch
                     else:
-                        msg = 'iter%.3d_' % self.current_iter
+                        msg = 'iter%.9d_' % self.current_iter
                 else:
                     msg = ''
                 makedirs(os.path.join(self.output_dir, results_dir))

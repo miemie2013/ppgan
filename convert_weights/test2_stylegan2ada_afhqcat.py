@@ -4,6 +4,7 @@ import cv2
 from ppgan.utils.filesystem import save
 # from ppgan.models.generators.generator_styleganv2ada import ConstEncoderNetwork, StyleEncoderNetwork, StyleGANv2ADA_MappingNetwork, StyleGANv2ADA_SynthesisNetwork
 from ppgan.models.generators.generator_styleganv2ada import StyleGANv2ADA_MappingNetwork, StyleGANv2ADA_SynthesisNetwork
+from ppgan.models.discriminators.discriminator_styleganv2ada import StyleGANv2ADA_Discriminator
 
 import numpy as np
 import torch
@@ -68,11 +69,32 @@ synthesis = StyleGANv2ADA_SynthesisNetwork(w_dim=w_dim, img_resolution=img_resol
 num_ws = synthesis.num_ws
 mapping = StyleGANv2ADA_MappingNetwork(z_dim=z_dim, c_dim=c_dim, w_dim=w_dim, num_ws=num_ws, **mapping_kwargs)
 
+channel_base = 32768
+channel_max = 512
+num_fp16_res = 4
+conv_clamp = 256
+epilogue_kwargs = dict(
+    mbstd_group_size=8,
+)
+discriminator = StyleGANv2ADA_Discriminator(c_dim=c_dim,
+                                            img_resolution=img_resolution,
+                                            img_channels=img_channels,
+                                            channel_base=channel_base,
+                                            channel_max=channel_max,
+                                            num_fp16_res=num_fp16_res,
+                                            conv_clamp=conv_clamp,
+                                            block_kwargs={},
+                                            mapping_kwargs={},
+                                            epilogue_kwargs=epilogue_kwargs,
+                                            )
+
 mapping_std = mapping.state_dict()
 synthesis_std = synthesis.state_dict()
+discriminator_std = discriminator.state_dict()
 
 mapping.eval()
 synthesis.eval()
+discriminator.eval()
 
 
 print('\nCopying...')
@@ -90,8 +112,10 @@ def load_network_pkl(f, force_fp16=False):
 
 '''
 ckpt_file = '../G_ema_afhqcat.pth'
+ckpt_file2 = '../D_afhqcat.pth'
 save_name = '../G_ema_afhqcat.pdparams'
 state_dict = torch.load(ckpt_file, map_location=torch.device('cpu'))
+state_dict_D = torch.load(ckpt_file2, map_location=torch.device('cpu'))
 
 
 synthesis_dic = {}
@@ -112,6 +136,10 @@ for key, value in state_dict.items():
         style_encoding_dic[key] = value.data.numpy()
     else:
         others[key] = value.data.numpy()
+
+discriminator_dic = {}
+for key, value in state_dict_D.items():
+    discriminator_dic[key] = value.data.numpy()
 
 print()
 
@@ -138,6 +166,19 @@ for key in synthesis_dic.keys():
     print(key)
     copy(name2, w, synthesis_std)
 synthesis.set_state_dict(synthesis_std)
+
+for key in discriminator_dic.keys():
+    name2 = key
+    w = discriminator_dic[key]
+    name2 = name2.replace('discriminator.', '')
+    if '.linear.weight' in key:
+        w = w.transpose(1, 0)  # pytorch的nn.Linear()的weight权重要转置才能赋值给paddle的nn.Linear()
+    if '.noise_strength' in key:
+        print()
+        w = np.reshape(w, [1, ])
+    print(key)
+    copy(name2, w, discriminator_std)
+discriminator.set_state_dict(discriminator_std)
 
 
 class_idx = None
@@ -187,7 +228,7 @@ class Model(paddle.nn.Layer):
         return x
 
 
-model = Model(synthesis, mapping, discriminator=None)
+model = Model(synthesis, mapping, discriminator=discriminator)
 
 state_dicts = {}
 for net_name, net in model.nets.items():
