@@ -11,3 +11,4 @@ easydict
 munch
 natsort
 matplotlib
+pycocotools

@@ -45,8 +45,8 @@ dataset:
     resolution: *IMAGE_SIZE
     use_labels: False
     xflip: False
-    num_workers: 2
-    batch_size: 2
+    num_workers: 0
+    batch_size: 6
     len_phases: 4
     preprocess: None
 
@@ -85,12 +85,12 @@ optimizer:
     epsilon: 1e-8
 
 validate:
-  interval: 10   # test iters
+  interval: 1000   # test iters
   save_img: true
 
 log_config:
   interval: 10   # log iters
-  visiual_interval: 10   # visual iters
+  visiual_interval: 1000   # visual iters
 
 snapshot_config:
-  interval: 20   # save epochs when use 'epochs'; save iters when use 'total_iters' or 'kimgs'.
+  interval: 1000   # save epochs when use 'epochs'; save iters when use 'total_iters' or 'kimgs'.

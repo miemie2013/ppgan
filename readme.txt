@@ -15,10 +15,17 @@ class StyleGANv2ADA_SynthesisNetwork(nn.Layer):
 
 
 
-StyleGANv2ADA_
-styleganv2ada
+# 解压AFHQ数据集
+cd ~/w*
+pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
 
-afhqcat
+nvidia-smi
+cd ~
+cd data
+cd data42681
+unzip afhq.zip
+cd ~/w*
+
 
 
 训练模型:
