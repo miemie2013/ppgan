@@ -413,6 +413,8 @@ class StyleGANv2ADAModel(BaseModel):
         self.vgg19_ckpt2 = vgg19_ckpt2
         self.pl_batch_shrink = pl_batch_shrink
 
+        self.pl_mean = paddle.zeros([])
+
         # 每个类别的权重（6个类别）
         class_weight = paddle.to_tensor([1., 2., 2., 3., 3., 3.])
         self.ce_parsing = paddle.nn.CrossEntropyLoss(ignore_index=255, weight=class_weight)
@@ -503,45 +505,39 @@ class StyleGANv2ADAModel(BaseModel):
             #     flow = self.G_flownet(torch.cat((cloth[:batch_size], aff_pose[:batch_size]), dim=1))
             # warp_cloth = F.grid_sample(cloth[:batch_size, :3, :, :], flow)
 
-            gen_img, gen_ws = self.run_G(gen_z[:batch_size], gen_c[:batch_size], pose[:batch_size],
-                                         [cat_feat[:batch_size] for cat_feat in cat_feats], sync=sync)
-            pl_noise = paddle.randn_like(gen_img) / np.sqrt(gen_img.shape[2] * gen_img.shape[3])
+            gen_img, gen_ws = self.run_G(gen_z[:batch_size], gen_c[:batch_size], sync=sync)
+            pl_noise = paddle.randn(gen_img.shape) / np.sqrt(gen_img.shape[2] * gen_img.shape[3])
             pl_grads = paddle.grad(
                 outputs=[(gen_img * pl_noise).sum()],
                 inputs=[gen_ws],
                 create_graph=True,  # 最终loss里包含梯度，需要求梯度的梯度，所以肯定需要建立反向图。
                 retain_graph=True)[0]
             pl_lengths = pl_grads.square().sum(2).mean(1).sqrt()
-            pl_mean = self.pl_mean.lerp(pl_lengths.mean(), self.pl_decay)
-            self.pl_mean.copy_(pl_mean.detach())
+
+            # pl_mean = self.pl_mean.lerp(pl_lengths.mean(), self.pl_decay)
+            # self.pl_mean.copy_(pl_mean.detach())
+            pl_mean = self.pl_mean + self.pl_decay * (pl_lengths.mean() - self.pl_mean)
+            self.pl_mean = pl_mean.detach().clone()
+
             pl_penalty = (pl_lengths - pl_mean).square()
             loss_Gpl = pl_penalty * self.pl_weight
-            # loss_numpy['loss_Gpl'] = loss_Gpl.numpy()
 
             loss_Gpl = (gen_img[:, 0, 0, 0] * 0 + loss_Gpl).mean() * float(gain)
+            loss_numpy['loss_Gpl'] = loss_Gpl.numpy()
             loss_Gpl.backward()  # 咩酱：gain即上文提到的这个阶段的训练间隔。
 
         # Dmain: Minimize logits for generated images.
         loss_Dgen = 0
         loss3 = 0.0
         if do_Dmain:
-            gen_img, gen_finetune_img, _, _gen_ws = self.run_G(gen_z, gen_c, pose, cat_feats, denorm_upper_mask,
-                                                               denorm_lower_mask, \
-                                                               denorm_upper_input, denorm_lower_input, sync=False)
-            gen_logits = self.run_D(gen_img, gen_c, sync=False)  # Gets synced by loss_Dreal.
-            gen_finetune_logits = self.run_D(gen_finetune_img, gen_c, sync=False)
+            gen_img, _gen_ws = self.run_G(gen_z, gen_c, sync=False)
+            gen_logits = self.run_D(gen_img, gen_c, sync=False) # Gets synced by loss_Dreal.
 
             loss_Dgen = paddle.nn.functional.softplus(gen_logits)  # -log(1 - sigmoid(gen_logits))
-
-            loss_Dgen_finetune = paddle.nn.functional.softplus(gen_finetune_logits)  # -log(1 - sigmoid(gen_logits))
-
             loss_Dgen = loss_Dgen.mean()
-            loss_Dgen_finetune = loss_Dgen_finetune.mean()
-
             loss_numpy['loss_Dgen'] = loss_Dgen.numpy()
-            loss_numpy['loss_Dgen_finetune'] = loss_Dgen_finetune.numpy()
 
-            loss3 = ((loss_Dgen + loss_Dgen_finetune) / 2) * float(gain)
+            loss3 = loss_Dgen * float(gain)
 
         # Dmain: Maximize logits for real images.
         # Dr1: Apply R1 regularization.
@@ -554,7 +550,7 @@ class StyleGANv2ADAModel(BaseModel):
 
             loss_Dreal = 0
             if do_Dmain:
-                loss_Dreal = paddle.nn.functional.softplus(-real_logits)  # -log(sigmoid(real_logits))
+                loss_Dreal = paddle.nn.functional.softplus(-real_logits) # -log(sigmoid(real_logits))
                 loss_numpy['loss_Dreal'] = loss_Dreal.numpy().mean()
 
             loss_Dr1 = 0
