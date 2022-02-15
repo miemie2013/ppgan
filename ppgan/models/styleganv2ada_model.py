@@ -23,289 +23,6 @@ import sys
 
 
 
-class VGGLoss(nn.Layer):
-    def __init__(self, ckpt_path, requires_grad=False, weights=[1.0/32, 1.0/16, 1.0/8, 1.0/4, 1.0]):
-        super(VGGLoss, self).__init__()
-        self.vgg = VGG19_Feature(ckpt_path=ckpt_path, requires_grad=requires_grad)
-        self.criterion = nn.L1Loss()
-        self.weights = weights
-
-    def forward(self, x, y):
-        x_vgg, y_vgg = self.vgg(x), self.vgg(y)
-        loss = 0
-        for i in range(len(x_vgg)):
-            loss += self.weights[i] * self.criterion(x_vgg[i], y_vgg[i].detach())
-        return loss
-
-class VGG19_Feature(nn.Layer):
-    def __init__(self, ckpt_path="", pretrained=True, requires_grad=False):
-        super(VGG19_Feature, self).__init__()
-        vgg_pretrained_features = vgg19(pretrained=pretrained, progress=False, ckpt_path=ckpt_path).features  # load from local file
-        vgg_pretrained_features.eval()
-        if not requires_grad:
-            for param in vgg_pretrained_features.parameters():
-                param.stop_gradient = True
-        print('load vgg19 success!')
-
-        self.slice1 = paddle.nn.Sequential()
-        self.slice2 = paddle.nn.Sequential()
-        self.slice3 = paddle.nn.Sequential()
-        self.slice4 = paddle.nn.Sequential()
-        self.slice5 = paddle.nn.Sequential()
-        for x in range(2):
-            self.slice1.add_sublayer(str(x), vgg_pretrained_features[x])
-        for x in range(2, 7):
-            self.slice2.add_sublayer(str(x), vgg_pretrained_features[x])
-        for x in range(7, 12):
-            self.slice3.add_sublayer(str(x), vgg_pretrained_features[x])
-        for x in range(12, 21):
-            self.slice4.add_sublayer(str(x), vgg_pretrained_features[x])
-        for x in range(21, 30):
-            self.slice5.add_sublayer(str(x), vgg_pretrained_features[x])
-
-    def forward(self, X):
-        h_relu1 = self.slice1(X)
-        h_relu2 = self.slice2(h_relu1)
-        h_relu3 = self.slice3(h_relu2)
-        h_relu4 = self.slice4(h_relu3)
-        h_relu5 = self.slice5(h_relu4)
-        out = [h_relu1, h_relu2, h_relu3, h_relu4, h_relu5]
-        return out
-
-
-class VGG(nn.Layer):
-    def __init__(
-        self,
-        features: nn.Layer,
-        num_classes: int = 1000,
-        init_weights: bool = True
-    ) -> None:
-        super(VGG, self).__init__()
-        self.features = features
-        self.avgpool = nn.AdaptiveAvgPool2D((7, 7))
-        self.classifier = nn.Sequential(
-            nn.Linear(512 * 7 * 7, 4096),
-            nn.ReLU(True),
-            nn.Dropout(),
-            nn.Linear(4096, 4096),
-            nn.ReLU(True),
-            nn.Dropout(),
-            nn.Linear(4096, num_classes),
-        )
-        # if init_weights:
-        #     self._initialize_weights()
-
-    def forward(self, x):
-        x = self.features(x)
-        x = self.avgpool(x)
-        x = paddle.flatten(x, 1)
-        x = self.classifier(x)
-        return x
-
-    def _initialize_weights(self) -> None:
-        for m in self.modules():
-            if isinstance(m, nn.Conv2D):
-                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
-                if m.bias is not None:
-                    nn.init.constant_(m.bias, 0)
-            elif isinstance(m, nn.BatchNorm2D):
-                nn.init.constant_(m.weight, 1)
-                nn.init.constant_(m.bias, 0)
-            elif isinstance(m, nn.Linear):
-                nn.init.normal_(m.weight, 0, 0.01)
-                nn.init.constant_(m.bias, 0)
-
-def make_layers(cfg, batch_norm: bool = False) -> nn.Sequential:
-    layers = []
-    in_channels = 3
-    for v in cfg:
-        if v == 'M':
-            layers += [nn.MaxPool2D(kernel_size=2, stride=2)]
-        else:
-            # v = cast(int, v)
-            conv2d = nn.Conv2D(in_channels, v, kernel_size=3, padding=1)
-            if batch_norm:
-                layers += [conv2d, nn.BatchNorm2D(v), nn.ReLU()]
-            else:
-                layers += [conv2d, nn.ReLU()]
-            in_channels = v
-    return nn.Sequential(*layers)
-
-def vgg19(pretrained: bool = False, progress: bool = True, ckpt_path: str = "", **kwargs) -> VGG:
-    r"""VGG 19-layer model (configuration "E")
-    `"Very Deep Convolutional Networks For Large-Scale Image Recognition" <https://arxiv.org/pdf/1409.1556.pdf>`._
-    Args:
-        pretrained (bool): If True, returns a model pre-trained on ImageNet
-        progress (bool): If True, displays a progress bar of the download to stderr
-    """
-    return _vgg('vgg19', 'E', False, pretrained, progress, ckpt_path, **kwargs)
-
-cfgs = {
-    'A': [64, 'M', 128, 'M', 256, 256, 'M', 512, 512, 'M', 512, 512, 'M'],
-    'B': [64, 64, 'M', 128, 128, 'M', 256, 256, 'M', 512, 512, 'M', 512, 512, 'M'],
-    'D': [64, 64, 'M', 128, 128, 'M', 256, 256, 256, 'M', 512, 512, 512, 'M', 512, 512, 512, 'M'],
-    'E': [64, 64, 'M', 128, 128, 'M', 256, 256, 256, 256, 'M', 512, 512, 512, 512, 'M', 512, 512, 512, 512, 'M'],
-}
-
-def _vgg(arch: str, cfg: str, batch_norm: bool, pretrained: bool, progress: bool, ckpt_path: str = "", **kwargs):
-    if pretrained:
-        kwargs['init_weights'] = False
-    model = VGG(make_layers(cfgs[cfg], batch_norm=batch_norm), **kwargs)
-    if pretrained:
-        # state_dict = load_state_dict_from_url(model_urls[arch],
-        #                                       progress=progress)
-        print("vgg19 ckpt_path from local: ", ckpt_path)
-        state_dict = paddle.load(ckpt_path)
-        model.set_state_dict(state_dict)
-    return model
-
-
-
-def vgg_preprocess(tensor, vgg_normal_correct=False):
-    if vgg_normal_correct:
-        tensor = (tensor + 1) / 2
-    # input is RGB tensor which ranges in [0,1]
-    # output is BGR tensor which ranges in [0,255]
-    tensor_bgr = paddle.concat((tensor[:, 2:3, :, :], tensor[:, 1:2, :, :], tensor[:, 0:1, :, :]), axis=1)
-    # tensor_bgr = tensor[:, [2, 1, 0], ...]
-    tensor_bgr_ml = tensor_bgr - paddle.to_tensor([0.40760392, 0.45795686, 0.48501961]).type_as(tensor_bgr).reshape((1, 3, 1, 1))
-    tensor_rst = tensor_bgr_ml * 255
-    return tensor_rst
-
-class VGG19_feature_color_torchversion(nn.Layer):
-    '''
-    NOTE: there is no need to pre-process the input
-    input tensor should range in [0,1]
-    '''
-
-    def __init__(self, pool='max', vgg_normal_correct=True, ic=3):
-        super(VGG19_feature_color_torchversion, self).__init__()
-        self.vgg_normal_correct = vgg_normal_correct
-
-        self.conv1_1 = nn.Conv2D(ic, 64, kernel_size=3, padding=1)
-        self.conv1_2 = nn.Conv2D(64, 64, kernel_size=3, padding=1)
-        self.conv2_1 = nn.Conv2D(64, 128, kernel_size=3, padding=1)
-        self.conv2_2 = nn.Conv2D(128, 128, kernel_size=3, padding=1)
-        self.conv3_1 = nn.Conv2D(128, 256, kernel_size=3, padding=1)
-        self.conv3_2 = nn.Conv2D(256, 256, kernel_size=3, padding=1)
-        self.conv3_3 = nn.Conv2D(256, 256, kernel_size=3, padding=1)
-        self.conv3_4 = nn.Conv2D(256, 256, kernel_size=3, padding=1)
-        self.conv4_1 = nn.Conv2D(256, 512, kernel_size=3, padding=1)
-        self.conv4_2 = nn.Conv2D(512, 512, kernel_size=3, padding=1)
-        self.conv4_3 = nn.Conv2D(512, 512, kernel_size=3, padding=1)
-        self.conv4_4 = nn.Conv2D(512, 512, kernel_size=3, padding=1)
-        self.conv5_1 = nn.Conv2D(512, 512, kernel_size=3, padding=1)
-        self.conv5_2 = nn.Conv2D(512, 512, kernel_size=3, padding=1)
-        self.conv5_3 = nn.Conv2D(512, 512, kernel_size=3, padding=1)
-        self.conv5_4 = nn.Conv2D(512, 512, kernel_size=3, padding=1)
-        if pool == 'max':
-            self.pool1 = nn.MaxPool2D(kernel_size=2, stride=2)
-            self.pool2 = nn.MaxPool2D(kernel_size=2, stride=2)
-            self.pool3 = nn.MaxPool2D(kernel_size=2, stride=2)
-            self.pool4 = nn.MaxPool2D(kernel_size=2, stride=2)
-            self.pool5 = nn.MaxPool2D(kernel_size=2, stride=2)
-        elif pool == 'avg':
-            self.pool1 = nn.AvgPool2D(kernel_size=2, stride=2)
-            self.pool2 = nn.AvgPool2D(kernel_size=2, stride=2)
-            self.pool3 = nn.AvgPool2D(kernel_size=2, stride=2)
-            self.pool4 = nn.AvgPool2D(kernel_size=2, stride=2)
-            self.pool5 = nn.AvgPool2D(kernel_size=2, stride=2)
-
-    def forward(self, x, out_keys, preprocess=True):
-        '''
-        NOTE: input tensor should range in [0,1]
-        '''
-        out = {}
-        if preprocess:
-            x = vgg_preprocess(x, vgg_normal_correct=self.vgg_normal_correct)
-        out['r11'] = F.relu(self.conv1_1(x))
-        out['r12'] = F.relu(self.conv1_2(out['r11']))
-        out['p1'] = self.pool1(out['r12'])
-        out['r21'] = F.relu(self.conv2_1(out['p1']))
-        out['r22'] = F.relu(self.conv2_2(out['r21']))
-        out['p2'] = self.pool2(out['r22'])
-        out['r31'] = F.relu(self.conv3_1(out['p2']))
-        out['r32'] = F.relu(self.conv3_2(out['r31']))
-        out['r33'] = F.relu(self.conv3_3(out['r32']))
-        out['r34'] = F.relu(self.conv3_4(out['r33']))
-        out['p3'] = self.pool3(out['r34'])
-        out['r41'] = F.relu(self.conv4_1(out['p3']))
-        out['r42'] = F.relu(self.conv4_2(out['r41']))
-        out['r43'] = F.relu(self.conv4_3(out['r42']))
-        out['r44'] = F.relu(self.conv4_4(out['r43']))
-        out['p4'] = self.pool4(out['r44'])
-        out['r51'] = F.relu(self.conv5_1(out['p4']))
-        out['r52'] = F.relu(self.conv5_2(out['r51']))
-        out['r53'] = F.relu(self.conv5_3(out['r52']))
-        out['r54'] = F.relu(self.conv5_4(out['r53']))
-        out['p5'] = self.pool5(out['r54'])
-        return [out[key] for key in out_keys]
-
-
-def feature_normalize(feature_in):
-    feature_in_norm = paddle.norm(feature_in, 2, 1, keepdim=True) + sys.float_info.epsilon
-    feature_in_norm = feature_in / feature_in_norm
-    return feature_in_norm
-
-
-class ContextualLoss_forward(nn.Layer):
-    '''
-        input is Al, Bl, channel = 1, range ~ [0, 255]
-    '''
-
-    def __init__(self, PONO=True):
-        super(ContextualLoss_forward, self).__init__()
-        self.PONO = PONO
-        return None
-
-    def forward(self, X_features, Y_features, h=0.1, feature_centering=True):
-        '''
-        X_features&Y_features are are feature vectors or feature 2d array
-        h: bandwidth
-        return the per-sample loss
-        '''
-        batch_size = X_features.shape[0]
-        feature_depth = X_features.shape[1]
-        feature_size = X_features.shape[2]
-
-        # to normalized feature vectors
-        if feature_centering:
-            if self.PONO:
-                X_features = X_features - Y_features.mean(dim=1).unsqueeze(dim=1)
-                Y_features = Y_features - Y_features.mean(dim=1).unsqueeze(dim=1)
-            else:
-                X_features = X_features - Y_features.reshape((batch_size, feature_depth, -1)).mean(dim=-1).unsqueeze(dim=-1).unsqueeze(dim=-1)
-                Y_features = Y_features - Y_features.reshape((batch_size, feature_depth, -1)).mean(dim=-1).unsqueeze(dim=-1).unsqueeze(dim=-1)
-        X_features = feature_normalize(X_features).reshape((batch_size, feature_depth, -1))  # batch_size * feature_depth * feature_size * feature_size
-        Y_features = feature_normalize(Y_features).reshape((batch_size, feature_depth, -1))  # batch_size * feature_depth * feature_size * feature_size
-
-        # X_features = F.unfold(
-        #     X_features, kernel_size=self.opt.match_kernel, stride=1, padding=int(self.opt.match_kernel // 2))  # batch_size * feature_depth_new * feature_size^2
-        # Y_features = F.unfold(
-        #     Y_features, kernel_size=self.opt.match_kernel, stride=1, padding=int(self.opt.match_kernel // 2))  # batch_size * feature_depth_new * feature_size^2
-
-        # conine distance = 1 - similarity
-        X_features_permute = X_features.permute(0, 2, 1)  # batch_size * feature_size^2 * feature_depth
-        d = 1 - paddle.matmul(X_features_permute, Y_features)  # batch_size * feature_size^2 * feature_size^2
-
-        # normalized distance: dij_bar
-        # d_norm = d
-        d_norm = d / (torch.min(d, dim=-1, keepdim=True)[0] + 1e-3)  # batch_size * feature_size^2 * feature_size^2
-
-        # pairwise affinity
-        w = torch.exp((1 - d_norm) / h)
-        A_ij = w / torch.sum(w, dim=-1, keepdim=True)
-
-        # contextual loss per sample
-        CX = torch.mean(torch.max(A_ij, dim=-1)[0], dim=1)
-        loss = -paddle.log(CX)
-
-        # contextual loss per batch
-        # loss = torch.mean(loss)
-        return loss
-
-
-
 def soft_update(source, target, beta=1.0):
     '''
     ema:
@@ -353,21 +70,12 @@ class StyleGANv2ADAModel(BaseModel):
         discriminator=None,
         G_reg_interval=4,
         D_reg_interval=16,
-        latent_dim=16,
-        lambda_reg=1,
-        lambda_sty=1,
-        lambda_ds=1,
-        lambda_cyc=1,
+        augment_pipe=None,
+        style_mixing_prob=0.9,
         r1_gamma=10,
         pl_batch_shrink=2,
-        l1_weight=50.0,
-        vgg_weight=50.0,
-        pl_weight=0.0,
-        contextual_weight=1.0,
-        mask_weight=1.0,
-        style_mixing_prob=0.9,
-        vgg19_ckpt1=None,
-        vgg19_ckpt2=None,
+        pl_decay=0.01,
+        pl_weight=2.0,
     ):
         super(StyleGANv2ADAModel, self).__init__()
         self.nets_ema = {}
@@ -377,10 +85,6 @@ class StyleGANv2ADAModel(BaseModel):
         self.nets_ema['mapping'] = build_generator(mapping)
         if discriminator:
             self.nets['discriminator'] = build_discriminator(discriminator)
-        self.latent_dim = latent_dim
-        self.lambda_reg = lambda_reg
-        self.lambda_sty = lambda_sty
-        self.lambda_cyc = lambda_cyc
 
         # self.nets['generator'].apply(he_init)
         # self.nets['style_encoder'].apply(he_init)
@@ -402,37 +106,15 @@ class StyleGANv2ADAModel(BaseModel):
         self.batch_idx = 0
 
         # loss config.
-        self.r1_gamma = r1_gamma
-        self.l1_weight = l1_weight
-        self.vgg_weight = vgg_weight
-        self.pl_weight = pl_weight
-        self.contextual_weight = contextual_weight
-        self.mask_weight = mask_weight
+        self.augment_pipe = augment_pipe
         self.style_mixing_prob = style_mixing_prob
-        self.vgg19_ckpt1 = vgg19_ckpt1
-        self.vgg19_ckpt2 = vgg19_ckpt2
+        self.r1_gamma = r1_gamma
         self.pl_batch_shrink = pl_batch_shrink
+        self.pl_decay = pl_decay
+        self.pl_weight = pl_weight
 
-        self.pl_mean = paddle.zeros([])
+        self.pl_mean = paddle.zeros([1, ], dtype=paddle.float32)
 
-        # 每个类别的权重（6个类别）
-        class_weight = paddle.to_tensor([1., 2., 2., 3., 3., 3.])
-        self.ce_parsing = paddle.nn.CrossEntropyLoss(ignore_index=255, weight=class_weight)
-
-        if self.vgg_weight > 0:
-            self.criterionVGG = VGGLoss(ckpt_path=self.vgg19_ckpt1, requires_grad=False)
-
-        if self.contextual_weight > 0:
-            contextual_vgg_path = self.vgg19_ckpt2
-            self.contextual_vgg = VGG19_feature_color_torchversion()
-            self.contextual_vgg.set_state_dict(paddle.load(contextual_vgg_path))
-            self.contextual_vgg.eval()
-            for param in self.contextual_vgg.parameters():
-                param.stop_gradient = True
-            self.contextual_layers = ['r12','r22','r32','r42','r52']
-            self.contextual_forward_loss = ContextualLoss_forward()
-
-        self.augment_pipe = None
 
 
     def setup_input(self, input):
@@ -456,10 +138,21 @@ class StyleGANv2ADAModel(BaseModel):
     def run_G(self, z, c, sync):
         ws = self.nets['mapping'](z, c)
         if self.style_mixing_prob > 0:
-            with torch.autograd.profiler.record_function('style_mixing'):
-                cutoff = torch.empty([], dtype=torch.int64, device=ws.device).random_(1, ws.shape[1])
-                cutoff = torch.where(torch.rand([], device=ws.device) < self.style_mixing_prob, cutoff, torch.full_like(cutoff, ws.shape[1]))
-                ws[:, cutoff:] = self.G_mapping(torch.randn_like(z), c, skip_w_avg_update=True)[:, cutoff:]
+            # cutoff = torch.empty([], dtype=torch.int64, device=ws.device).random_(1, ws.shape[1])
+            # cutoff = torch.where(torch.rand([], device=ws.device) < self.style_mixing_prob, cutoff, torch.full_like(cutoff, ws.shape[1]))
+            # ws[:, cutoff:] = self.G_mapping(torch.randn_like(z), c, skip_w_avg_update=True)[:, cutoff:]
+
+            cutoff_ = paddle.randint(low=1, high=ws.shape[1], shape=[1, ], dtype='int64')
+            cond = paddle.rand([1, ], dtype='float32') < self.style_mixing_prob
+            cutoff = paddle.where(cond, cutoff_, paddle.full_like(cutoff_, ws.shape[1]))
+            cutoff.stop_gradient = True
+            # ws[:, cutoff:] = self.nets['mapping'](paddle.randn(z.shape), c, skip_w_avg_update=True)[:, cutoff:]
+            if cutoff == ws.shape[1]:
+                pass
+            else:
+                temp = self.nets['mapping'](paddle.randn(z.shape), c, skip_w_avg_update=True)[:, cutoff:]
+                temp2 = ws[:, :cutoff]
+                ws = paddle.concat([temp2, temp], 1)
 
         img = self.nets['synthesis'](ws)
         return img, ws
@@ -505,7 +198,11 @@ class StyleGANv2ADAModel(BaseModel):
             #     flow = self.G_flownet(torch.cat((cloth[:batch_size], aff_pose[:batch_size]), dim=1))
             # warp_cloth = F.grid_sample(cloth[:batch_size, :3, :, :], flow)
 
-            gen_img, gen_ws = self.run_G(gen_z[:batch_size], gen_c[:batch_size], sync=sync)
+            gen_c_ = None
+            if gen_c is not None:
+                gen_c_ = gen_c[:batch_size]
+
+            gen_img, gen_ws = self.run_G(gen_z[:batch_size], gen_c_, sync=sync)
             pl_noise = paddle.randn(gen_img.shape) / np.sqrt(gen_img.shape[2] * gen_img.shape[3])
             pl_grads = paddle.grad(
                 outputs=[(gen_img * pl_noise).sum()],
