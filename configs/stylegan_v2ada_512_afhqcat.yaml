@@ -23,7 +23,7 @@ model:
   synthesis:
     name: StyleGANv2ADA_SynthesisNetwork
     w_dim: &W_DIM 512
-    img_resolution: &IMAGE_SIZE 256
+    img_resolution: &IMAGE_SIZE 512
     img_channels: &IMG_CHANNELS 3
     channel_base: &CHANNEL_BASE 16384
     channel_max: &CHANNEL_MAX 512
@@ -53,27 +53,25 @@ model:
 
 dataset:
   train:
-    name: StyleGAN2ADADataset
-    dataroot: ../UPT_256_192_my2/Zalando_256_192
-    txt_name: train_pairs_front_list_0508.txt
+    name: StyleGANv2ADADataset
+    dataroot: ../data/data42681/afhq/train/cat
     is_train: True
-    use_labels: true
+    resolution: *IMAGE_SIZE
+    use_labels: False
     xflip: False
     num_workers: 0
     batch_size: 1
-    test_count: -1
     preprocess: None
 
   test:
-    name: StyleGAN2ADADataset
-    dataroot: ../UPT_256_192_my2/Zalando_256_192
-    txt_name: test_pairs_front_list_shuffle_0508.txt
+    name: StyleGANv2ADADataset
+    dataroot: ../data/data42681/afhq/train/cat
     is_train: False
-    use_labels: true
+    resolution: *IMAGE_SIZE
+    use_labels: False
     xflip: False
     num_workers: 0
     batch_size: 1
-    test_count: 16
     preprocess: None
 
 lr_scheduler_G:

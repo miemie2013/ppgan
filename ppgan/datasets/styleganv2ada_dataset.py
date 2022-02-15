@@ -20,22 +20,12 @@ from PIL import Image
 
 from paddle.io import Dataset, WeightedRandomSampler
 
-kptcolors = [[255, 0, 0], [255, 85, 0], [255, 170, 0], [255, 255, 0], [170, 255, 0], [85, 255, 0],
-          [0, 255, 0], \
-          [0, 255, 85], [0, 255, 170], [0, 255, 255], [0, 170, 255], [0, 85, 255], [0, 0, 255],
-          [85, 0, 255], \
-          [170, 0, 255], [255, 0, 255], [255, 0, 170], [255, 0, 85],[255, 0, 0]]
-
-limbseq = [[2, 3], [2, 6], [3, 4], [4, 5], [6, 7], [7, 8], [2, 9], [9, 10], \
-           [10, 11], [2, 12], [12, 13], [13, 14], [2, 1], [1, 15], [15, 17], \
-           [1, 16], [16, 18], [3, 17], [6, 18]]
-
 
 @DATASETS.register()
-class StyleGAN2ADADataset(BaseDataset):
+class StyleGANv2ADADataset(BaseDataset):
     """
     """
-    def __init__(self, dataroot, txt_name, is_train, preprocess, test_count=0, resolution=None,
+    def __init__(self, dataroot, is_train, preprocess, resolution=None,
                  max_size=None, use_labels=False, xflip=False, random_seed=0):
         """Initialize single dataset class.
 
@@ -43,67 +33,17 @@ class StyleGAN2ADADataset(BaseDataset):
             dataroot (str): Directory of dataset.
             preprocess (list[dict]): A sequence of data preprocess config.
         """
-        super(StyleGAN2ADADataset, self).__init__(preprocess)
-        self.test_count = test_count
+        super(StyleGANv2ADADataset, self).__init__(preprocess)
 
         self.dataroot = dataroot
-        self.txt_name = txt_name
         self.is_train = is_train
 
-        self.image_fnames = []     # 人物图片的路径（txt注解文件第0列）
-        self.kpt_fnames = []       # 人物关键点文件的路径（txt注解文件第0列）
-        self.parsing_fnames = []   # 人物语义分割图的路径（txt注解文件第0列）
-
-        if not self.is_train:  # 测试集才有。
-            self.clothes_image_fnames = []     # 衣服图片的路径（txt注解文件第1列）
-            self.clothes_kpt_fnames = []       # 衣服关键点文件的路径（txt注解文件第1列）
-            self.clothes_parsing_fnames = []   # 衣服语义分割图的路径（txt注解文件第1列）
-
-        txt_path = os.path.join(self.dataroot, txt_name)
-        with open(txt_path, 'r') as f:
-            for line in f.readlines():
-                person, clothes = line.strip().split()
-
-                # 人物（txt注解文件第0列）
-                self.image_fnames.append(os.path.join(self.dataroot, 'image', person))
-                self.kpt_fnames.append(
-                    os.path.join(self.dataroot, 'keypoints', person.replace('.jpg', '_keypoints.json')))
-                self.parsing_fnames.append(
-                    os.path.join(self.dataroot, 'parsing', person.replace('.jpg', '_label.png')))
-
-                if not self.is_train:
-                    # 衣服（txt注解文件第1列）
-                    self.clothes_image_fnames.append(os.path.join(self.dataroot, 'image', clothes))
-                    self.clothes_kpt_fnames.append(
-                        os.path.join(self.dataroot, 'keypoints', clothes.replace('.jpg', '_keypoints.json')))
-                    self.clothes_parsing_fnames.append(
-                        os.path.join(self.dataroot, 'parsing', clothes.replace('.jpg', '_label.png')))
-
-        if self.is_train:
-            # 假设屎山的数据集文件夹路径有'/Zalando'
-            assert '/Zalando' in self.dataroot
-            dataroot2 = self.dataroot.split('/Zalando')[0]
-            vis_dir = os.path.join(dataroot2, 'train_img_vis')  # train_img_vis文件夹里的图片来自训练集image文件夹里的部分图片。
-            image_list = sorted(os.listdir(vis_dir))
-            vis_index = []
-            for image_name in image_list:
-                real_path = os.path.join(self.dataroot, 'image', image_name)
-                if os.path.exists(real_path):
-                    if real_path in self.image_fnames:  # 确保是txt注解文件的第0列的图片。
-                        vis_index.append(self.image_fnames.index(real_path))
-
-            self.vis_index = vis_index
-
-            random_mask_acgpn_dir = os.path.join(dataroot2, 'train_random_mask_acgpn')
-            # 所有随机掩码图片的路径。
-            self._random_mask_acgpn_fnames = [os.path.join(random_mask_acgpn_dir, mask_name) for mask_name in os.listdir(random_mask_acgpn_dir)]
-            # 随机掩码图片的数量。12000
-            self._mask_acgpn_numbers = len(self._random_mask_acgpn_fnames)
-        elif not self.is_train:
-            self.vis_index = list(range(64))  # vis_index
+        self._type = 'dir'
+        self._all_fnames = {os.path.relpath(os.path.join(root, fname), start=self._path) for root, _dirs, files in os.walk(self._path) for fname in files}
 
         PIL.Image.init()
-        if len(self.image_fnames) == 0:
+        self._image_fnames = sorted(fname for fname in self._all_fnames if self._file_ext(fname) in PIL.Image.EXTENSION)
+        if len(self._image_fnames) == 0:
             raise IOError('No image files found in the specified path')
 
         name = os.path.splitext(os.path.basename(self.dataroot))[0]
