@@ -451,14 +451,7 @@ class StyleGANv2ADAModel(BaseModel):
         for optim in optims.values():
             optim.clear_gradients()
 
-    def run_G(self, z, c, pose, const_feats, denorm_upper_mask, denorm_lower_mask, denorm_upper_input, denorm_lower_input, sync):
-        cat_feats = {}
-        for _, cat_feat in enumerate(const_feats):
-            h, _ = cat_feat.shape[2], cat_feat.shape[3]
-            cat_feats[str(h)] = cat_feat
-
-        pose_feat = self.nets['const_encoding'](pose)
-
+    def run_G(self, z, c, sync):
         ws = self.nets['mapping'](z, c)
         if self.style_mixing_prob > 0:
             with torch.autograd.profiler.record_function('style_mixing'):
@@ -466,9 +459,8 @@ class StyleGANv2ADAModel(BaseModel):
                 cutoff = torch.where(torch.rand([], device=ws.device) < self.style_mixing_prob, cutoff, torch.full_like(cutoff, ws.shape[1]))
                 ws[:, cutoff:] = self.G_mapping(torch.randn_like(z), c, skip_w_avg_update=True)[:, cutoff:]
 
-        img, finetune_img, pred_parsing = self.nets['synthesis'](ws, pose_feat, cat_feats, denorm_upper_input, denorm_lower_input, denorm_upper_mask, denorm_lower_mask)
-
-        return img, finetune_img, pred_parsing, ws
+        img = self.nets['synthesis'](ws)
+        return img, ws
 
     def run_D(self, img, c, sync):
         if self.augment_pipe is not None:
@@ -487,69 +479,19 @@ class StyleGANv2ADAModel(BaseModel):
 
         # dic2 = np.load('../data77.npz')
 
-
-        real_c, cat_feats = self.nets['style_encoding'](style_input, retain)
-        gen_c = real_c  # 把 real_c 也当做 gen_c作为CGAN的C
-
         loss_numpy = {}
 
         # Gmain: Maximize logits for generated images.
         if do_Gmain:
-            gen_img, gen_finetune_img, pred_parsing, _gen_ws = self.run_G(gen_z, gen_c, pose, cat_feats,
-                                                                          denorm_upper_mask, denorm_lower_mask, \
-                                                                          denorm_upper_input, denorm_lower_input,
-                                                                          sync=(sync and not do_Gpl))  # May get synced by Gpl.
-
-            # 这里的conditioned GAN的 (gen_img, gen_c) 和 (real_img, real_c) 不是严格对应的。
-            # 如果加入pose conditioned, 那么应该 gen_img和real_img严格对应，然后 只用一个real pose, 也就是(gen_img, real_pose) 和 (real_img, real_pose)
-            # 视情况, 看是否需要加入L1 和 vgg loss
-
+            gen_img, _gen_ws = self.run_G(gen_z, gen_c, sync=(sync and not do_Gpl)) # May get synced by Gpl.
             gen_logits = self.run_D(gen_img, gen_c, sync=False)
-            gen_finetune_logits = self.run_D(gen_finetune_img, gen_c, sync=False)
 
             loss_Gmain = paddle.nn.functional.softplus(-gen_logits)  # -log(sigmoid(gen_logits))
             loss_Gmain = loss_Gmain.mean()
 
-            loss_Gmain_finetune = paddle.nn.functional.softplus(-gen_finetune_logits)  # -log(sigmoid(gen_logits))
-            loss_Gmain_finetune = loss_Gmain_finetune.mean()
-
             loss_numpy['loss_Gmain'] = loss_Gmain.numpy()
-            loss_numpy['loss_Gmain_finetune'] = loss_Gmain_finetune.numpy()
 
-            # l1 loss
-            loss_G_L1 = 0
-            loss_G_finetune_L1 = 0
-            if self.l1_weight > 0:
-                loss_G_L1 = paddle.nn.L1Loss()(gen_img, real_img) * self.l1_weight
-                loss_G_finetune_L1 = paddle.nn.L1Loss()(gen_finetune_img, real_img) * self.l1_weight
-                loss_numpy['loss_G_L1'] = loss_G_L1.numpy()
-                loss_numpy['loss_G_finetune_L1'] = loss_G_finetune_L1.numpy()
-
-            loss_mask = 0
-            if self.mask_weight > 0:
-                aaaaaaaaaaaaa = paddle.cast(gt_parsing, dtype=paddle.int64)[:, 0, :, :]
-                loss_mask = self.ce_parsing(pred_parsing.transpose((0, 2, 3, 1)), aaaaaaaaaaaaa)
-                loss_mask = paddle.mean(loss_mask) * self.mask_weight
-                loss_numpy['loss_mask'] = loss_mask.numpy()
-
-
-            # vgg loss
-            loss_G_VGG = 0
-            loss_G_finetune_VGG = 0
-            if self.vgg_weight > 0:
-                loss_G_VGG = self.criterionVGG(gen_img, real_img) * self.vgg_weight
-                loss_G_VGG = loss_G_VGG.mean()
-
-                loss_G_finetune_VGG = self.criterionVGG(gen_finetune_img, real_img) * self.vgg_weight
-                loss_G_finetune_VGG = loss_G_finetune_VGG.mean()
-
-                loss_numpy['loss_G_VGG'] = loss_G_VGG.numpy()
-                loss_numpy['loss_G_finetune_VGG'] = loss_G_finetune_VGG.numpy()
-
-            loss_G = (loss_Gmain + loss_Gmain_finetune) / 2 + \
-                     (loss_G_L1 + loss_G_finetune_L1) / 2 + \
-                     (loss_G_VGG + loss_G_finetune_VGG) / 2 + loss_mask
-
+            loss_G = loss_Gmain
 
             loss_G = loss_G * float(gain)
             loss_G.backward()  # 咩酱：gain即上文提到的这个阶段的训练间隔。
