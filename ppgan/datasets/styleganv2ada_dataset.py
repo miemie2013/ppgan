@@ -6,6 +6,7 @@ import json
 from .base_dataset import BaseDataset
 from .builder import DATASETS
 import os
+import zipfile
 import numpy as np
 from PIL import Image
 
@@ -21,7 +22,7 @@ class StyleGANv2ADADataset(BaseDataset):
     """
     """
     def __init__(self, dataroot, is_train, preprocess, resolution=None,
-                 max_size=None, use_labels=False, xflip=False, random_seed=0):
+                 max_size=None, use_labels=False, xflip=False, random_seed=0, len_phases=4):
         """Initialize single dataset class.
 
         Args:
@@ -32,9 +33,10 @@ class StyleGANv2ADADataset(BaseDataset):
 
         self.dataroot = dataroot
         self.is_train = is_train
+        self.len_phases = len_phases
 
         self._type = 'dir'
-        self._all_fnames = {os.path.relpath(os.path.join(root, fname), start=self._path) for root, _dirs, files in os.walk(self._path) for fname in files}
+        self._all_fnames = {os.path.relpath(os.path.join(root, fname), start=self.dataroot) for root, _dirs, files in os.walk(self.dataroot) for fname in files}
 
         PIL.Image.init()
         self._image_fnames = sorted(fname for fname in self._all_fnames if self._file_ext(fname) in PIL.Image.EXTENSION)
@@ -65,6 +67,23 @@ class StyleGANv2ADADataset(BaseDataset):
         if xflip:
             self._raw_idx = np.tile(self._raw_idx, 2)
             self._xflip = np.concatenate([self._xflip, np.ones_like(self._xflip)])
+
+    @staticmethod
+    def _file_ext(fname):
+        return os.path.splitext(fname)[1].lower()
+
+    def _get_zipfile(self):
+        assert self._type == 'zip'
+        if self._zipfile is None:
+            self._zipfile = zipfile.ZipFile(self.dataroot)
+        return self._zipfile
+
+    def _open_file(self, fname):
+        if self._type == 'dir':
+            return open(os.path.join(self.dataroot, fname), 'rb')
+        if self._type == 'zip':
+            return self._get_zipfile().open(fname, 'r')
+        return None
 
     def _load_raw_image(self, raw_idx):
         fname = self._image_fnames[raw_idx]
@@ -100,11 +119,55 @@ class StyleGANv2ADADataset(BaseDataset):
         if self._xflip[idx]:
             assert image.ndim == 3 # CHW
             image = image[:, :, ::-1]
-        return image.copy(), self.get_label(idx)
+        image_gen_c = [self.get_label(np.random.randint(len(self))) for _ in range(self.len_phases)]
+        return image.copy(), self.get_label(idx), image_gen_c
+
+    def get_label(self, idx):
+        label = self._get_raw_labels()[self._raw_idx[idx]]
+        if label.dtype == np.int64:
+            onehot = np.zeros(self.label_shape, dtype=np.float32)
+            onehot[label] = 1
+            label = onehot
+        return label.copy()
+
+    def _get_raw_labels(self):
+        if self._raw_labels is None:
+            self._raw_labels = self._load_raw_labels() if self._use_labels else None
+            if self._raw_labels is None:
+                self._raw_labels = np.zeros([self._raw_shape[0], 0], dtype=np.float32)
+            assert isinstance(self._raw_labels, np.ndarray)
+            assert self._raw_labels.shape[0] == self._raw_shape[0]
+            assert self._raw_labels.dtype in [np.float32, np.int64]
+            if self._raw_labels.dtype == np.int64:
+                assert self._raw_labels.ndim == 1
+                assert np.all(self._raw_labels >= 0)
+        return self._raw_labels
 
     @property
     def image_shape(self):
-        return list(self.raw_shape[1:])
+        return list(self._raw_shape[1:])
+
+
+    @property
+    def num_channels(self):
+        assert len(self.image_shape) == 3 # CHW
+        return self.image_shape[0]
+
+    @property
+    def resolution(self):
+        assert len(self.image_shape) == 3 # CHW
+        assert self.image_shape[1] == self.image_shape[2]
+        return self.image_shape[1]
+
+    @property
+    def label_shape(self):
+        if self._label_shape is None:
+            raw_labels = self._get_raw_labels()
+            if raw_labels.dtype == np.int64:
+                self._label_shape = [int(np.max(raw_labels)) + 1]
+            else:
+                self._label_shape = raw_labels.shape[1:]
+        return list(self._label_shape)
 
     def __len__(self):
         size = self._raw_idx.size

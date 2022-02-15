@@ -350,8 +350,6 @@ class StyleGANv2ADAModel(BaseModel):
         self,
         synthesis,
         mapping=None,
-        const_encoding=None,
-        style_encoding=None,
         discriminator=None,
         G_reg_interval=4,
         D_reg_interval=16,
@@ -371,16 +369,12 @@ class StyleGANv2ADAModel(BaseModel):
         vgg19_ckpt1=None,
         vgg19_ckpt2=None,
     ):
-        super(StyleGAN2ADAModel, self).__init__()
+        super(StyleGANv2ADAModel, self).__init__()
         self.nets_ema = {}
         self.nets['synthesis'] = build_generator(synthesis)
         self.nets_ema['synthesis'] = build_generator(synthesis)
         self.nets['mapping'] = build_generator(mapping)
         self.nets_ema['mapping'] = build_generator(mapping)
-        self.nets['const_encoding'] = build_generator(const_encoding)
-        self.nets_ema['const_encoding'] = build_generator(const_encoding)
-        self.nets['style_encoding'] = build_generator(style_encoding)
-        self.nets_ema['style_encoding'] = build_generator(style_encoding)
         if discriminator:
             self.nets['discriminator'] = build_discriminator(discriminator)
         self.latent_dim = latent_dim
@@ -484,13 +478,12 @@ class StyleGANv2ADAModel(BaseModel):
         return logits
 
     # 梯度累加（变相增大批大小）。
-    def accumulate_gradients(self, phase, real_img, gen_z, style_input, retain, pose, denorm_upper_input,
-                             denorm_lower_input, denorm_upper_mask, denorm_lower_mask, gt_parsing, sync, gain):
+    def accumulate_gradients(self, phase, real_img, real_c, gen_z, gen_c, sync, gain):
         assert phase in ['Gmain', 'Greg', 'Gboth', 'Dmain', 'Dreg', 'Dboth']
         do_Gmain = (phase in ['Gmain', 'Gboth'])
         do_Dmain = (phase in ['Dmain', 'Dboth'])
-        do_Gpl = (phase in ['Greg', 'Gboth']) and (self.pl_weight != 0)
-        do_Dr1 = (phase in ['Dreg', 'Dboth']) and (self.r1_gamma != 0)
+        do_Gpl   = (phase in ['Greg', 'Gboth']) and (self.pl_weight != 0)
+        do_Dr1   = (phase in ['Dreg', 'Dboth']) and (self.r1_gamma != 0)
 
         # dic2 = np.load('../data77.npz')
 
@@ -645,16 +638,9 @@ class StyleGANv2ADAModel(BaseModel):
         return loss_numpy
 
     def train_iter(self, optimizers=None):
-        phase_real = self.input[0]
-        phase_pose = self.input[1]
-        phase_norm_img = self.input[2]
-        phase_norm_img_lower = self.input[3]
-        phase_denorm_upper_img = self.input[4]
-        phase_denorm_lower_img = self.input[5]
-        phase_gt_parsing = self.input[7]
-        phase_denorm_upper_mask = self.input[8]
-        phase_denorm_lower_mask = self.input[9]
-        phase_retain_mask = self.input[12]
+        phase_real_img = self.input[0]
+        phase_real_c = self.input[1]
+        phases_all_gen_c = self.input[2]
 
         # miemie2013: 调试的代码
         # dic2 = np.load('../train_data.npz')
@@ -681,29 +667,11 @@ class StyleGANv2ADAModel(BaseModel):
         # phase_retain_mask2 = paddle.to_tensor(dic2['phase_retain_mask'], dtype=phase_retain_mask.dtype)
 
 
-        phase_real_tensor = paddle.cast(phase_real, dtype=paddle.float32) / 127.5 - 1
-        phase_parts_tensor = paddle.cast(phase_norm_img, dtype=paddle.float32) / 127.5 - 1
-        phase_parts_lower_tensor = paddle.cast(phase_norm_img_lower, dtype=paddle.float32) / 127.5 - 1
-        phase_parts_tensor = paddle.concat([phase_parts_tensor, phase_parts_lower_tensor], 1)
+        phase_real_img = paddle.cast(phase_real_img, dtype=paddle.float32) / 127.5 - 1
 
-        phase_denorm_upper_img_tensor = paddle.cast(phase_denorm_upper_img, dtype=paddle.float32) / 127.5 - 1
-        phase_denorm_lower_img_tensor = paddle.cast(phase_denorm_lower_img, dtype=paddle.float32) / 127.5 - 1
-        phase_denorm_upper_mask_tensor = paddle.cast(phase_denorm_upper_mask, dtype=paddle.float32)
-        phase_denorm_lower_mask_tensor = paddle.cast(phase_denorm_lower_mask, dtype=paddle.float32)
-
-        phase_pose_tensor = paddle.cast(phase_pose, dtype=paddle.float32) / 127.5 - 1
-        phase_retain_mask = paddle.cast(phase_retain_mask, dtype=paddle.float32)
-        phase_head_mask = phase_retain_mask
-        phase_head_tensor = phase_head_mask * phase_real_tensor - (1 - phase_head_mask)
-        phase_pose_tensor = paddle.concat([phase_pose_tensor, phase_head_tensor], 1)
-
-        phase_gt_parsing_tensor = paddle.cast(phase_gt_parsing, dtype=paddle.float32)
-
-        # process head
-        phase_retain_tensor = phase_head_tensor
 
         phases = self.phases
-        batch_size = phase_real_tensor.shape[0]
+        batch_size = phase_real_img.shape[0]
 
         all_gen_z = None
         num_gpus = 1  # 显卡数量
@@ -715,25 +683,25 @@ class StyleGANv2ADAModel(BaseModel):
         phases_all_gen_z = paddle.split(all_gen_z, num_or_sections=len(phases))  # 咩酱：训练的4个阶段的噪声
         all_gen_z = [paddle.split(phase_gen_z, num_or_sections=num_gpus) for phase_gen_z in phases_all_gen_z]  # 咩酱：训练的4个阶段每个gpu的噪声
 
-        phase_real_tensor = paddle.split(phase_real_tensor, num_or_sections=num_gpus)
-        phase_parts_tensor = paddle.split(phase_parts_tensor, num_or_sections=num_gpus)
-        phase_pose_tensor = paddle.split(phase_pose_tensor, num_or_sections=num_gpus)
-        phase_retain_tensor = paddle.split(phase_retain_tensor, num_or_sections=num_gpus)
-        phase_denorm_upper_img_tensor = paddle.split(phase_denorm_upper_img_tensor, num_or_sections=num_gpus)
-        phase_denorm_lower_img_tensor = paddle.split(phase_denorm_lower_img_tensor, num_or_sections=num_gpus)
-        phase_gt_parsing_tensor = paddle.split(phase_gt_parsing_tensor, num_or_sections=num_gpus)
-        phase_denorm_upper_mask_tensor = paddle.split(phase_denorm_upper_mask_tensor, num_or_sections=num_gpus)
-        phase_denorm_lower_mask_tensor = paddle.split(phase_denorm_lower_mask_tensor, num_or_sections=num_gpus)
+        c_dim = phases_all_gen_c[0].shape[1]
+        all_gen_c = None
+        if c_dim > 0:
+            all_gen_c = [paddle.split(phase_gen_c, num_or_sections=num_gpus) for phase_gen_c in phases_all_gen_c]  # 咩酱：训练的4个阶段每个gpu的类别
+        else:
+            all_gen_c = [[None for _2 in range(num_gpus)] for _1 in range(len(phases))]
 
-        del phase_real      # conserve memory
-        del phase_pose       # conserve memory
-        del phase_head_mask   # conserve memory
-        del phase_gt_parsing  # conserve memory
+        phase_real_img = paddle.split(phase_real_img, num_or_sections=num_gpus)
+
+        c_dim = phase_real_c.shape[1]
+        if c_dim > 0:
+            phase_real_c = paddle.split(phase_real_c, num_or_sections=num_gpus)
+        else:
+            phase_real_c = [[None for _2 in range(num_gpus)] for _1 in range(len(phases))]
 
         # Execute training phases.  咩酱：训练的4个阶段。一个批次的图片训练4个阶段。
         loss_numpys = []
         loss_phase_name = []
-        for phase, phase_gen_z in zip(phases, all_gen_z):  # 咩酱：phase_gen_z是这个阶段每个gpu的噪声，是一个元组，元组长度等于gpu数量。
+        for phase, phase_gen_z, phase_gen_c in zip(phases, all_gen_z, all_gen_c):  # 咩酱：phase_gen_z是这个阶段每个gpu的噪声，是一个元组，元组长度等于gpu数量。
             if self.batch_idx % phase['interval'] != 0:  # 咩酱：每一个阶段phase有一个属性interval，即训练间隔，每隔几个批次图片才会执行1次这个阶段！
                 continue
 
@@ -743,21 +711,13 @@ class StyleGANv2ADAModel(BaseModel):
 
             # 梯度累加。一个总的批次的图片分开{显卡数量}次遍历。
             # Accumulate gradients over multiple rounds.  咩酱：遍历每一个gpu上的批次图片。这样写好奇葩啊！round_idx是gpu_id
-            for round_idx, (real_img, gen_z, style_input, retain, pose, denorm_upper_input, denorm_lower_input, \
-                            denorm_upper_mask, denorm_lower_mask, gt_parsing) \
-                    in enumerate(zip(phase_real_tensor, phase_gen_z, phase_parts_tensor, \
-                                     phase_retain_tensor, phase_pose_tensor, phase_denorm_upper_img_tensor,\
-                                     phase_denorm_lower_img_tensor, phase_denorm_upper_mask_tensor, \
-                                     phase_denorm_lower_mask_tensor, phase_gt_parsing_tensor)):
+            for round_idx, (real_img, real_c, gen_z, gen_c) in enumerate(zip(phase_real_img, phase_real_c, phase_gen_z, phase_gen_c)):
                 sync = (round_idx == batch_size // (batch_gpu * num_gpus) - 1)   # 咩酱：右边的式子结果一定是0。即只有0号gpu做同步。这是梯度累加的固定写法。
                 gain = phase['interval']     # 咩酱：即上文提到的训练间隔。
-                # 把style_input当做 real_c 和 gen_c。为了增加可变性, gen_z还是保留
 
                 # 梯度累加（变相增大批大小）。
-                loss_numpy = self.accumulate_gradients(phase=phase['name'], real_img=real_img, gen_z=gen_z, style_input=style_input,
-                                          retain=retain, pose=pose, denorm_upper_input=denorm_upper_input,
-                                          denorm_lower_input=denorm_lower_input, denorm_upper_mask=denorm_upper_mask,
-                                          denorm_lower_mask=denorm_lower_mask, gt_parsing=gt_parsing, sync=sync, gain=gain)
+                loss_numpy = self.accumulate_gradients(phase=phase['name'], real_img=real_img, real_c=real_c,
+                                                       gen_z=gen_z, gen_c=gen_c, sync=sync, gain=gain)
                 loss_numpys.append(loss_numpy)
                 loss_phase_name.append(phase['name'])
 
@@ -779,12 +739,6 @@ class StyleGANv2ADAModel(BaseModel):
         soft_update(self.nets['mapping'],
                     self.nets_ema['mapping'],
                     beta=0.999)
-        soft_update(self.nets['const_encoding'],
-                    self.nets_ema['const_encoding'],
-                    beta=0.999)
-        soft_update(self.nets['style_encoding'],
-                    self.nets_ema['style_encoding'],
-                    beta=0.999)
 
         for loss, prefix in zip(
             loss_numpys,
@@ -796,8 +750,6 @@ class StyleGANv2ADAModel(BaseModel):
     def test_iter(self, metrics=None):
         self.nets_ema['synthesis'].eval()
         self.nets_ema['mapping'].eval()
-        self.nets_ema['const_encoding'].eval()
-        self.nets_ema['style_encoding'].eval()
 
         image = self.input['image']
         pose = self.input['pose']
@@ -883,5 +835,3 @@ class StyleGANv2ADAModel(BaseModel):
         self.visual_items['reference'] = result_img
         self.nets_ema['synthesis'].train()
         self.nets_ema['mapping'].train()
-        self.nets_ema['const_encoding'].train()
-        self.nets_ema['style_encoding'].train()

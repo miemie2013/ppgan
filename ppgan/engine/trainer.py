@@ -23,7 +23,7 @@ import paddle
 from paddle.distributed import ParallelEnv
 
 from ..datasets.builder import build_dataloader
-from ..models import PastaGANModel
+from ..models import PastaGANModel, StyleGANv2ADAModel
 from ..models.builder import build_model
 from ..utils.visual import tensor2img, save_image
 from ..utils.filesystem import makedirs, save, load
@@ -123,7 +123,7 @@ class Trainer:
 
         # build lr scheduler
         # TODO: has a better way?
-        if isinstance(self.model, PastaGANModel):
+        if isinstance(self.model, PastaGANModel) or isinstance(self.model, StyleGANv2ADAModel):
             learning_rate = cfg.lr_scheduler_G.learning_rate
             beta1 = cfg.optimizer.generator.beta1
             beta2 = cfg.optimizer.generator.beta2

@@ -21,6 +21,11 @@ styleganv2ada
 afhqcat
 
 
+训练模型:
+cd ~/w*
+python tools/main.py -c configs/stylegan_v2ada_512_afhqcat.yaml
+
+
 
 ======================== PastaGAN ========================
 

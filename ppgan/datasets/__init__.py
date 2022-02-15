@@ -21,7 +21,7 @@ from .common_vision_dataset import CommonVisionDataset
 from .animeganv2_dataset import AnimeGANV2Dataset
 from .wav2lip_dataset import Wav2LipDataset
 from .pastagan_dataset import PastaGANDataset
-from .styleganv2ada_dataset import StyleGAN2ADADataset
+from .styleganv2ada_dataset import StyleGANv2ADADataset
 from .starganv2_dataset import StarGANv2Dataset
 from .firstorder_dataset import FirstOrderDataset
 from .lapstyle_dataset import LapStyleDataset

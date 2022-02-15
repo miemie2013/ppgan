@@ -25,19 +25,17 @@ model:
     w_dim: &W_DIM 512
     img_resolution: &IMAGE_SIZE 512
     img_channels: &IMG_CHANNELS 3
-    channel_base: &CHANNEL_BASE 16384
+    channel_base: &CHANNEL_BASE 32768
     channel_max: &CHANNEL_MAX 512
-    num_fp16_res: &NUM_FP16_RES 3
+    num_fp16_res: &NUM_FP16_RES 4
     conv_clamp: &CONV_CLAMP 256
-    use_noise: true
-    version: Full  # miemie2013
   mapping:
     name: StyleGANv2ADA_MappingNetwork
-    z_dim: &Z_DIM 0
-    c_dim: &C_DIM 512
+    z_dim: &Z_DIM 512
+    c_dim: &C_DIM 0
     w_dim: *W_DIM
-    num_ws: 14
-    num_layers: 1
+    num_ws: 16
+    num_layers: 8
   discriminator:
     name: StyleGANv2ADA_Discriminator
     c_dim: *C_DIM
@@ -49,7 +47,7 @@ model:
     conv_clamp: *CONV_CLAMP
     block_kwargs: {}
     mapping_kwargs: {}
-    epilogue_kwargs: {mbstd_group_size: 4}
+    epilogue_kwargs: {mbstd_group_size: 8}
 
 dataset:
   train:
@@ -60,7 +58,8 @@ dataset:
     use_labels: False
     xflip: False
     num_workers: 0
-    batch_size: 1
+    batch_size: 2
+    len_phases: 4
     preprocess: None
 
   test:
@@ -72,11 +71,12 @@ dataset:
     xflip: False
     num_workers: 0
     batch_size: 1
+    len_phases: 4
     preprocess: None
 
 lr_scheduler_G:
   name: LinearDecay
-  learning_rate: 0.002
+  learning_rate: 0.0025
   start_epoch: 100
   decay_epochs: 100
   # will get from real dataset
@@ -84,7 +84,7 @@ lr_scheduler_G:
 
 lr_scheduler_D:
   name: LinearDecay
-  learning_rate: 0.002
+  learning_rate: 0.0025
   start_epoch: 100
   decay_epochs: 100
   # will get from real dataset
@@ -96,8 +96,6 @@ optimizer:
     net_names:
       - synthesis
       - mapping
-      - const_encoding
-      - style_encoding
     beta1: 0.0
     beta2: 0.99
     epsilon: 1e-8
