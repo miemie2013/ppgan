@@ -24,6 +24,20 @@ model:
     w_dim: *W_DIM
     num_ws: 16
     num_layers: 8
+  augment_pipe:
+    name: StyleGANv2ADA_AugmentPipe
+    xflip: 1
+    rotate90: 1
+    xint: 1
+    scale: 1
+    rotate: 1
+    aniso: 1
+    xfrac: 1
+    brightness: 1
+    contrast: 1
+    lumaflip: 1
+    hue: 1
+    saturation: 1
   discriminator:
     name: StyleGANv2ADA_Discriminator
     c_dim: *C_DIM

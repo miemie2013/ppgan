@@ -109,7 +109,7 @@ class StyleGANv2ADAModel(BaseModel):
         self.batch_idx = 0
 
         # loss config.
-        self.augment_pipe = augment_pipe
+        self.augment_pipe = build_generator(augment_pipe)
         self.style_mixing_prob = style_mixing_prob
         self.r1_gamma = r1_gamma
         self.pl_batch_shrink = pl_batch_shrink
