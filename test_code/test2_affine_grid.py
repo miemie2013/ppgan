@@ -32,6 +32,17 @@ grid = paddle.nn.functional.affine_grid(theta=G_inv[:, :2, :], out_shape=shape, 
 images = paddle.nn.functional.grid_sample(images, grid=grid, mode='bilinear', padding_mode='zeros', align_corners=False)
 
 
+import paddle.nn.functional as F
+# theta shape = [1, 2, 3]
+theta = np.array([[[-0.7, -0.4, 0.3],
+                   [ 0.6,  0.5, 1.5]]]).astype("float32")
+theta_t = paddle.to_tensor(theta)
+y_t = F.affine_grid(
+        theta_t,
+        [1, 2, 3, 3],
+        align_corners=False)
+print(y_t)
+
 ddd = np.sum((grid2.cpu().detach().numpy() - grid.numpy())**2)
 print('ddd=%.6f' % ddd)
 ddd = np.sum((images2.cpu().detach().numpy() - images.numpy())**2)

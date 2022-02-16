@@ -1338,7 +1338,14 @@ class StyleGANv2ADA_AugmentPipe(nn.Layer):
             shape = [batch_size, num_channels, (height + Hz_pad * 2) * 2, (width + Hz_pad * 2) * 2]
             G_inv = scale2d(2 / images.shape[3], 2 / images.shape[2]) @ G_inv @ scale2d_inv(2 / shape[3], 2 / shape[2])
 
+            # dic = {}
+            # dic['G_inv'] = G_inv.numpy()
+            # dic['images'] = images.numpy()
+            # dic['shape'] = np.array(shape)
+            # np.savez('affine_grid_data', **dic)
+
             grid = paddle.nn.functional.affine_grid(theta=G_inv[:, :2, :], out_shape=shape, align_corners=False)
+            # grid_sample没有实现二阶梯度，需要用另外的等价实现。
             images = paddle.nn.functional.grid_sample(images, grid=grid, mode='bilinear', padding_mode='zeros', align_corners=False)
 
             # Downsample and crop.
