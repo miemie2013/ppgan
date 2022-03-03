@@ -819,7 +819,7 @@ class ToRGBLayer(nn.Layer):
     def forward(self, x, w, fused_modconv=True):
         styles = self.affine(w) * self.weight_gain
         x = modulated_conv2d(x=x, weight=self.weight, styles=styles, demodulate=False, fused_modconv=fused_modconv)
-        x = bias_act(x, paddle.cast(self.bias, dtype=x.dtype), clamp=self.conv_clamp)
+        x, x_add_b = bias_act(x, paddle.cast(self.bias, dtype=x.dtype), clamp=self.conv_clamp)
         return x
 
 

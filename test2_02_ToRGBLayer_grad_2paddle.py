@@ -3,7 +3,7 @@ import torch
 import paddle
 import os
 import numpy as np
-from paddle_networks2 import ToRGBLayer
+from ppgan.models.generators.generator_styleganv2ada import ToRGBLayer
 
 w_dim = 512
 out_channels = 512
