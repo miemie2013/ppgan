@@ -30,6 +30,13 @@ cd data42681
 unzip afhq.zip
 cd ~/w*
 
+nvidia-smi
+cd ~
+cd data
+cd data130402
+unzip dog_128.zip
+cd ~/w*
+
 
 cd ~/w*
 cp ../data/data128401/styleganv2ada_512_afhqcat.pdparams styleganv2ada_512_afhqcat.pdparams
