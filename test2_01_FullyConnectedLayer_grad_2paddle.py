@@ -10,7 +10,7 @@ w_dim = 512
 
 activation = 'linear'
 activation = 'lrelu'
-activation = 'relu'
+# activation = 'relu'
 # activation = 'tanh'
 # activation = 'sigmoid'
 # activation = 'elu'

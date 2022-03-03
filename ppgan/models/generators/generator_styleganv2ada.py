@@ -83,10 +83,8 @@ def bias_act(x, b=None, dim=1, act='linear', alpha=None, gain=None, clamp=None):
     if b is not None:
         new_shape = [-1 if i == dim else 1 for i in range(x.ndim)]
         b_ = paddle.reshape(b, new_shape)
-        x_add_b = x + b_
-    else:
-        x_add_b = x
-    x = x_add_b
+        x = x + b_
+    x_add_b = x
 
     # 经过激活函数
     alpha = float(alpha)  # 只有leaky_relu需要
@@ -110,20 +108,30 @@ def bias_act(x, b=None, dim=1, act='linear', alpha=None, gain=None, clamp=None):
         x = F.sigmoid(x) * x
     else:
         raise NotImplementedError("activation \'{}\' is not implemented.".format(act))
+    act_x = x
 
 
     # 乘以缩放因子
     gain = float(gain)
     if gain != 1:
         x = x * gain
+    gain_x = x
 
     # 限制范围
     if clamp >= 0:
         x = paddle.clip(x, -clamp, clamp)
-    return x, x_add_b
+    clamp_x = x
+    temp_tensors = {}
+    temp_tensors['gain_x'] = gain_x
+    temp_tensors['act_x'] = act_x
+    temp_tensors['x_add_b'] = x_add_b
+    return clamp_x, temp_tensors
 
 
-def bias_act_grad(dloss_dout, out, x_add_b, b=None, dim=1, act='linear', alpha=None, gain=None, clamp=None):
+def bias_act_grad(dloss_dclamp_x, clamp_x, temp_tensors, b=None, dim=1, act='linear', alpha=None, gain=None, clamp=None):
+    gain_x = temp_tensors['gain_x']
+    act_x = temp_tensors['act_x']
+    x_add_b = temp_tensors['x_add_b']
     def_gain = 1.0
     if act in ['relu', 'lrelu', 'swish']:  # 除了这些激活函数的def_gain = np.sqrt(2)，其余激活函数的def_gain = 1.0
         def_gain = np.sqrt(2)
@@ -137,27 +145,34 @@ def bias_act_grad(dloss_dout, out, x_add_b, b=None, dim=1, act='linear', alpha=N
 
     # 限制范围
     if clamp >= 0:
-        raise NotImplementedError("not implemented.")
-        # 还未实现
-        # x = paddle.clip(x, -clamp, clamp)
+        dclamp_x_dgain_x1 = paddle.where(gain_x > clamp, paddle.zeros(gain_x.shape, dtype=gain_x.dtype),
+                                         paddle.ones(gain_x.shape, dtype=gain_x.dtype))
+        dclamp_x_dgain_x2 = paddle.where(gain_x < -clamp, paddle.zeros(gain_x.shape, dtype=gain_x.dtype),
+                                         paddle.ones(gain_x.shape, dtype=gain_x.dtype))
+        dclamp_x_dgain_x = dclamp_x_dgain_x1 * dclamp_x_dgain_x2
+        dloss_dgain_x = dloss_dclamp_x * dclamp_x_dgain_x
+    else:
+        dloss_dgain_x = dloss_dclamp_x
 
     # 乘以缩放因子
     gain = float(gain)
     if gain != 1:
-        dloss_dout = dloss_dout * gain
+        dloss_dact_x = dloss_dgain_x * gain
+    else:
+        dloss_dact_x = dloss_dgain_x
 
     # 经过激活函数
     alpha = float(alpha)  # 只有leaky_relu需要
     if act == 'linear':
-        pass
+        dloss_dx_add_b = dloss_dact_x
     elif act == 'relu':
-        dact_dx_add_b = paddle.where(x_add_b > 0.0, paddle.ones(x_add_b.shape, dtype=x_add_b.dtype),
-                                     paddle.zeros(x_add_b.shape, dtype=x_add_b.dtype))
-        dloss_dout = dloss_dout * dact_dx_add_b
+        dact_x_dx_add_b = paddle.where(x_add_b > 0.0, paddle.ones(x_add_b.shape, dtype=x_add_b.dtype),
+                                       paddle.zeros(x_add_b.shape, dtype=x_add_b.dtype))
+        dloss_dx_add_b = dloss_dact_x * dact_x_dx_add_b
     elif act == 'lrelu':
-        dact_dx_add_b = paddle.where(x_add_b > 0.0, paddle.ones(x_add_b.shape, dtype=x_add_b.dtype),
-                                     paddle.ones(x_add_b.shape, dtype=x_add_b.dtype)*alpha)
-        dloss_dout = dloss_dout * dact_dx_add_b
+        dact_x_dx_add_b = paddle.where(x_add_b > 0.0, paddle.ones(x_add_b.shape, dtype=x_add_b.dtype),
+                                       paddle.ones(x_add_b.shape, dtype=x_add_b.dtype)*alpha)
+        dloss_dx_add_b = dloss_dact_x * dact_x_dx_add_b
     elif act == 'tanh':
         raise NotImplementedError("activation \'{}\' is not implemented.".format(act))
     elif act == 'sigmoid':
@@ -174,8 +189,9 @@ def bias_act_grad(dloss_dout, out, x_add_b, b=None, dim=1, act='linear', alpha=N
         raise NotImplementedError("activation \'{}\' is not implemented.".format(act))
 
     # 加上偏移
+    dloss_dx = dloss_dx_add_b
 
-    return dloss_dout
+    return dloss_dx
 
 def _parse_padding(padding):
     if isinstance(padding, int):
@@ -531,8 +547,10 @@ class FullyConnectedLayer(nn.Layer):
             out = paddle.matmul(x, w, transpose_y=True) + b.unsqueeze(0)
         else:
             r = x.matmul(w.t())
-            out, r_add_b = bias_act(r, b, act=self.activation)
-            self.grad_layer.r_add_b = r_add_b.detach()
+            out, temp_tensors = bias_act(r, b, act=self.activation)
+            self.grad_layer.gain_r = temp_tensors['gain_x'].detach()
+            self.grad_layer.act_r = temp_tensors['act_x'].detach()
+            self.grad_layer.r_add_b = temp_tensors['x_add_b'].detach()
         self.grad_layer.out = out.detach()
         return out
 
@@ -568,8 +586,14 @@ class FullyConnectedLayer_Grad(nn.Layer):
             dloss_dx = dloss_dout * dout_dx               # [N, in_C, out_C]  使用复合函数求导法则（链式法则）
             dloss_dx = paddle.sum(dloss_dx, axis=2)       # [N, in_C]   把偏移数量那一维求和
         else:
+            gain_r = self.gain_r
+            act_r = self.act_r
             r_add_b = self.r_add_b
-            dloss_dr = bias_act_grad(dloss_dout, out, r_add_b, act=self.activation)
+            temp_tensors = {}
+            temp_tensors['gain_x'] = gain_r
+            temp_tensors['act_x'] = act_r
+            temp_tensors['x_add_b'] = r_add_b
+            dloss_dr = bias_act_grad(dloss_dout, out, temp_tensors, act=self.activation)
 
             # loss对输入x的偏导数
             dloss_dr = paddle.unsqueeze(dloss_dr, 1)      # [N, 1, out_C]
@@ -814,13 +838,49 @@ class ToRGBLayer(nn.Layer):
         self.bias = self.create_parameter([out_channels, ],
                                           default_initializer=paddle.nn.initializer.Constant(0.0))
         self.weight_gain = 1 / np.sqrt(in_channels * (kernel_size ** 2))
-
+        self.grad_layer = ToRGBLayer_Grad(
+            in_channels,
+            out_channels,
+            w_dim,
+            kernel_size,
+            conv_clamp,
+            channels_last,
+        )
 
     def forward(self, x, w, fused_modconv=True):
         styles = self.affine(w) * self.weight_gain
-        x = modulated_conv2d(x=x, weight=self.weight, styles=styles, demodulate=False, fused_modconv=fused_modconv)
-        x, x_add_b = bias_act(x, paddle.cast(self.bias, dtype=x.dtype), clamp=self.conv_clamp)
-        return x
+        self.grad_layer.styles = styles.detach()
+        x2 = modulated_conv2d(x=x, weight=self.weight, styles=styles, demodulate=False, fused_modconv=fused_modconv)
+        self.grad_layer.x2 = x2.detach()
+        b = paddle.cast(self.bias, dtype=x.dtype)
+        self.grad_layer.b = b
+        out, gain_x2, act_x2, x2_add_b = bias_act(x2, b, clamp=self.conv_clamp)
+        self.grad_layer.out = out.detach()
+        self.grad_layer.gain_x2 = gain_x2.detach()
+        self.grad_layer.act_x2 = act_x2.detach()
+        self.grad_layer.x2_add_b = x2_add_b.detach()
+        return out
+
+class ToRGBLayer_Grad(nn.Layer):
+    def __init__(self, in_channels, out_channels, w_dim, kernel_size=1, conv_clamp=None, channels_last=False):
+        super().__init__()
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.w_dim = w_dim
+        self.kernel_size = kernel_size
+        self.conv_clamp = conv_clamp
+        self.channels_last = channels_last
+
+    def forward(self, dloss_dout):
+        styles = self.styles
+        x2 = self.x2
+        b = self.b
+        out = self.out
+        gain_x2 = self.gain_x2
+        act_x2 = self.act_x2
+        x2_add_b = self.x2_add_b
+        dloss_dx2 = bias_act_grad(dloss_dout, out, gain_x2, act_x2, x2_add_b, b=b, clamp=self.conv_clamp)
+        return dloss_dx2
 
 
 
