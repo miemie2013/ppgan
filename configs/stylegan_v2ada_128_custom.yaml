@@ -1,4 +1,4 @@
-kimgs: 25000
+kimgs: 900
 output_dir: output_dir
 
 model:
@@ -13,7 +13,7 @@ model:
   synthesis:
     name: StyleGANv2ADA_SynthesisNetwork
     w_dim: &W_DIM 512
-    img_resolution: &IMAGE_SIZE 512
+    img_resolution: &IMAGE_SIZE 128
     img_channels: &IMG_CHANNELS 3
     channel_base: &CHANNEL_BASE 32768
     channel_max: &CHANNEL_MAX 512
@@ -24,7 +24,7 @@ model:
     z_dim: &Z_DIM 512
     c_dim: &C_DIM 0
     w_dim: *W_DIM
-    num_ws: 16
+    num_ws: 12
     num_layers: 8
   augment_pipe:
     name: StyleGANv2ADA_AugmentPipe
@@ -57,13 +57,13 @@ dataset:
   train:
     name: StyleGANv2ADADataset
 #    dataroot: ../data/data42681/afhq/train/cat
-    dataroot: ../data/data42681/afhq/train/dog
+    dataroot: ../data/data42681/afhq/train/dog_128
     is_train: True
     resolution: *IMAGE_SIZE
     use_labels: False
     xflip: False
     num_workers: 0
-    batch_size: 1
+    batch_size: 4
     len_phases: 4
     preprocess: None
 
@@ -74,13 +74,13 @@ dataset:
 
 lr_scheduler_G:
   name: MultiStepDecay
-  learning_rate: 0.0025
+  learning_rate: 0.000625  # 0.0025 when batch_size is 16; 0.00125 when batch_size is 8; 0.000625 when batch_size is 4;
   milestones: [99999000]
   gamma: 0.5
 
 lr_scheduler_D:
   name: MultiStepDecay
-  learning_rate: 0.0025
+  learning_rate: 0.000625  # 0.0025 when batch_size is 16; 0.00125 when batch_size is 8; 0.000625 when batch_size is 4;
   milestones: [99999000]
   gamma: 0.5
 
@@ -102,7 +102,7 @@ optimizer:
     epsilon: 1e-8
 
 validate:
-  interval: 1000   # test iters
+  interval: 200   # test iters
   save_img: true
 
 log_config:
