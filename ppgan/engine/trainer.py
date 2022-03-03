@@ -443,6 +443,11 @@ class Trainer:
         for net_name, net in self.model.nets.items():
             state_dicts[net_name] = net.state_dict()
 
+        if hasattr(self.model, 'nets_ema'):
+            for net_name, net in self.model.nets_ema.items():
+                net_ema_name = net_name + '_ema'
+                state_dicts[net_ema_name] = net.state_dict()
+
         if name == 'weight':
             save(state_dicts, save_path)
             return
@@ -490,7 +495,9 @@ class Trainer:
 
         if hasattr(self.model, 'nets_ema'):
             for net_name, net in self.model.nets_ema.items():
-                net.set_state_dict(state_dicts[net_name])
+                net_ema_name = net_name + '_ema'
+                if net_ema_name in state_dicts:
+                    net.set_state_dict(state_dicts[net_ema_name])
 
         for opt_name, opt in self.model.optimizers.items():
             opt_name_d = opt_name + '_d'
@@ -522,14 +529,15 @@ class Trainer:
 
             if hasattr(self.model, 'nets_ema'):
                 for net_name, net in self.model.nets_ema.items():
-                    if net_name in state_dicts:
-                        net.set_state_dict(state_dicts[net_name])
+                    net_ema_name = net_name + '_ema'
+                    if net_ema_name in state_dicts:
+                        net.set_state_dict(state_dicts[net_ema_name])
                         self.logger.info(
-                            'Loaded pretrained weight for ema_net {}'.format(net_name))
+                            'Loaded pretrained weight for ema_net {}'.format(net_ema_name))
                     else:
                         self.logger.warning(
                             'Can not find state dict of net {}. Skip load pretrained weight for net {}'
-                                .format(net_name, net_name))
+                                .format(net_ema_name, net_ema_name))
         else:
             assert len(self.model.nets
                        ) == 1, 'checkpoint only contain weight of one net, \

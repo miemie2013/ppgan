@@ -49,7 +49,7 @@ python tools/main.py -c configs/stylegan_v2ada_512_afhqcat.yaml --load styleganv
 
 恢复训练:
 cd ~/w*
-python tools/main.py -c configs/stylegan_v2ada_512_afhqcat.yaml --resume output_dir/stylegan_v2ada_512_afhqcat-2022-02-16-18-18/iter_4000_checkpoint.pdparams
+python tools/main.py -c configs/stylegan_v2ada_512_afhqcat.yaml --resume output_dir/stylegan_v2ada_512_afhqcat-2022-03-03-11-11/iter_20_checkpoint.pdparams
 
 
 测试模型:
