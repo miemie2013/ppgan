@@ -23,10 +23,10 @@ import sys
 
 
 
-def soft_update(source, target, beta=1.0):
+def soft_update(source, ema_model, beta=1.0):
     '''
     ema:
-    target = beta * source + (1. - beta) * target
+    ema = beta * ema + (1. - beta) * source
 
     '''
     assert 0.0 <= beta <= 1.0
@@ -34,11 +34,10 @@ def soft_update(source, target, beta=1.0):
     if isinstance(source, paddle.DataParallel):
         source = source._layers
 
-    target_model_map = dict(target.named_parameters())
+    ema_model_map = dict(ema_model.named_parameters())
     for param_name, source_param in source.named_parameters():
-        target_param = target_model_map[param_name]
-        target_param.set_value(beta * source_param +
-                               (1.0 - beta) * target_param)
+        ema_param = ema_model_map[param_name]
+        ema_param.set_value(beta * ema_param + (1.0 - beta) * source_param)
 
 
 def dump_model(model):
@@ -76,6 +75,8 @@ class StyleGANv2ADAModel(BaseModel):
         pl_batch_shrink=2,
         pl_decay=0.01,
         pl_weight=2.0,
+        ema_kimg=10,
+        ema_rampup=None,
     ):
         super(StyleGANv2ADAModel, self).__init__()
         self.nets_ema = {}
@@ -106,6 +107,7 @@ class StyleGANv2ADAModel(BaseModel):
                 self.phases += [dict(name=name + 'reg', interval=reg_interval)]
 
         self.z_dim = self.nets['mapping'].z_dim
+        self.cur_nimg = 0
         self.batch_idx = 0
 
         # loss config.
@@ -118,6 +120,9 @@ class StyleGANv2ADAModel(BaseModel):
         self.pl_weight = pl_weight
 
         self.pl_mean = paddle.zeros([1, ], dtype=paddle.float32)
+
+        self.ema_kimg = ema_kimg
+        self.ema_rampup = ema_rampup
 
 
 
@@ -141,23 +146,27 @@ class StyleGANv2ADAModel(BaseModel):
 
     def run_G(self, z, c, sync):
         ws = self.nets['mapping'](z, c)
-        self.style_mixing_prob = -1.0
+        # self.style_mixing_prob = -1.0
         if self.style_mixing_prob > 0:
             # cutoff = torch.empty([], dtype=torch.int64, device=ws.device).random_(1, ws.shape[1])
             # cutoff = torch.where(torch.rand([], device=ws.device) < self.style_mixing_prob, cutoff, torch.full_like(cutoff, ws.shape[1]))
             # ws[:, cutoff:] = self.G_mapping(torch.randn_like(z), c, skip_w_avg_update=True)[:, cutoff:]
 
-            cutoff_ = paddle.randint(low=1, high=ws.shape[1], shape=[1, ], dtype='int64')
+            # num_vector = ws.shape[1]
+            num_vector = len(ws)
+            cutoff_ = paddle.randint(low=1, high=num_vector, shape=[1, ], dtype='int64')
             cond = paddle.rand([1, ], dtype='float32') < self.style_mixing_prob
-            cutoff = paddle.where(cond, cutoff_, paddle.full_like(cutoff_, ws.shape[1]))
+            cutoff = paddle.where(cond, cutoff_, paddle.full_like(cutoff_, num_vector))
             cutoff.stop_gradient = True
             # ws[:, cutoff:] = self.nets['mapping'](paddle.randn(z.shape), c, skip_w_avg_update=True)[:, cutoff:]
-            if cutoff == ws.shape[1]:
+            if cutoff == num_vector:
                 pass
             else:
-                temp = self.nets['mapping'](paddle.randn(z.shape), c, skip_w_avg_update=True)[:, cutoff:]
-                temp2 = ws[:, :cutoff]
-                ws = paddle.concat([temp2, temp], 1)
+                cutoff_numpy = cutoff.numpy()[0]
+                temp = self.nets['mapping'](paddle.randn(z.shape), c, skip_w_avg_update=True)[cutoff_numpy:]
+                temp2 = ws[:cutoff_numpy]
+                # ws = paddle.concat([temp2, temp], 1)
+                ws = temp2 + temp
         img = self.nets['synthesis'](ws)
         return img, ws
 
@@ -219,8 +228,8 @@ class StyleGANv2ADAModel(BaseModel):
             # aaaaaaaaaaa2 = gen_ws.numpy()
             # ddd = np.sum((dic2[phase + 'gen_ws'] - gen_ws.numpy()) ** 2)
             # print('ddd=%.6f' % ddd)
-            # pl_noise = paddle.randn(gen_img.shape) / np.sqrt(gen_img.shape[2] * gen_img.shape[3])
-            pl_noise = paddle.ones(gen_img.shape) / np.sqrt(gen_img.shape[2] * gen_img.shape[3])
+            pl_noise = paddle.randn(gen_img.shape) / np.sqrt(gen_img.shape[2] * gen_img.shape[3])
+            # pl_noise = paddle.ones(gen_img.shape) / np.sqrt(gen_img.shape[2] * gen_img.shape[3])
             pl_gradss = paddle.grad(
                 outputs=[(gen_img * pl_noise).sum()],
                 # inputs=[gen_ws],
@@ -385,20 +394,35 @@ class StyleGANv2ADAModel(BaseModel):
             # elif 'D' in phase['name']:
             #     optimizers['discriminator'].step()  # 更新参数
 
+
         # compute moving average of network parameters。指数滑动平均
+        # self.mapping_ema.requires_grad_(False)
+        # self.synthesis_ema.requires_grad_(False)
+        ema_kimg = self.ema_kimg
+        ema_nimg = ema_kimg * 1000
+        ema_rampup = self.ema_rampup
+        cur_nimg = self.cur_nimg
+        if ema_rampup is not None:
+            ema_nimg = min(ema_nimg, cur_nimg * ema_rampup)
+        ema_beta = 0.5 ** (batch_size / max(ema_nimg, 1e-8))
         soft_update(self.nets['synthesis'],
                     self.nets_ema['synthesis'],
-                    beta=0.999)
+                    beta=ema_beta)
         soft_update(self.nets['mapping'],
                     self.nets_ema['mapping'],
-                    beta=0.999)
+                    beta=ema_beta)
+        self.cur_nimg += batch_size
+        self.batch_idx += 1
+
+        # Execute ADA heuristic.
 
         for loss, prefix in zip(
             loss_numpys,
             loss_phase_name):
             for key, value in loss.items():
                 self.losses[prefix + '_' + key] = value
-        self.batch_idx += 1
+
+        return loss_numpys
 
     def test_iter(self, metrics=None):
         self.nets_ema['synthesis'].eval()

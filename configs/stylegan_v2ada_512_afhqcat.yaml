@@ -8,6 +8,8 @@ model:
   # loss
   r1_gamma: 0.5
   pl_batch_shrink: 1  # default is 2. when train batch_size is 1, set to 1.
+  ema_kimg: 20
+  ema_rampup: None
   synthesis:
     name: StyleGANv2ADA_SynthesisNetwork
     w_dim: &W_DIM 512
