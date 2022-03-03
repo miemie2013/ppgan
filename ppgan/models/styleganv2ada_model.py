@@ -355,18 +355,11 @@ class StyleGANv2ADAModel(BaseModel):
             # Initialize gradient accumulation.  咩酱：初始化梯度累加（变相增大批大小）。
             self._reset_grad(optimizers)  # 梯度清0
             if 'G' in phase['name']:
-                # self.nets['synthesis'].trainable = False
                 for name, param in self.nets['synthesis'].named_parameters():
                     param.stop_gradient = False
                 for name, param in self.nets['mapping'].named_parameters():
                     param.stop_gradient = False
-                for name, param in self.nets['discriminator'].named_parameters():
-                    param.stop_gradient = True
             elif 'D' in phase['name']:
-                for name, param in self.nets['synthesis'].named_parameters():
-                    param.stop_gradient = True
-                for name, param in self.nets['mapping'].named_parameters():
-                    param.stop_gradient = True
                 for name, param in self.nets['discriminator'].named_parameters():
                     param.stop_gradient = False
 
@@ -390,10 +383,16 @@ class StyleGANv2ADAModel(BaseModel):
             # for param in phase.module.parameters():
             #     if param.grad is not None:
             #         misc.nan_to_num(param.grad, nan=0, posinf=1e5, neginf=-1e5, out=param.grad)
-            # if 'G' in phase['name']:
-            #     optimizers['generator'].step()  # 更新参数
-            # elif 'D' in phase['name']:
-            #     optimizers['discriminator'].step()  # 更新参数
+            if 'G' in phase['name']:
+                optimizers['generator'].step()  # 更新参数
+                for name, param in self.nets['synthesis'].named_parameters():
+                    param.stop_gradient = True
+                for name, param in self.nets['mapping'].named_parameters():
+                    param.stop_gradient = True
+            elif 'D' in phase['name']:
+                optimizers['discriminator'].step()  # 更新参数
+                for name, param in self.nets['discriminator'].named_parameters():
+                    param.stop_gradient = True
 
 
         # compute moving average of network parameters。指数滑动平均
