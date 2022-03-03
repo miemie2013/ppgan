@@ -68,17 +68,6 @@ def upfirdn2d_setup_filter(shape, normalize=True, flip_filter=False, gain=1, sep
 
 def bias_act(x, b=None, dim=1, act='linear', alpha=None, gain=None, clamp=None):
     assert clamp is None or clamp >= 0
-    # activation_funcs = {
-    #     'linear':   dnnlib.EasyDict(func=lambda x, **_:         x,                                          def_alpha=0,    def_gain=1,             cuda_idx=1, ref='',  has_2nd_grad=False),
-    #     'relu':     dnnlib.EasyDict(func=lambda x, **_:         torch.nn.functional.relu(x),                def_alpha=0,    def_gain=np.sqrt(2),    cuda_idx=2, ref='y', has_2nd_grad=False),
-    #     'lrelu':    dnnlib.EasyDict(func=lambda x, alpha, **_:  torch.nn.functional.leaky_relu(x, alpha),   def_alpha=0.2,  def_gain=np.sqrt(2),    cuda_idx=3, ref='y', has_2nd_grad=False),
-    #     'tanh':     dnnlib.EasyDict(func=lambda x, **_:         torch.tanh(x),                              def_alpha=0,    def_gain=1,             cuda_idx=4, ref='y', has_2nd_grad=True),
-    #     'sigmoid':  dnnlib.EasyDict(func=lambda x, **_:         torch.sigmoid(x),                           def_alpha=0,    def_gain=1,             cuda_idx=5, ref='y', has_2nd_grad=True),
-    #     'elu':      dnnlib.EasyDict(func=lambda x, **_:         torch.nn.functional.elu(x),                 def_alpha=0,    def_gain=1,             cuda_idx=6, ref='y', has_2nd_grad=True),
-    #     'selu':     dnnlib.EasyDict(func=lambda x, **_:         torch.nn.functional.selu(x),                def_alpha=0,    def_gain=1,             cuda_idx=7, ref='y', has_2nd_grad=True),
-    #     'softplus': dnnlib.EasyDict(func=lambda x, **_:         torch.nn.functional.softplus(x),            def_alpha=0,    def_gain=1,             cuda_idx=8, ref='y', has_2nd_grad=True),
-    #     'swish':    dnnlib.EasyDict(func=lambda x, **_:         torch.sigmoid(x) * x,                       def_alpha=0,    def_gain=np.sqrt(2),    cuda_idx=9, ref='x', has_2nd_grad=True),
-    # }
     def_gain = 1.0
     if act in ['relu', 'lrelu', 'swish']:  # 除了这些激活函数的def_gain = np.sqrt(2)，其余激活函数的def_gain = 1.0
         def_gain = np.sqrt(2)
@@ -94,7 +83,10 @@ def bias_act(x, b=None, dim=1, act='linear', alpha=None, gain=None, clamp=None):
     if b is not None:
         new_shape = [-1 if i == dim else 1 for i in range(x.ndim)]
         b_ = paddle.reshape(b, new_shape)
-        x = x + b_
+        x_add_b = x + b_
+    else:
+        x_add_b = x
+    x = x_add_b
 
     # 经过激活函数
     alpha = float(alpha)  # 只有leaky_relu需要
@@ -128,7 +120,62 @@ def bias_act(x, b=None, dim=1, act='linear', alpha=None, gain=None, clamp=None):
     # 限制范围
     if clamp >= 0:
         x = paddle.clip(x, -clamp, clamp)
-    return x
+    return x, x_add_b
+
+
+def bias_act_grad(dloss_dout, out, x_add_b, b=None, dim=1, act='linear', alpha=None, gain=None, clamp=None):
+    def_gain = 1.0
+    if act in ['relu', 'lrelu', 'swish']:  # 除了这些激活函数的def_gain = np.sqrt(2)，其余激活函数的def_gain = 1.0
+        def_gain = np.sqrt(2)
+    def_alpha = 0.0
+    if act in ['lrelu']:  # 除了这些激活函数的def_alpha = 0.2，其余激活函数的def_alpha = 0.0
+        def_alpha = 0.2
+
+    alpha = float(alpha if alpha is not None else def_alpha)
+    gain = float(gain if gain is not None else def_gain)
+    clamp = float(clamp if clamp is not None else -1)
+
+    # 限制范围
+    if clamp >= 0:
+        raise NotImplementedError("not implemented.")
+        # 还未实现
+        # x = paddle.clip(x, -clamp, clamp)
+
+    # 乘以缩放因子
+    gain = float(gain)
+    if gain != 1:
+        dloss_dout = dloss_dout * gain
+
+    # 经过激活函数
+    alpha = float(alpha)  # 只有leaky_relu需要
+    if act == 'linear':
+        pass
+    elif act == 'relu':
+        dact_dx_add_b = paddle.where(x_add_b > 0.0, paddle.ones(x_add_b.shape, dtype=x_add_b.dtype),
+                                     paddle.zeros(x_add_b.shape, dtype=x_add_b.dtype))
+        dloss_dout = dloss_dout * dact_dx_add_b
+    elif act == 'lrelu':
+        dact_dx_add_b = paddle.where(x_add_b > 0.0, paddle.ones(x_add_b.shape, dtype=x_add_b.dtype),
+                                     paddle.ones(x_add_b.shape, dtype=x_add_b.dtype)*alpha)
+        dloss_dout = dloss_dout * dact_dx_add_b
+    elif act == 'tanh':
+        raise NotImplementedError("activation \'{}\' is not implemented.".format(act))
+    elif act == 'sigmoid':
+        raise NotImplementedError("activation \'{}\' is not implemented.".format(act))
+    elif act == 'elu':
+        raise NotImplementedError("activation \'{}\' is not implemented.".format(act))
+    elif act == 'selu':
+        raise NotImplementedError("activation \'{}\' is not implemented.".format(act))
+    elif act == 'softplus':
+        raise NotImplementedError("activation \'{}\' is not implemented.".format(act))
+    elif act == 'swish':
+        raise NotImplementedError("activation \'{}\' is not implemented.".format(act))
+    else:
+        raise NotImplementedError("activation \'{}\' is not implemented.".format(act))
+
+    # 加上偏移
+
+    return dloss_dout
 
 def _parse_padding(padding):
     if isinstance(padding, int):
@@ -409,17 +456,6 @@ class Conv2dLayer(nn.Layer):
         self.padding = kernel_size // 2
         self.weight_gain = 1 / np.sqrt(in_channels * (kernel_size ** 2))
 
-        # activation_funcs = {
-        #     'linear':   dnnlib.EasyDict(func=lambda x, **_:         x,                                          def_alpha=0,    def_gain=1,             cuda_idx=1, ref='',  has_2nd_grad=False),
-        #     'relu':     dnnlib.EasyDict(func=lambda x, **_:         torch.nn.functional.relu(x),                def_alpha=0,    def_gain=np.sqrt(2),    cuda_idx=2, ref='y', has_2nd_grad=False),
-        #     'lrelu':    dnnlib.EasyDict(func=lambda x, alpha, **_:  torch.nn.functional.leaky_relu(x, alpha),   def_alpha=0.2,  def_gain=np.sqrt(2),    cuda_idx=3, ref='y', has_2nd_grad=False),
-        #     'tanh':     dnnlib.EasyDict(func=lambda x, **_:         torch.tanh(x),                              def_alpha=0,    def_gain=1,             cuda_idx=4, ref='y', has_2nd_grad=True),
-        #     'sigmoid':  dnnlib.EasyDict(func=lambda x, **_:         torch.sigmoid(x),                           def_alpha=0,    def_gain=1,             cuda_idx=5, ref='y', has_2nd_grad=True),
-        #     'elu':      dnnlib.EasyDict(func=lambda x, **_:         torch.nn.functional.elu(x),                 def_alpha=0,    def_gain=1,             cuda_idx=6, ref='y', has_2nd_grad=True),
-        #     'selu':     dnnlib.EasyDict(func=lambda x, **_:         torch.nn.functional.selu(x),                def_alpha=0,    def_gain=1,             cuda_idx=7, ref='y', has_2nd_grad=True),
-        #     'softplus': dnnlib.EasyDict(func=lambda x, **_:         torch.nn.functional.softplus(x),            def_alpha=0,    def_gain=1,             cuda_idx=8, ref='y', has_2nd_grad=True),
-        #     'swish':    dnnlib.EasyDict(func=lambda x, **_:         torch.sigmoid(x) * x,                       def_alpha=0,    def_gain=np.sqrt(2),    cuda_idx=9, ref='x', has_2nd_grad=True),
-        # }
         def_gain = 1.0
         if activation in ['relu', 'lrelu', 'swish']:  # 除了这些激活函数的def_gain = np.sqrt(2)，其余激活函数的def_gain = 1.0
             def_gain = np.sqrt(2)
@@ -470,6 +506,14 @@ class FullyConnectedLayer(nn.Layer):
                                           default_initializer=paddle.nn.initializer.Constant(bias_init)) if bias else None
         self.weight_gain = lr_multiplier / np.sqrt(in_features)
         self.bias_gain = lr_multiplier
+        self.grad_layer = FullyConnectedLayer_Grad(
+            in_features,
+            out_features,
+            bias,
+            activation,
+            lr_multiplier,
+            bias_init,
+        )
 
     def forward(self, x):
         w = paddle.cast(self.weight, dtype=x.dtype) * self.weight_gain
@@ -480,16 +524,60 @@ class FullyConnectedLayer(nn.Layer):
             if self.bias_gain != 1:
                 b = b * self.bias_gain
 
+        self.grad_layer.w = w
         if self.activation == 'linear' and b is not None:
+            self.grad_layer.b = b
             # out = paddle.addmm(b.unsqueeze(0), x, w.t())   # 因为paddle.addmm()没有实现二阶梯度，所以用其它等价实现。
             out = paddle.matmul(x, w, transpose_y=True) + b.unsqueeze(0)
-            # out = x.matmul(w.t()) + b.unsqueeze(0).tile([x.shape[0], 1])
-            # out = F.linear(x, w.t(), bias=b)
-            # out = F.linear(x, (self.weight * self.weight_gain).t(), bias=self.bias * self.bias_gain)
         else:
             r = x.matmul(w.t())
-            out = bias_act(r, b, act=self.activation)
+            out, r_add_b = bias_act(r, b, act=self.activation)
+            self.grad_layer.r_add_b = r_add_b.detach()
+        self.grad_layer.out = out.detach()
         return out
+
+
+class FullyConnectedLayer_Grad(nn.Layer):
+    def __init__(self,
+        in_features,                # Number of input features.
+        out_features,               # Number of output features.
+        bias            = True,     # Apply additive bias before the activation function?
+        activation      = 'linear', # Activation function: 'relu', 'lrelu', etc.
+        lr_multiplier   = 1,        # Learning rate multiplier.
+        bias_init       = 0,        # Initial value for the additive bias.
+    ):
+        super().__init__()
+        self.in_features = in_features
+        self.out_features = out_features
+        self.bias = bias
+        self.activation = activation
+        self.lr_multiplier = lr_multiplier
+        self.bias_init = bias_init
+        self.b = None
+
+    def forward(self, dloss_dout):
+        out = self.out
+        b = self.b
+        w = self.w   # [out_C, in_C]
+        w_t = w.t()  # [in_C, out_C]
+        if self.activation == 'linear' and b is not None:
+            # loss对输入x的偏导数
+            dloss_dout = paddle.unsqueeze(dloss_dout, 1)  # [N, 1, out_C]
+            dout_dx = w_t                                 # [in_C, out_C]  out对x的偏导数是w的转置。
+            dout_dx = paddle.unsqueeze(dout_dx, 0)        # [1, in_C, out_C]
+            dloss_dx = dloss_dout * dout_dx               # [N, in_C, out_C]  使用复合函数求导法则（链式法则）
+            dloss_dx = paddle.sum(dloss_dx, axis=2)       # [N, in_C]   把偏移数量那一维求和
+        else:
+            r_add_b = self.r_add_b
+            dloss_dr = bias_act_grad(dloss_dout, out, r_add_b, act=self.activation)
+
+            # loss对输入x的偏导数
+            dloss_dr = paddle.unsqueeze(dloss_dr, 1)      # [N, 1, out_C]
+            dr_dx = w_t                                   # [in_C, out_C]  out对x的偏导数是w的转置。
+            dr_dx = paddle.unsqueeze(dr_dx, 0)            # [1, in_C, out_C]
+            dloss_dx = dloss_dr * dr_dx                   # [N, in_C, out_C]  使用复合函数求导法则（链式法则）
+            dloss_dx = paddle.sum(dloss_dx, axis=2)       # [N, in_C]   把偏移数量那一维求和
+        return dloss_dx
 
 
 def normalize_2nd_moment(x, dim=1, eps=1e-8):
