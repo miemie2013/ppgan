@@ -31,6 +31,11 @@ unzip afhq.zip
 cd ~/w*
 
 
+cd ~/w*
+cp ../data/data128401/styleganv2ada_512_afhqcat.pdparams styleganv2ada_512_afhqcat.pdparams
+
+
+
 
 训练模型:
 cd ~/w*
@@ -39,8 +44,20 @@ python tools/main.py -c configs/stylegan_v2ada_512_afhqcat.yaml
 
 训练模型（微调）:
 cd ~/w*
-python tools/main.py -c configs/stylegan_v2ada_512_afhqcat.yaml --load G_ema_afhqcat.pdparams
+python tools/main.py -c configs/stylegan_v2ada_512_afhqcat.yaml --load styleganv2ada_512_afhqcat.pdparams
 
+
+恢复训练:
+cd ~/w*
+python tools/main.py -c configs/stylegan_v2ada_512_afhqcat.yaml --resume output_dir/stylegan_v2ada_512_afhqcat-2022-02-16-18-18/iter_4000_checkpoint.pdparams
+
+
+测试模型:
+cd ~/w*
+python tools/main.py -c configs/stylegan_v2ada_512_afhqcat.yaml --evaluate-only --load output_dir/stylegan_v2ada_512_afhqcat-2022-02-16-18-18/epoch_4_checkpoint.pdparams
+
+
+python tools/main.py -c configs/stylegan_v2ada_512_afhqcat.yaml --evaluate-only --load styleganv2ada_512_afhqcat.pdparams
 
 
 ======================== PastaGAN ========================

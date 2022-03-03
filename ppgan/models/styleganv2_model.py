@@ -54,6 +54,8 @@ def g_path_regularize(fake_img, latents, mean_path_length, decay=0.01):
     grad = paddle.grad(outputs=(fake_img * noise).sum(),
                        inputs=latents,
                        create_graph=True)[0]
+    aaaaaaaaaaa1 = latents.numpy()
+    aaaaaaaaaaa2 = grad.numpy()
     path_lengths = paddle.sqrt((grad * grad).sum(2).mean(1))
 
     path_mean = mean_path_length + decay * (path_lengths.mean() -

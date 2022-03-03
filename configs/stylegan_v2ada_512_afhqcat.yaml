@@ -7,7 +7,7 @@ model:
   D_reg_interval: 16
   # loss
   r1_gamma: 0.5
-  pl_batch_shrink: 2  # default is 2. when train batch_size is 1, set to 1.
+  pl_batch_shrink: 1  # default is 2. when train batch_size is 1, set to 1.
   synthesis:
     name: StyleGANv2ADA_SynthesisNetwork
     w_dim: &W_DIM 512
@@ -54,13 +54,14 @@ model:
 dataset:
   train:
     name: StyleGANv2ADADataset
-    dataroot: ../data/data42681/afhq/train/cat
+#    dataroot: ../data/data42681/afhq/train/cat
+    dataroot: ../data/data42681/afhq/train/dog
     is_train: True
     resolution: *IMAGE_SIZE
     use_labels: False
     xflip: False
     num_workers: 0
-    batch_size: 6
+    batch_size: 1
     len_phases: 4
     preprocess: None
 

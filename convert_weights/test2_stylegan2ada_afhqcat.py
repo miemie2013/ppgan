@@ -69,6 +69,9 @@ synthesis = StyleGANv2ADA_SynthesisNetwork(w_dim=w_dim, img_resolution=img_resol
 num_ws = synthesis.num_ws
 mapping = StyleGANv2ADA_MappingNetwork(z_dim=z_dim, c_dim=c_dim, w_dim=w_dim, num_ws=num_ws, **mapping_kwargs)
 
+synthesis_ema = StyleGANv2ADA_SynthesisNetwork(w_dim=w_dim, img_resolution=img_resolution, img_channels=img_channels, **synthesis_kwargs)
+mapping_ema = StyleGANv2ADA_MappingNetwork(z_dim=z_dim, c_dim=c_dim, w_dim=w_dim, num_ws=num_ws, **mapping_kwargs)
+
 channel_base = 32768
 channel_max = 512
 num_fp16_res = 4
@@ -90,10 +93,14 @@ discriminator = StyleGANv2ADA_Discriminator(c_dim=c_dim,
 
 mapping_std = mapping.state_dict()
 synthesis_std = synthesis.state_dict()
+mapping_ema_std = mapping_ema.state_dict()
+synthesis_ema_std = synthesis_ema.state_dict()
 discriminator_std = discriminator.state_dict()
 
 mapping.eval()
 synthesis.eval()
+mapping_ema.eval()
+synthesis_ema.eval()
 discriminator.eval()
 
 
@@ -111,34 +118,42 @@ def load_network_pkl(f, force_fp16=False):
     torch.save(data['D'].state_dict(), "D_256.pth")
 
 '''
-ckpt_file = '../G_ema_afhqcat.pth'
-ckpt_file2 = '../D_afhqcat.pth'
-save_name = '../G_ema_afhqcat.pdparams'
-state_dict = torch.load(ckpt_file, map_location=torch.device('cpu'))
-state_dict_D = torch.load(ckpt_file2, map_location=torch.device('cpu'))
+G_ema_ckpt_file = '../G_ema_afhqcat.pth'
+G_ckpt_file = '../G_afhqcat.pth'
+D_ckpt_file = '../D_afhqcat.pth'
+save_name = '../styleganv2ada_512_afhqcat.pdparams'
+G_ema_state_dict = torch.load(G_ema_ckpt_file, map_location=torch.device('cpu'))
+G_state_dict = torch.load(G_ckpt_file, map_location=torch.device('cpu'))
+D_state_dict = torch.load(D_ckpt_file, map_location=torch.device('cpu'))
 
+
+synthesis_ema_dic = {}
+mapping_ema_dic = {}
+others = {}
+for key, value in G_ema_state_dict.items():
+    # if 'tracked' in key:
+    #     continue
+    if 'synthesis' in key:
+        synthesis_ema_dic[key] = value.data.numpy()
+    elif 'mapping' in key:
+        mapping_ema_dic[key] = value.data.numpy()
+    else:
+        others[key] = value.data.numpy()
 
 synthesis_dic = {}
 mapping_dic = {}
-const_encoding_dic = {}
-style_encoding_dic = {}
-others = {}
-for key, value in state_dict.items():
+for key, value in G_state_dict.items():
     # if 'tracked' in key:
     #     continue
     if 'synthesis' in key:
         synthesis_dic[key] = value.data.numpy()
     elif 'mapping' in key:
         mapping_dic[key] = value.data.numpy()
-    elif 'const_encoding' in key:
-        const_encoding_dic[key] = value.data.numpy()
-    elif 'style_encoding' in key:
-        style_encoding_dic[key] = value.data.numpy()
     else:
         others[key] = value.data.numpy()
 
 discriminator_dic = {}
-for key, value in state_dict_D.items():
+for key, value in D_state_dict.items():
     discriminator_dic[key] = value.data.numpy()
 
 print()
@@ -153,19 +168,88 @@ for key in mapping_dic.keys():
     copy(name2, w, mapping_std)
 mapping.set_state_dict(mapping_std)
 
-
-for key in synthesis_dic.keys():
+for key in mapping_ema_dic.keys():
     name2 = key
-    w = synthesis_dic[key]
-    name2 = name2.replace('synthesis.', '')
+    w = mapping_ema_dic[key]
+    name2 = name2.replace('mapping.', '')
     if '.linear.weight' in key:
         w = w.transpose(1, 0)  # pytorch的nn.Linear()的weight权重要转置才能赋值给paddle的nn.Linear()
-    if '.noise_strength' in key:
-        print()
-        w = np.reshape(w, [1, ])
     print(key)
+    copy(name2, w, mapping_ema_std)
+mapping_ema.set_state_dict(mapping_ema_std)
+
+
+
+map = {}
+
+conv_i = 0
+torgb_i = 0
+for block_idx, res in enumerate(synthesis.block_resolutions):
+    in_channels = synthesis.channels_dict[res // 2] if res > 4 else 0
+    is_last = synthesis.is_lasts[block_idx]
+    architecture = synthesis.architectures[block_idx]
+
+    if in_channels == 0:
+        map[f'b{res}.const'] = 'const'
+    else:
+        pass
+
+    # Main layers.
+    if in_channels == 0:
+        map[f'b{res}.conv1'] = 'convs.%d'%(conv_i)
+        conv_i += 1
+    # elif self.architecture == 'resnet':
+    #     y = self.skip(x, gain=np.sqrt(0.5))
+    #     x = self.conv0(x, ws[:, i + 1], fused_modconv=fused_modconv, **layer_kwargs)
+    #     x = self.conv1(x, ws[:, i + 1], fused_modconv=fused_modconv, gain=np.sqrt(0.5), **layer_kwargs)
+    #     x = y.add_(x)
+    else:
+        map[f'b{res}.conv0'] = 'convs.%d'%(conv_i)
+        map[f'b{res}.conv1'] = 'convs.%d'%(conv_i + 1)
+        conv_i += 2
+
+    # ToRGB.
+    map[f'b{res}.resample_filter'] = f"resample_filter_{block_idx}"
+    if is_last or architecture == 'skip':
+        map[f'b{res}.torgb'] = 'torgbs.%d'%(torgb_i)
+        torgb_i += 1
+
+
+for key in synthesis_dic.keys():
+    name2 = None
+    for key2 in map.keys():
+        if key2 in key:
+            name2 = key.replace(key2, map[key2])
+            name2 = name2.split('ynthesis.')[1]
+            break
+    w = synthesis_dic[key]
+    if '.linear.weight' in key:
+        print('.linear.weight...')
+        w = w.transpose(1, 0)  # pytorch的nn.Linear()的weight权重要转置才能赋值给paddle的nn.Linear()
+    if '.noise_strength' in key:
+        print('noise_strength...')
+        w = np.reshape(w, [1, ])
+    # print(key)
     copy(name2, w, synthesis_std)
 synthesis.set_state_dict(synthesis_std)
+
+for key in synthesis_ema_dic.keys():
+    name2 = None
+    for key2 in map.keys():
+        if key2 in key:
+            name2 = key.replace(key2, map[key2])
+            name2 = name2.split('ynthesis.')[1]
+            break
+    w = synthesis_ema_dic[key]
+    if '.linear.weight' in key:
+        print('.linear.weight...')
+        w = w.transpose(1, 0)  # pytorch的nn.Linear()的weight权重要转置才能赋值给paddle的nn.Linear()
+    if '.noise_strength' in key:
+        print('noise_strength...')
+        w = np.reshape(w, [1, ])
+    # print(key)
+    copy(name2, w, synthesis_ema_std)
+synthesis_ema.set_state_dict(synthesis_ema_std)
 
 for key in discriminator_dic.keys():
     name2 = key
@@ -200,8 +284,10 @@ for seed_idx, seed in enumerate(seeds):
     print('Generating image for seed %d (%d/%d) ...' % (seed, seed_idx, len(seeds)))
     z = paddle.to_tensor(np.random.RandomState(seed).randn(1, mapping.z_dim))
 
-    ws = mapping(z, label, truncation_psi=truncation_psi, truncation_cutoff=None)
-    img = synthesis(ws, noise_mode=noise_mode)
+    # ws = mapping(z, label, truncation_psi=truncation_psi, truncation_cutoff=None)
+    # img = synthesis(ws, noise_mode=noise_mode)
+    ws = mapping_ema(z, label, truncation_psi=truncation_psi, truncation_cutoff=None)
+    img = synthesis_ema(ws, noise_mode=noise_mode)
 
     img = (paddle.transpose(img, (0, 2, 3, 1)) * 127.5 + 128)
     img = paddle.clip(img, 0, 255)
@@ -216,11 +302,13 @@ for seed_idx, seed in enumerate(seeds):
 
 
 class Model(paddle.nn.Layer):
-    def __init__(self, synthesis, mapping, discriminator):
+    def __init__(self, synthesis, mapping, synthesis_ema, mapping_ema, discriminator):
         super().__init__()
         self.nets = {}
         self.nets['synthesis'] = synthesis
         self.nets['mapping'] = mapping
+        self.nets['synthesis_ema'] = synthesis_ema
+        self.nets['mapping_ema'] = mapping_ema
         if discriminator is not None:
             self.nets['discriminator'] = discriminator
 
@@ -228,7 +316,7 @@ class Model(paddle.nn.Layer):
         return x
 
 
-model = Model(synthesis, mapping, discriminator=discriminator)
+model = Model(synthesis, mapping, synthesis_ema, mapping_ema, discriminator=discriminator)
 
 state_dicts = {}
 for net_name, net in model.nets.items():

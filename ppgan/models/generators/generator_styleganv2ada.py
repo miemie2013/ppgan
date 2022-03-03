@@ -205,7 +205,8 @@ def upfirdn2d(x, filter, up=1, down=1, padding=0, flip_filter=False, gain=1):
 
     # Setup filter.
     filter = filter * (gain ** (filter.ndim / 2))
-    filter = paddle.cast(filter, dtype=x.dtype)
+    assert filter.dtype == x.dtype
+    # filter = paddle.cast(filter, dtype=x.dtype)
     if not flip_filter:
         filter = filter.flip(list(range(filter.ndim)))
 
@@ -219,7 +220,7 @@ def upfirdn2d(x, filter, up=1, down=1, padding=0, flip_filter=False, gain=1):
 
     # Downsample by throwing away pixels.
     # 因为:: （paddle.strided_slice()）没有实现二阶梯度，所以用其它等价实现。
-    x222 = x[:, :, ::downy, ::downx]  # RuntimeError: (NotFound) The Op strided_slice_grad doesn't have any grad op.
+    # x222 = x[:, :, ::downy, ::downx]  # RuntimeError: (NotFound) The Op strided_slice_grad doesn't have any grad op.
     assert downy == downx
     if downy == 1:
         pass
@@ -472,6 +473,7 @@ class FullyConnectedLayer(nn.Layer):
 
     def forward(self, x):
         w = paddle.cast(self.weight, dtype=x.dtype) * self.weight_gain
+        # w = self.weight * self.weight_gain
         b = self.bias
         if b is not None:
             b = paddle.cast(b, dtype=x.dtype)
@@ -479,12 +481,15 @@ class FullyConnectedLayer(nn.Layer):
                 b = b * self.bias_gain
 
         if self.activation == 'linear' and b is not None:
-            # x = paddle.addmm(b.unsqueeze(0), x, w.t())   # 因为paddle.addmm()没有实现二阶梯度，所以用其它等价实现。
-            x = paddle.matmul(x, w, transpose_y=True) + b.unsqueeze(0)
+            # out = paddle.addmm(b.unsqueeze(0), x, w.t())   # 因为paddle.addmm()没有实现二阶梯度，所以用其它等价实现。
+            out = paddle.matmul(x, w, transpose_y=True) + b.unsqueeze(0)
+            # out = x.matmul(w.t()) + b.unsqueeze(0).tile([x.shape[0], 1])
+            # out = F.linear(x, w.t(), bias=b)
+            # out = F.linear(x, (self.weight * self.weight_gain).t(), bias=self.bias * self.bias_gain)
         else:
-            x = x.matmul(w.t())
-            x = bias_act(x, b, act=self.activation)
-        return x
+            r = x.matmul(w.t())
+            out = bias_act(r, b, act=self.activation)
+        return out
 
 
 def normalize_2nd_moment(x, dim=1, eps=1e-8):
@@ -536,8 +541,8 @@ class StyleGANv2ADA_MappingNetwork(nn.Layer):
         # Embed, normalize, and concat inputs.
         x = None
         if self.z_dim > 0:
-            temp1 = paddle.cast(z, dtype='float32')
-            x = normalize_2nd_moment(temp1)
+            # temp1 = paddle.cast(z, dtype='float32')
+            x = normalize_2nd_moment(z)
         if self.c_dim > 0:
             temp2 = paddle.cast(c, dtype='float32')
             y = normalize_2nd_moment(self.embed(temp2))
@@ -547,7 +552,6 @@ class StyleGANv2ADA_MappingNetwork(nn.Layer):
         for idx in range(self.num_layers):
             layer = getattr(self, f'fc{idx}')
             x = layer(x)
-
         # Update moving average of W.
         if self.w_avg_beta is not None and self.training and not skip_w_avg_update:
             temp3 = x.detach().mean(axis=0)
@@ -558,7 +562,13 @@ class StyleGANv2ADA_MappingNetwork(nn.Layer):
 
         # Broadcast.
         if self.num_ws is not None:
-            x = x.unsqueeze(1).tile([1, self.num_ws, 1])
+            # x = x.unsqueeze(1).tile([1, self.num_ws, 1])
+            new_x = []
+            for j in range(self.num_ws):
+                new_x.append(x.clone())
+                # new_x.append(x.unsqueeze(1).clone())
+            # new_x = paddle.concat(new_x, 1)
+            x = new_x
 
         # Apply truncation.
         if truncation_psi != 1:
@@ -633,144 +643,6 @@ def modulated_conv2d(
     return x
 
 
-class Spade_Conv2dLayer(nn.Layer):
-    def __init__(self,
-                 in_channels,  # Number of input channels.
-                 out_channels,  # Number of output channels.
-                 kernel_size,  # Width and height of the convolution kernel.
-                 bias=True,  # Apply additive bias before the activation function?
-                 activation='relu',  # Activation function: 'relu', 'lrelu', etc.
-                 up=1,  # Integer upsampling factor.
-                 down=1,  # Integer downsampling factor.
-                 resample_filter=[1, 3, 3, 1],  # Low-pass filter to apply when resampling activations.
-                 conv_clamp=None,  # Clamp the output to +-X, None = disable clamping.
-                 channels_last=False,  # Expect the input to have memory_format=channels_last?
-                 trainable=True,  # Update the weights of this layer during training?
-                 ):
-        super().__init__()
-        self.activation = activation
-        self.up = up
-        self.down = down
-        self.conv_clamp = conv_clamp
-        self.register_buffer('resample_filter', upfirdn2d_setup_filter(resample_filter))
-        self.padding = kernel_size // 2
-        self.weight_gain = 1 / np.sqrt(in_channels * (kernel_size ** 2))
-
-        def_gain = 1.0
-        if activation in ['relu', 'lrelu', 'swish']:  # 除了这些激活函数的def_gain = np.sqrt(2)，其余激活函数的def_gain = 1.0
-            def_gain = np.sqrt(2)
-        self.act_gain = def_gain
-
-        # 假设屎山的channels_last都是False
-        assert channels_last == False
-        # memory_format = torch.channels_last if channels_last else torch.contiguous_format
-        # weight = torch.randn([out_channels, in_channels, kernel_size, kernel_size]).to(memory_format=memory_format)
-        self.bias = None
-        if trainable:
-            self.weight = self.create_parameter([out_channels, in_channels, kernel_size, kernel_size],
-                                                default_initializer=paddle.nn.initializer.Normal())
-            if bias is not None:
-                if bias != False:
-                    self.bias = self.create_parameter([out_channels, ],
-                                                      default_initializer=paddle.nn.initializer.Constant(0.0))
-        else:
-            self.weight = self.create_parameter([out_channels, in_channels, kernel_size, kernel_size],
-                                                default_initializer=paddle.nn.initializer.Normal())
-            self.weight.stop_gradient = True
-            if bias is not None:
-                if bias != False:
-                    self.bias = self.create_parameter([out_channels, ],
-                                                      default_initializer=paddle.nn.initializer.Constant(0.0))
-                    self.bias.stop_gradient = True
-
-    def forward(self, x, gain=1, no_act=False):
-        w = self.weight * self.weight_gain
-        b = paddle.cast(self.bias, dtype=x.dtype) if self.bias is not None else None
-
-        if not no_act:
-            act_gain = self.act_gain * gain
-            act_clamp = self.conv_clamp * gain if self.conv_clamp is not None else None
-            x = bias_act(x, b, act=self.activation, gain=act_gain, clamp=act_clamp)
-
-        flip_weight = (self.up == 1)  # slightly faster
-        x = conv2d_resample(x=x, w=paddle.cast(w, dtype=x.dtype), filter=self.resample_filter, up=self.up, down=self.down,
-                            padding=self.padding, flip_weight=flip_weight)
-
-        return x
-
-class Spade_Norm_Block(nn.Layer):
-    def __init__(self,
-        in_channels,
-        norm_channels,
-    ):
-        super().__init__()
-        self.conv_mlp = Spade_Conv2dLayer(in_channels, norm_channels, kernel_size=3, bias=False)
-        self.conv_mlp_act = nn.ReLU()
-        self.conv_gamma = Spade_Conv2dLayer(norm_channels, norm_channels, kernel_size=3, bias=False)
-        self.conv_beta = Spade_Conv2dLayer(norm_channels, norm_channels, kernel_size=3, bias=False)
-
-        self.param_free_norm = nn.InstanceNorm2D(norm_channels, weight_attr=False, bias_attr=False)
-
-    def forward(self, x, denorm_feats):
-        normalized = self.param_free_norm(x)
-        actv = self.conv_mlp(denorm_feats, no_act=True)
-        actv = self.conv_mlp_act(actv)
-        gamma = self.conv_gamma(actv, no_act=True)
-        beta = self.conv_beta(actv, no_act=True)
-
-        out = normalized * (1+gamma) + beta
-        return out
-
-
-class Spade_ResBlock(nn.Layer):
-    def __init__(self,
-                 in_channels,  # Number of input channels.
-                 out_channels,  # Number of output channels.
-                 kernel_size=3,  # Width and height of the convolution kernel.
-                 bias=True,  # Apply additive bias before the activation function?
-                 activation='linear',  # Activation function: 'relu', 'lrelu', etc.
-                 up=1,  # Integer upsampling factor.
-                 down=1,  # Integer downsampling factor.
-                 resample_filter=[1, 3, 3, 1],  # Low-pass filter to apply when resampling activations.
-                 conv_clamp=None,  # Clamp the output to +-X, None = disable clamping.
-                 channels_last=False,  # Expect the input to have memory_format=channels_last?
-                 trainable=True,  # Update the weights of this layer during training?
-                 resolution=128,
-                 ):
-        super().__init__()
-        self.register_buffer('resample_filter', upfirdn2d_setup_filter(resample_filter))
-
-        self.conv = Spade_Conv2dLayer(in_channels, in_channels, kernel_size=3, bias=False,
-                                      resample_filter=resample_filter, conv_clamp=conv_clamp,
-                                      channels_last=channels_last)
-        self.conv0 = Spade_Conv2dLayer(in_channels, out_channels, kernel_size=3, bias=False,
-                                       resample_filter=resample_filter, conv_clamp=conv_clamp,
-                                       channels_last=channels_last)
-        self.conv1 = Spade_Conv2dLayer(out_channels, out_channels, kernel_size=3, bias=False,
-                                       resample_filter=resample_filter, conv_clamp=conv_clamp,
-                                       channels_last=channels_last)
-        self.skip = Spade_Conv2dLayer(in_channels, out_channels, kernel_size=1, bias=False,
-                                      resample_filter=resample_filter, conv_clamp=conv_clamp,
-                                      channels_last=channels_last)
-
-        if resolution == 128:
-            feat_channels = 128 * 2
-        else:
-            feat_channels = 64 * 2
-        self.spade_skip = Spade_Norm_Block(feat_channels, in_channels)
-        self.spade0 = Spade_Norm_Block(feat_channels, in_channels)
-        self.spade1 = Spade_Norm_Block(feat_channels, out_channels)
-
-    def forward(self, x, denorm_feat):
-        x = self.conv(x, no_act=True)
-
-        y = self.skip(self.spade_skip(x, denorm_feat), gain=np.sqrt(0.5))
-        x = self.conv0(self.spade0(x, denorm_feat))
-        x = self.conv1(self.spade1(x, denorm_feat), gain=np.sqrt(0.5))
-
-        x = y + x
-        return x
-
 class SynthesisLayer(nn.Layer):
     def __init__(self,
         in_channels,                    # Number of input channels.
@@ -830,13 +702,13 @@ class SynthesisLayer(nn.Layer):
             noise = self.noise_const * self.noise_strength
 
         flip_weight = (self.up == 1) # slightly faster
-        x = modulated_conv2d(x=x, weight=self.weight, styles=styles, noise=noise, up=self.up,
+        img2 = modulated_conv2d(x=x, weight=self.weight, styles=styles, noise=noise, up=self.up,
             padding=self.padding, resample_filter=self.resample_filter, flip_weight=flip_weight, fused_modconv=fused_modconv)
 
         act_gain = self.act_gain * gain
         act_clamp = self.conv_clamp * gain if self.conv_clamp is not None else None
-        x = bias_act(x, paddle.cast(self.bias, dtype=x.dtype), act=self.activation, gain=act_gain, clamp=act_clamp)
-        return x
+        img3 = bias_act(img2, paddle.cast(self.bias, dtype=x.dtype), act=self.activation, gain=act_gain, clamp=act_clamp)
+        return img3
 
 
 
@@ -863,109 +735,7 @@ class ToRGBLayer(nn.Layer):
         return x
 
 
-'''
-兼容原版仓库的
-SynthesisBlockFull
-SynthesisBlockV18
-'''
-class SynthesisBlock(nn.Layer):
-    def __init__(self,
-        in_channels,                        # Number of input channels, 0 = first block.
-        out_channels,                       # Number of output channels.
-        w_dim,                              # Intermediate latent (W) dimensionality.
-        resolution,                         # Resolution of this block.
-        img_channels,                       # Number of output color channels.
-        is_last,                            # Is this the last block?
-        architecture        = 'skip',       # Architecture: 'orig', 'skip', 'resnet'.
-        resample_filter     = [1,3,3,1],    # Low-pass filter to apply when resampling activations.
-        conv_clamp          = None,         # Clamp the output of convolution layers to +-X, None = disable clamping.
-        use_fp16            = False,        # Use FP16 for this block?
-        fp16_channels_last  = False,        # Use channels-last memory format with FP16?
-        **layer_kwargs,                     # Arguments for SynthesisLayer.
-    ):
-        assert architecture in ['orig', 'skip', 'resnet']
-        super().__init__()
-        self.in_channels = in_channels
-        self.w_dim = w_dim
-        self.resolution = resolution
-        self.img_channels = img_channels
-        self.is_last = is_last
-        self.architecture = architecture
-        self.use_fp16 = use_fp16
-        self.channels_last = (use_fp16 and fp16_channels_last)
-        self.register_buffer('resample_filter', upfirdn2d_setup_filter(resample_filter))
-        self.num_conv = 0
-        self.num_torgb = 0
 
-        if in_channels == 0:
-            self.const = self.create_parameter([out_channels, resolution, resolution],
-                                               default_initializer=paddle.nn.initializer.Normal())
-
-        if in_channels != 0:
-            self.conv0 = SynthesisLayer(in_channels, out_channels, w_dim=w_dim, resolution=resolution, up=2,
-                resample_filter=resample_filter, conv_clamp=conv_clamp, channels_last=self.channels_last, **layer_kwargs)
-            self.num_conv += 1
-
-        self.conv1 = SynthesisLayer(out_channels, out_channels, w_dim=w_dim, resolution=resolution,
-            conv_clamp=conv_clamp, channels_last=self.channels_last, **layer_kwargs)
-        self.num_conv += 1
-
-        if is_last or architecture == 'skip':
-            self.torgb = ToRGBLayer(out_channels, img_channels, w_dim=w_dim,
-                conv_clamp=conv_clamp, channels_last=self.channels_last)
-            self.num_torgb += 1
-
-        if in_channels != 0 and architecture == 'resnet':
-            self.skip = Conv2dLayer(in_channels, out_channels, kernel_size=1, bias=False, up=2,
-                resample_filter=resample_filter, channels_last=self.channels_last)
-
-    def forward(self, x, img, ws, force_fp32=False, fused_modconv=None, **layer_kwargs):
-        w_iter = iter(ws.unbind(axis=1))
-        dtype = paddle.float16 if self.use_fp16 and not force_fp32 else paddle.float32
-        # 假设屎山的channels_last都是False
-        assert self.channels_last == False
-        # memory_format = torch.channels_last if self.channels_last and not force_fp32 else torch.contiguous_format
-        if fused_modconv is None:
-            fused_modconv = (not self.training) and (dtype == paddle.float32 or int(x.shape[0]) == 1)
-
-        # Input.
-        if self.in_channels == 0:
-            x = paddle.cast(self.const, dtype=dtype)
-            x = x.unsqueeze(0).tile([ws.shape[0], 1, 1, 1])
-        else:
-            x = paddle.cast(x, dtype=dtype)
-
-        # Main layers.
-        if self.in_channels == 0:
-            x = self.conv1(x, next(w_iter), fused_modconv=fused_modconv, **layer_kwargs)
-        elif self.architecture == 'resnet':
-            y = self.skip(x, gain=np.sqrt(0.5))
-            x = self.conv0(x, next(w_iter), fused_modconv=fused_modconv, **layer_kwargs)
-            x = self.conv1(x, next(w_iter), fused_modconv=fused_modconv, gain=np.sqrt(0.5), **layer_kwargs)
-            x = y.add_(x)
-        else:
-            x = self.conv0(x, next(w_iter), fused_modconv=fused_modconv, **layer_kwargs)
-            x = self.conv1(x, next(w_iter), fused_modconv=fused_modconv, **layer_kwargs)
-
-        # ToRGB.
-        if img is not None:
-            img = upsample2d(img, self.resample_filter)
-        if self.is_last or self.architecture == 'skip':
-            y = self.torgb(x, next(w_iter), fused_modconv=fused_modconv)
-            y = paddle.cast(y, dtype=paddle.float32)
-            img = img + y if img is not None else y
-
-        assert x.dtype == dtype
-        assert img is None or img.dtype == paddle.float32
-        return x, img
-
-
-
-'''
-兼容原版仓库的
-SynthesisNetworkFull
-SynthesisNetworkV18
-'''
 @GENERATORS.register()
 class StyleGANv2ADA_SynthesisNetwork(nn.Layer):
     def __init__(self,
@@ -974,8 +744,8 @@ class StyleGANv2ADA_SynthesisNetwork(nn.Layer):
         img_channels,               # Number of color channels.
         channel_base    = 32768,    # Overall multiplier for the number of channels.
         channel_max     = 512,      # Maximum number of channels in any layer.
-        num_fp16_res    = 0,        # Use FP16 for the N highest resolutions.
-        **block_kwargs,             # Arguments for SynthesisBlock.
+        num_fp16_res    = 0,        # 在前N个最高分辨率处使用FP16.
+        **block_kwargs,             # SynthesisBlock的参数.
     ):
         assert img_resolution >= 4 and img_resolution & (img_resolution - 1) == 0  # 分辨率是2的n次方
         super().__init__()
@@ -983,39 +753,180 @@ class StyleGANv2ADA_SynthesisNetwork(nn.Layer):
         self.img_resolution = img_resolution
         self.img_resolution_log2 = int(np.log2(img_resolution))
         self.img_channels = img_channels
-        self.block_resolutions = [2 ** i for i in range(2, self.img_resolution_log2 + 1)]
+        self.block_resolutions = [2 ** i for i in range(2, self.img_resolution_log2 + 1)]   # 分辨率从4提高到img_resolution
         channels_dict = {res: min(channel_base // res, channel_max) for res in self.block_resolutions}
-        fp16_resolution = max(2 ** (self.img_resolution_log2 + 1 - num_fp16_res), 8)
+        fp16_resolution = max(2 ** (self.img_resolution_log2 + 1 - num_fp16_res), 8)   # 开始使用FP16的分辨率
 
         self.num_ws = 0
-        for res in self.block_resolutions:
+        self.convs = nn.LayerList()
+        self.torgbs = nn.LayerList()
+
+        # 分辨率为4的block的唯一的噪声
+        self.const = None
+        self.channels_dict = channels_dict
+
+        self.is_lasts = []
+        self.architectures = []
+
+        for block_idx, res in enumerate(self.block_resolutions):
             in_channels = channels_dict[res // 2] if res > 4 else 0
             out_channels = channels_dict[res]
             use_fp16 = (res >= fp16_resolution)
             use_fp16 = False
-            is_last = (res == self.img_resolution)
-            block = SynthesisBlock(in_channels, out_channels, w_dim=w_dim, resolution=res,
-                img_channels=img_channels, is_last=is_last, use_fp16=use_fp16, **block_kwargs)
-            self.num_ws += block.num_conv
+            is_last = (res == self.img_resolution)   # 是否是最后一个（最高）分辨率
+            # 取消SynthesisBlock类。取消一层封装。
+            # block = SynthesisBlock(in_channels, out_channels, w_dim=w_dim, resolution=res,
+            #     img_channels=img_channels, is_last=is_last, use_fp16=use_fp16, **block_kwargs)
+            # self.num_ws += block.num_conv
+            # if is_last:
+            #     self.num_ws += block.num_torgb
+            # setattr(self, f'b{res}', block)
+
+            # 取出block_kwargs中的参数
+            architecture = 'skip'
+            resample_filter = [1, 3, 3, 1]
+            conv_clamp = None
+            fp16_channels_last = False
+            layer_kwargs = {}
+            for key in block_kwargs.keys():
+                if key == 'architecture':
+                    architecture = block_kwargs[key]
+                elif key == 'resample_filter':
+                    resample_filter = block_kwargs[key]
+                elif key == 'conv_clamp':
+                    conv_clamp = block_kwargs[key]
+                elif key == 'fp16_channels_last':
+                    fp16_channels_last = block_kwargs[key]
+                elif key == 'layer_kwargs':
+                    layer_kwargs = block_kwargs[key]
+            resolution = res
+            channels_last = (use_fp16 and fp16_channels_last)
+            resample_filter_tensor = upfirdn2d_setup_filter(resample_filter)
+            self.register_buffer(f"resample_filter_{block_idx}", resample_filter_tensor)
+
+            if in_channels == 0:
+                self.const = self.create_parameter([out_channels, resolution, resolution],
+                                                   default_initializer=paddle.nn.initializer.Normal())
+            elif in_channels != 0:
+                conv0 = SynthesisLayer(in_channels, out_channels, w_dim=w_dim, resolution=resolution, up=2,
+                    resample_filter=resample_filter, conv_clamp=conv_clamp, channels_last=channels_last, **layer_kwargs)
+                self.num_ws += 1
+                self.convs.append(conv0)
+
+            conv1 = SynthesisLayer(out_channels, out_channels, w_dim=w_dim, resolution=resolution,
+                conv_clamp=conv_clamp, channels_last=channels_last, **layer_kwargs)
+            self.num_ws += 1
+            self.convs.append(conv1)
+
+            if is_last or architecture == 'skip':
+                torgb = ToRGBLayer(out_channels, img_channels, w_dim=w_dim,
+                    conv_clamp=conv_clamp, channels_last=channels_last)
+                self.torgbs.append(torgb)
+
+            if in_channels != 0 and architecture == 'resnet':
+                skip = Conv2dLayer(in_channels, out_channels, kernel_size=1, bias=False, up=2,
+                    resample_filter=resample_filter, channels_last=channels_last)
+
             if is_last:
-                self.num_ws += block.num_torgb
-            setattr(self, f'b{res}', block)
+                self.num_ws += 1
+            self.is_lasts.append(is_last)
+            self.architectures.append(architecture)
+        print()
 
     def forward(self, ws, **block_kwargs):
-        block_ws = []
-        ws = paddle.cast(ws, dtype='float32')
-        w_idx = 0
-        for res in self.block_resolutions:
-            block = getattr(self, f'b{res}')
-            # block_ws.append(ws.narrow(1, w_idx, block.num_conv + block.num_torgb))
-            block_ws.append(ws[:, w_idx:w_idx + block.num_conv + block.num_torgb, :])
-            w_idx += block.num_conv
+        # block_ws = []
+        # ws = paddle.cast(ws, dtype='float32')
+        # w_idx = 0
+        # for res in self.block_resolutions:
+        #     block = getattr(self, f'b{res}')
+        #     # block_ws.append(ws.narrow(1, w_idx, block.num_conv + block.num_torgb))
+        #     block_ws.append(ws[:, w_idx:w_idx + block.num_conv + block.num_torgb, :])
+        #     w_idx += block.num_conv
+        #
+        # x = img = None
+        # for res, cur_ws in zip(self.block_resolutions, block_ws):
+        #     block = getattr(self, f'b{res}')
+        #     x, img = block(x, img, cur_ws, **block_kwargs)
 
-        x = img = None
-        for res, cur_ws in zip(self.block_resolutions, block_ws):
-            block = getattr(self, f'b{res}')
-            x, img = block(x, img, cur_ws, **block_kwargs)
-        return img
+        fused_modconv = False
+        layer_kwargs = {}
+
+        # x = img = None
+        xs = []
+        imgs = []
+        synthesisLayer_img2s = []
+        synthesisLayer_styless = []
+        i = 0
+        conv_i = 0
+        torgb_i = 0
+        # batch_size = ws.shape[0]
+        batch_size = ws[0].shape[0]
+        self.start_i = []
+        self.end_i = []
+        for block_idx, res in enumerate(self.block_resolutions):
+            temp_x = []
+            temp_img = []
+            in_channels = self.channels_dict[res // 2] if res > 4 else 0
+            is_last = self.is_lasts[block_idx]
+            architecture = self.architectures[block_idx]
+
+            if in_channels == 0:
+                # x = paddle.cast(self.const, dtype=dtype)
+                x0 = self.const
+                x1 = x0.unsqueeze(0).tile([batch_size, 1, 1, 1])
+                temp_x.append(x0)
+                temp_x.append(x1)
+                img0 = None
+                temp_img.append(img0)
+            else:
+                # x = paddle.cast(x, dtype=dtype)
+                img0 = imgs[-1][-1]
+                x0 = xs[-1][-1]
+                temp_x.append(x0)
+                temp_img.append(img0)
+
+            self.start_i.append(i)
+            # Main layers.
+            if in_channels == 0:
+                # x2, img_2, styles = self.convs[conv_i](x1, ws[:, i], fused_modconv=fused_modconv, **layer_kwargs)
+                x2 = self.convs[conv_i](x1, ws[i], fused_modconv=fused_modconv, **layer_kwargs)
+                conv_i += 1
+                i += 1
+                temp_x.append(x2)
+            # elif self.architecture == 'resnet':
+            #     y = self.skip(x, gain=np.sqrt(0.5))
+            #     x = self.conv0(x, ws[:, i + 1], fused_modconv=fused_modconv, **layer_kwargs)
+            #     x = self.conv1(x, ws[:, i + 1], fused_modconv=fused_modconv, gain=np.sqrt(0.5), **layer_kwargs)
+            #     x = y.add_(x)
+            else:
+                # x1, img_2, styles = self.convs[conv_i](x0, ws[:, i], fused_modconv=fused_modconv, **layer_kwargs)
+                x1 = self.convs[conv_i](x0, ws[i], fused_modconv=fused_modconv, **layer_kwargs)
+                i += 1
+                # x2, img_2, styles = self.convs[conv_i + 1](x1, ws[:, i], fused_modconv=fused_modconv, **layer_kwargs)
+                x2 = self.convs[conv_i + 1](x1, ws[i], fused_modconv=fused_modconv, **layer_kwargs)
+                i += 1
+                conv_i += 2
+                temp_x.append(x1)
+                temp_x.append(x2)
+
+            # ToRGB.
+            if img0 is not None:
+                img1 = upsample2d(img0, getattr(self, f"resample_filter_{block_idx}"))
+            else:
+                img1 = None
+            temp_img.append(img1)
+            if is_last or architecture == 'skip':
+                # y = self.torgbs[torgb_i](x2, ws[:, i], fused_modconv=fused_modconv)
+                y = self.torgbs[torgb_i](x2, ws[i], fused_modconv=fused_modconv)
+                self.end_i.append(i)
+                torgb_i += 1
+                # y = paddle.cast(y, dtype=paddle.float32)
+                img2 = img1 + y if img1 is not None else y
+                temp_img.append(img2)
+            xs.append(temp_x)
+            imgs.append(temp_img)
+        # return img2, xs, imgs, synthesisLayer_img2s, synthesisLayer_styless
+        return img2
 
 
 
