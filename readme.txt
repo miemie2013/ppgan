@@ -1,4 +1,8 @@
 
+modulated_conv2d
+conv2d_resample
+upfirdn2d
+_conv2d_wrapper
 
 
 ======================== StyleGANv2_ADA ========================

@@ -213,6 +213,7 @@ def _conv2d_wrapper(x, w, stride=1, padding=0, groups=1, transpose=False, flip_w
     # Flip weight if requested.
     if not flip_weight: # conv2d() actually performs correlation (flip_weight=True) not convolution (flip_weight=False).
         w = w.flip([2, 3])
+    w_flip = w
 
     # Workaround performance pitfall in cuDNN 8.0.5, triggered when using
     # 1x1 kernel + memory_format=channels_last + less than 64 channels.
@@ -231,9 +232,147 @@ def _conv2d_wrapper(x, w, stride=1, padding=0, groups=1, transpose=False, flip_w
 
     # Otherwise => execute using conv2d_gradfix.
     if transpose:
-        return F.conv2d_transpose(x, weight=w, bias=None, stride=stride, padding=padding, output_padding=0, groups=groups, dilation=1)
+        out = F.conv2d_transpose(x, weight=w, bias=None, stride=stride, padding=padding, output_padding=0, groups=groups, dilation=1)
+        return out, w_flip
     else:
-        return F.conv2d(x, weight=w, bias=None, stride=stride, padding=padding, dilation=1, groups=groups)
+        out = F.conv2d(x, weight=w, bias=None, stride=stride, padding=padding, dilation=1, groups=groups)
+        return out, w_flip
+
+def _conv2d_wrapper_grad(dloss_dout, out, temp_tensors, x, w, stride=1, padding=0, groups=1, transpose=False, flip_weight=True):
+    """Wrapper for the underlying `conv2d()` and `conv_transpose2d()` implementations.
+    """
+    out_channels, in_channels_per_group, kh, kw = w.shape
+
+    # Workaround performance pitfall in cuDNN 8.0.5, triggered when using
+    # 1x1 kernel + memory_format=channels_last + less than 64 channels.
+    if kw == 1 and kh == 1 and stride == 1 and padding in [0, [0, 0], (0, 0)] and not transpose:
+        if x.shape[2] * x.shape[3] == 1 and min(out_channels, in_channels_per_group) < 64:
+            if out_channels <= 4 and groups == 1:
+                raise NotImplementedError("downy \'{}\' is not implemented.".format('aaaaa'))
+            else:
+                raise NotImplementedError("downy \'{}\' is not implemented.".format('aaaaa'))
+            return x
+
+    # Otherwise => execute using conv2d_gradfix.
+    if transpose:
+        pass
+    else:
+        pass
+
+    # Flip weight if requested.
+    if not flip_weight: # conv2d() actually performs correlation (flip_weight=True) not convolution (flip_weight=False).
+        w = w.flip([2, 3])
+    return 1
+
+
+
+class Conv2D_Grad(nn.Layer):
+    def __init__(self, aaaaaa=1):
+        super().__init__()
+        self.aaaaaa = aaaaaa
+        self.cfg = {}
+
+    def forward(self, dloss_dout, out, x,
+           weight,
+           bias=None,
+           stride=1,
+           padding=0,
+           dilation=1,
+           groups=1):
+        if dilation != 1:
+            raise NotImplementedError("dilation \'{}\' is not implemented.".format(dilation))
+
+
+        # 求loss对卷积层的输入的偏导数。
+        # https://github.com/miemie2013/Pure_Python_Deep_Learning  提供技术支持。
+        conv_out = out
+        N, C, H, W = x.shape
+        N, out_C, out_H, out_W = conv_out.shape
+        w = weight      # [out_C, in_C, kH, kW]
+        out_C, in_C, kH, kW = w.shape
+
+        w_t = paddle.reshape(w, (out_C, in_C*kH*kW))   # [out_C, in_C*kH*kW]
+        w_t = paddle.transpose(w_t, [1, 0])   # [in_C*kH*kW, out_C]
+        w_t = paddle.reshape(w_t, (in_C*kH*kW, out_C, 1, 1))   # [in_C*kH*kW, out_C, 1, 1]
+        dx = F.conv2d(dloss_dout, w_t, bias=None, stride=1, padding=0)   # [N, in_C*kH*kW, out_H, out_W]
+        dx = paddle.reshape(dx, (-1, in_C, kH, kW, out_H, out_W))   # [N, in_C, kH, kW, out_H, out_W]
+
+        # 强无敌的gather_nd()。
+        pad_H = H + padding * 2
+        pad_W = W + padding * 2
+        dx = paddle.transpose(dx, [0, 1, 4, 2, 5, 3])  # [N, in_C, out_H, kH, out_W, kW]
+        dx = paddle.reshape(dx, (-1, in_C, out_H * kH, out_W * kW))  # [N, in_C, out_H*kH, out_W*kW]
+        dx = paddle.transpose(dx, [2, 3, 0, 1])  # [out_H*kH, out_W*kW, N, in_C]
+
+        # 统计dX里每个位置的元素是由dx里哪些元素求和得到。
+        # dX形状为[N, in_C, pad_H, pad_W]，是卷积层输入(pad之后的输入)的梯度。
+        # dx形状为[N, in_C, out_H*kH, out_W*kW]，是卷积层输入的临时梯度。
+        key = (stride, padding, dilation, groups)
+        if key not in self.cfg.keys():
+            dic = {}
+            max_len = 0
+            for i in range(out_H):
+                for j in range(out_W):
+                    for i2 in range(kH):
+                        for j2 in range(kW):
+                            # 遍历dx里每一个梯度
+                            dx_x = j * kW + j2
+                            dx_y = i * kH + i2
+                            # 该梯度应该加到dX上的位置
+                            dX_x = j * stride + j2
+                            dX_y = i * stride + i2
+                            key = 'X(%d,%d)' % (dX_y, dX_x)
+                            if key not in dic:
+                                dic[key] = ['d(%d,%d)' % (dx_y, dx_x)]
+                            else:
+                                dic[key].append('d(%d,%d)' % (dx_y, dx_x))
+            dx_pos = dic   # dX里每一个位置的元素应该由dx里哪些位置的梯度求和得到。
+            for key in dx_pos.keys():
+                value = dic[key]
+                len_ = len(value)
+                if len_ > max_len:
+                    max_len = len_
+            special_inds = np.zeros((pad_H, pad_W, max_len, 2), np.int32)
+            special_mask = np.zeros((pad_H, pad_W, max_len, 1), np.float32)
+
+            # 先模拟一次可变形卷积核滑动，填入可变形卷积需要的offset和mask
+            for i in range(pad_H):
+                for j in range(pad_W):
+                    key = 'X(%d,%d)' % (i, j)
+                    if key not in dx_pos.keys():
+                        continue
+                    value = dx_pos[key]
+                    p = 0
+                    for v in value:
+                        dx_yx = v[2:-1].split(',')
+                        dx_y = int(dx_yx[0])
+                        dx_x = int(dx_yx[1])
+                        special_inds[i, j, p, 0] = dx_y
+                        special_inds[i, j, p, 1] = dx_x
+                        special_mask[i, j, p, 0] = 1.0
+                        p += 1
+            cfg = [dx_pos, max_len, special_inds, special_mask]
+            self.cfg[key] = cfg
+        cfg = self.cfg[key]
+        dx_pos = cfg[0]
+        max_len = cfg[1]
+        special_inds = cfg[2]
+        special_mask = cfg[3]
+        ytxt = paddle.to_tensor(special_inds)
+        mask = paddle.to_tensor(special_mask)
+        ytxt = paddle.reshape(ytxt, (pad_H * pad_W * max_len, 2))  # [pad_H * pad_W * max_len, 2]
+        mask = paddle.reshape(mask, (pad_H * pad_W * max_len, 1, 1))  # [pad_H * pad_W * max_len, 1, 1]
+        y1x1_int = paddle.cast(ytxt, 'int32')
+        y1x1_int.stop_gradient = True
+        mask.stop_gradient = True
+        dX = paddle.gather_nd(dx, y1x1_int)  # [out_H*kH, out_W*kW, N, in_C] -> [pad_H * pad_W * max_len, N, in_C]
+        dX *= mask  # [pad_H * pad_W * max_len, N, in_C]     空位处乘以0
+        dX = paddle.reshape(dX, (pad_H, pad_W, max_len, N, in_C))   # [pad_H, pad_W, max_len, N, in_C]
+        dX = paddle.sum(dX, axis=[2])       # [pad_H, pad_W, N, in_C]
+        dX = paddle.transpose(dX, [2, 3, 0, 1])   # [N, in_C, pad_H, pad_W]
+        dX = dX[:, :, padding:padding + H, padding:padding + W]
+        return dX
+
 
 def _parse_scaling(scaling):
     # scaling 一变二
@@ -854,11 +993,11 @@ class ToRGBLayer(nn.Layer):
         self.grad_layer.x2 = x2.detach()
         b = paddle.cast(self.bias, dtype=x.dtype)
         self.grad_layer.b = b
-        out, gain_x2, act_x2, x2_add_b = bias_act(x2, b, clamp=self.conv_clamp)
+        out, temp_tensors = bias_act(x2, b, clamp=self.conv_clamp)
+        self.grad_layer.gain_x2 = temp_tensors['gain_x'].detach()
+        self.grad_layer.act_x2 = temp_tensors['act_x'].detach()
+        self.grad_layer.x2_add_b = temp_tensors['x_add_b'].detach()
         self.grad_layer.out = out.detach()
-        self.grad_layer.gain_x2 = gain_x2.detach()
-        self.grad_layer.act_x2 = act_x2.detach()
-        self.grad_layer.x2_add_b = x2_add_b.detach()
         return out
 
 class ToRGBLayer_Grad(nn.Layer):
@@ -879,7 +1018,11 @@ class ToRGBLayer_Grad(nn.Layer):
         gain_x2 = self.gain_x2
         act_x2 = self.act_x2
         x2_add_b = self.x2_add_b
-        dloss_dx2 = bias_act_grad(dloss_dout, out, gain_x2, act_x2, x2_add_b, b=b, clamp=self.conv_clamp)
+        temp_tensors = {}
+        temp_tensors['gain_x'] = gain_x2
+        temp_tensors['act_x'] = act_x2
+        temp_tensors['x_add_b'] = x2_add_b
+        dloss_dx2 = bias_act_grad(dloss_dout, out, temp_tensors, b=b, clamp=self.conv_clamp)
         return dloss_dx2
 
 
