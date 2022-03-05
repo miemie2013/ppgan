@@ -27,12 +27,12 @@ def F_conv2d(x, w, b, stride, padding, groups=1):
         for j in range(out_W):   # j是横坐标
             ori_x = j*stride   # 卷积核在pad_x中的横坐标，等差数列，公差是stride
             ori_y = i*stride   # 卷积核在pad_x中的纵坐标，等差数列，公差是stride
-            part_x = pad_x[:, :, ori_y:ori_y+kH, ori_x:ori_x+kW]   # 截取卷积核所处的位置的像素 [N, C, kH, kW]
-            part_x = np.reshape(part_x, (N, groups, 1, c, kH, kW))      # [N, groups, 1, c, kH, kW]。
-            exp_w = np.reshape(w, (1, groups, oc, c, kH, kW))      # 卷积核，[1, groups, oc, c, kH, kW]。
-            mul = part_x * exp_w   # 卷积核和exp_part_x相乘，[N, groups, oc, c, kH, kW]。
+            part_x = pad_x[:, :, ori_y:ori_y+kH, ori_x:ori_x+kW]    # 截取卷积核所处的位置的像素 [N, C, kH, kW]
+            part_x = np.reshape(part_x, (N, groups, 1, c, kH, kW))  # 像素块通道分groups组    ， [N, groups, 1, c, kH, kW]。
+            exp_w = np.reshape(w, (1, groups, oc, c, kH, kW))       # 卷积核个数out_C分groups组，[1, groups, oc, c, kH, kW]。
+            mul = part_x * exp_w                                    # 像素块和卷积核相乘，        [N, groups, oc, c, kH, kW]。
             mul = np.sum(mul, axis=(3, 4, 5))       # 后3维求和，[N, groups, oc]。
-            mul = np.reshape(mul, (N, out_C))       # 后3维求和，[N, out_C]。
+            mul = np.reshape(mul, (N, out_C))       # [N, out_C]。
             if b is not None:
                 mul += b    # 加上偏移，[N, out_C]。
             # 将得到的新像素写进out的对应位置
