@@ -10,10 +10,11 @@ from ppgan.models.generators.generator_styleganv2ada import Conv2D_Grad
 def F_conv2d(x, w, b, stride, padding, groups=1):
     # 卷积层推理时的前向传播。
     N, C, H, W = x.shape
+    g = groups
     assert (C % groups == 0), "(C % groups == 0)"
     out_C, c, kH, kW = w.shape    # c = C // groups
     assert (out_C % groups == 0), "(out_C % groups == 0)"
-    oc = out_C // groups
+    oc = out_C // g
     out_W = (W+2*padding-(kW-1)) // stride
     out_H = (H+2*padding-(kH-1)) // stride
     out = np.zeros((N, out_C, out_H, out_W), np.float32)
@@ -27,11 +28,11 @@ def F_conv2d(x, w, b, stride, padding, groups=1):
         for j in range(out_W):   # j是横坐标
             ori_x = j*stride   # 卷积核在pad_x中的横坐标，等差数列，公差是stride
             ori_y = i*stride   # 卷积核在pad_x中的纵坐标，等差数列，公差是stride
-            part_x = pad_x[:, :, ori_y:ori_y+kH, ori_x:ori_x+kW]    # 截取卷积核所处的位置的像素 [N, C, kH, kW]
-            part_x = np.reshape(part_x, (N, groups, 1, c, kH, kW))  # 像素块通道分groups组    ， [N, groups, 1, c, kH, kW]。
-            exp_w = np.reshape(w, (1, groups, oc, c, kH, kW))       # 卷积核个数out_C分groups组，[1, groups, oc, c, kH, kW]。
-            mul = part_x * exp_w                                    # 像素块和卷积核相乘，        [N, groups, oc, c, kH, kW]。
-            mul = np.sum(mul, axis=(3, 4, 5))       # 后3维求和，[N, groups, oc]。
+            part_x = pad_x[:, :, ori_y:ori_y+kH, ori_x:ori_x+kW]    # 截取卷积核所处的位置的像素块 [N, C, kH, kW]
+            part_x = np.reshape(part_x, (N, g, 1, c, kH, kW))  # 像素块通道分g组    ， [N, g, 1, c, kH, kW]。
+            exp_w = np.reshape(w, (1, g, oc, c, kH, kW))       # 卷积核个数out_C分g组，[1, g, oc, c, kH, kW]。
+            mul = part_x * exp_w                               # 像素块和卷积核相乘，   [N, g, oc, c, kH, kW]。
+            mul = np.sum(mul, axis=(3, 4, 5))       # 后3维求和，[N, g, oc]。
             mul = np.reshape(mul, (N, out_C))       # [N, out_C]。
             if b is not None:
                 mul += b    # 加上偏移，[N, out_C]。
@@ -61,7 +62,7 @@ for batch_idx in range(20):
 
     y = F_conv2d(x=x, w=w, b=bias, stride=stride, padding=padding, groups=groups)
 
-    aaaaaa = y
-    ddd = np.sum((y_pytorch - aaaaaa) ** 2)
+    y_paddle = y
+    ddd = np.sum((y_pytorch - y_paddle) ** 2)
     print('ddd=%.6f' % ddd)
 print()
