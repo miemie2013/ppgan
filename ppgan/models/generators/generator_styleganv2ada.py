@@ -267,9 +267,8 @@ def _conv2d_wrapper_grad(dloss_dout, out, temp_tensors, x, w, stride=1, padding=
 
 
 class Conv2D_Grad(nn.Layer):
-    def __init__(self, aaaaaa=1):
+    def __init__(self):
         super().__init__()
-        self.aaaaaa = aaaaaa
         self.cfg = {}
 
     def forward(self, dloss_dout, out, x,
@@ -286,15 +285,18 @@ class Conv2D_Grad(nn.Layer):
         # 求loss对卷积层的输入的偏导数。
         # https://github.com/miemie2013/Pure_Python_Deep_Learning  提供技术支持。
         conv_out = out
-        N, C, H, W = x.shape
+        N, in_C, H, W = x.shape
         N, out_C, out_H, out_W = conv_out.shape
-        w = weight      # [out_C, in_C, kH, kW]
-        out_C, in_C, kH, kW = w.shape
+        w = weight      # [out_C, c, kH, kW]
+        out_C, c, kH, kW = w.shape
+        oc = out_C // groups
 
-        w_t = paddle.reshape(w, (out_C, in_C*kH*kW))   # [out_C, in_C*kH*kW]
-        w_t = paddle.transpose(w_t, [1, 0])   # [in_C*kH*kW, out_C]
-        w_t = paddle.reshape(w_t, (in_C*kH*kW, out_C, 1, 1))   # [in_C*kH*kW, out_C, 1, 1]
-        dx = F.conv2d(dloss_dout, w_t, bias=None, stride=1, padding=0)   # [N, in_C*kH*kW, out_H, out_W]
+        w_t = paddle.reshape(w, (out_C, c*kH*kW))   # [out_C, c*kH*kW]
+        w_t = paddle.transpose(w_t, [1, 0])   # [c*kH*kW, out_C]
+        w_t = paddle.reshape(w_t, (c*kH*kW, groups, oc, 1, 1))   # [c*kH*kW, groups, oc, 1, 1]
+        w_t = paddle.transpose(w_t, [1, 0, 2, 3, 4])   # [groups, c*kH*kW, oc, 1, 1]
+        w_t = paddle.reshape(w_t, (groups*c*kH*kW, oc, 1, 1))   # [groups*c*kH*kW, oc, 1, 1]
+        dx = F.conv2d(dloss_dout, w_t, bias=None, stride=1, padding=0, groups=groups)   # [N, groups*c*kH*kW, out_H, out_W]
         dx = paddle.reshape(dx, (-1, in_C, kH, kW, out_H, out_W))   # [N, in_C, kH, kW, out_H, out_W]
 
         # 强无敌的gather_nd()。

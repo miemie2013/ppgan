@@ -35,11 +35,11 @@ for batch_idx in range(20):
     # aaa = paddle.reshape(aaa, (N, groups, out_C, out_H, out_W))
     # y = paddle.mean(aaa, axis=1)
 
-    dy_dx = paddle.grad(outputs=[y.sum()], inputs=[x], create_graph=True)[0]
-    dy_dw = paddle.grad(outputs=[y.sum()], inputs=[w], create_graph=True)[0]
-    # dysum_dy = paddle.ones(y.shape, dtype=paddle.float32)
+    # dy_dx = paddle.grad(outputs=[y.sum()], inputs=[x], create_graph=True)[0]
+    # dy_dw = paddle.grad(outputs=[y.sum()], inputs=[w], create_graph=True)[0]
+    dysum_dy = paddle.ones(y.shape, dtype=paddle.float32)
     # dy_dx, dy_dw = grad_layer(dysum_dy, x=x, weight=w, bias=bias, stride=stride, padding=padding, dilation=dilation, groups=groups)
-    # dy_dx = grad_layer(dysum_dy, y, x=x, weight=w, bias=bias, stride=stride, padding=padding, dilation=dilation, groups=groups)
+    dy_dx = grad_layer(dysum_dy, y, x=x, weight=w, bias=bias, stride=stride, padding=padding, dilation=dilation, groups=groups)
 
     aaaaaa = y.numpy()
     ddd = np.sum((y_pytorch - aaaaaa) ** 2)
@@ -49,7 +49,7 @@ for batch_idx in range(20):
     ddd = np.sum((dy_dx_pytorch - aaaaaa) ** 2)
     print('ddd=%.6f' % ddd)
 
-    aaaaaa = dy_dw.numpy()
-    ddd = np.sum((dy_dw_pytorch - aaaaaa) ** 2)
-    print('ddd=%.6f' % ddd)
+    # aaaaaa = dy_dw.numpy()
+    # ddd = np.sum((dy_dw_pytorch - aaaaaa) ** 2)
+    # print('ddd=%.6f' % ddd)
 print()
