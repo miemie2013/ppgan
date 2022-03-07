@@ -222,12 +222,12 @@ for batch_idx in range(8):
     w = paddle.to_tensor(w)
     w.stop_gradient = False
 
-    y, w_flip = _conv2d_wrapper(x=x, w=w, stride=stride, padding=padding, groups=groups, transpose=transpose, flip_weight=flip_weight)
+    y = _conv2d_wrapper(x=x, w=w, stride=stride, padding=padding, groups=groups, transpose=transpose, flip_weight=flip_weight)
 
     # dy_dx = paddle.grad(outputs=[y.sum()], inputs=[x], create_graph=True)[0]
     # dy_dw = paddle.grad(outputs=[y.sum()], inputs=[w], create_graph=True)[0]
     dysum_dy = paddle.ones(y.shape, dtype=paddle.float32)
-    dy_dx = _conv2d_wrapper_grad(dysum_dy, w_flip, x=x, w=w, stride=stride, padding=padding, groups=groups, transpose=transpose, flip_weight=flip_weight)
+    dy_dx = _conv2d_wrapper_grad(dysum_dy, x=x, w=w, stride=stride, padding=padding, groups=groups, transpose=transpose, flip_weight=flip_weight)
 
     aaaaaa = y.numpy()
     ddd = np.sum((y_pytorch - aaaaaa) ** 2)

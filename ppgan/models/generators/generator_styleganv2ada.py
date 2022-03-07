@@ -213,7 +213,6 @@ def _conv2d_wrapper(x, w, stride=1, padding=0, groups=1, transpose=False, flip_w
     # Flip weight if requested.
     if not flip_weight: # conv2d() actually performs correlation (flip_weight=True) not convolution (flip_weight=False).
         w = w.flip([2, 3])
-    w_flip = w
 
     # Workaround performance pitfall in cuDNN 8.0.5, triggered when using
     # 1x1 kernel + memory_format=channels_last + less than 64 channels.
@@ -233,20 +232,25 @@ def _conv2d_wrapper(x, w, stride=1, padding=0, groups=1, transpose=False, flip_w
                 # w = w.to(memory_format=torch.contiguous_format)
                 x = F.conv2d(x, w, groups=groups)
             # return x.to(memory_format=torch.channels_last)
-            return x, w_flip
+            return x
 
     # Otherwise => execute using conv2d_gradfix.
     if transpose:
         out = F.conv2d_transpose(x, weight=w, bias=None, stride=stride, padding=padding, output_padding=0, groups=groups, dilation=1)
-        return out, w_flip
+        return out
     else:
         out = F.conv2d(x, weight=w, bias=None, stride=stride, padding=padding, dilation=1, groups=groups)
-        return out, w_flip
+        return out
 
-def _conv2d_wrapper_grad(dloss_dout, w_flip, x, w, stride=1, padding=0, groups=1, transpose=False, flip_weight=True):
+def _conv2d_wrapper_grad(dloss_dout, x, w, stride=1, padding=0, groups=1, transpose=False, flip_weight=True):
     """Wrapper for the underlying `conv2d()` and `conv_transpose2d()` implementations.
     """
     out_channels, in_channels_per_group, kh, kw = w.shape
+
+    # Flip weight if requested.
+    if not flip_weight: # conv2d() actually performs correlation (flip_weight=True) not convolution (flip_weight=False).
+        w = w.flip([2, 3])
+    w_flip = w
 
     # Workaround performance pitfall in cuDNN 8.0.5, triggered when using
     # 1x1 kernel + memory_format=channels_last + less than 64 channels.
@@ -457,6 +461,62 @@ def upfirdn2d(x, filter, up=1, down=1, padding=0, flip_filter=False, gain=1):
     else:
         raise NotImplementedError("downy \'{}\' is not implemented.".format(downy))
     return x
+
+
+def upfirdn2d_grad(dloss_dout, x, filter, up=1, down=1, padding=0, flip_filter=False, gain=1):
+    if filter is None:
+        filter = paddle.ones([1, 1], dtype=paddle.float32)
+    batch_size, num_channels, in_height, in_width = x.shape
+    upx, upy = _parse_scaling(up)        # scaling 一变二
+    downx, downy = _parse_scaling(down)  # scaling 一变二
+    padx0, padx1, pady0, pady1 = _parse_padding(padding)
+
+    # Downsample by throwing away pixels.
+    assert downy == downx
+    if downy == 1:
+        dloss_dx = dloss_dout
+    elif downy == 2:
+        N, C, H, W = x.shape
+        assert H == W
+        pad_height_bottom = 0
+        pad_width_right = 0
+        if H % 2 == 1:
+            pad_height_bottom = 1
+            pad_width_right = 1
+        stride2_kernel = np.zeros((C, 1, 2, 2), dtype=np.float32)
+        stride2_kernel[:, :, 0, 0] = 1.0
+        stride2_kernel = paddle.to_tensor(stride2_kernel)
+        stride2_kernel.stop_gradient = True
+        dloss_dx = F.conv2d_transpose(x=dloss_dout, weight=stride2_kernel, stride=2, groups=C,
+                                      padding=[[0, 0], [0, 0], [0, pad_height_bottom], [0, pad_width_right]], output_padding=0)
+    else:
+        raise NotImplementedError("downy \'{}\' is not implemented.".format(downy))
+
+    # Setup filter.
+    filter = filter * (gain ** (filter.ndim / 2))
+    assert filter.dtype == x.dtype
+    # filter = paddle.cast(filter, dtype=x.dtype)
+    if not flip_filter:
+        filter = filter.flip(list(range(filter.ndim)))
+
+    # Convolve with the filter.
+    filter = paddle.unsqueeze(filter, [0, 1]).tile([num_channels, 1] + [1] * filter.ndim)
+    if filter.ndim == 4:
+        dloss_dx = F.conv2d_transpose(x=dloss_dx, weight=filter, groups=num_channels, output_padding=0)
+    else:
+        dloss_dx = F.conv2d_transpose(x=dloss_dx, weight=filter.unsqueeze(3), groups=num_channels, output_padding=0)
+        dloss_dx = F.conv2d_transpose(x=dloss_dx, weight=filter.unsqueeze(2), groups=num_channels, output_padding=0)
+
+    # Pad or crop.
+    dloss_dx = F.pad(dloss_dx, [max(-padx0, 0), max(-padx1, 0), max(-pady0, 0), max(-pady1, 0)])
+    dloss_dx = dloss_dx[:, :, max(pady0, 0) : 0-max(pady1, 0), max(padx0, 0) : 0-max(padx1, 0)]
+
+    # Upsample by inserting zeros.
+    dloss_dx = dloss_dx.reshape([batch_size, num_channels, in_height, upy, in_width, upx])
+    dloss_dx = dloss_dx[:, :, :, :1, :, :1]
+    dloss_dx = dloss_dx.reshape([batch_size, num_channels, in_height, in_width])
+
+    return dloss_dx
 
 
 def downsample2d(x, f, down=2, padding=0, flip_filter=False, gain=1):
