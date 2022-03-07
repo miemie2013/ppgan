@@ -47,7 +47,7 @@ for batch_idx in range(20):
     pad_x = F.pad(x, [padding, padding, padding, padding])  # [N, in_C, pad_H, pad_W]
     N, in_C, pad_H, pad_W = pad_x.shape
     pad_x = paddle.transpose(pad_x, [2, 3, 0, 1])  # [N, in_C, pad_H, pad_W] -> [pad_H, pad_W, N, in_C]
-    kerner_center_y, kerner_center_x = paddle.meshgrid([paddle.arange(y.shape[2]), paddle.arange(y.shape[3])])
+    kerner_center_y, kerner_center_x = paddle.meshgrid([paddle.arange(out_H), paddle.arange(out_W)])
     kerner_center_y = kerner_center_y * stride + padding
     kerner_center_x = kerner_center_x * stride + padding
     assert kH == kW
