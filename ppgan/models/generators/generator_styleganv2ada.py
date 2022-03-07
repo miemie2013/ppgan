@@ -220,15 +220,20 @@ def _conv2d_wrapper(x, w, stride=1, padding=0, groups=1, transpose=False, flip_w
     if kw == 1 and kh == 1 and stride == 1 and padding in [0, [0, 0], (0, 0)] and not transpose:
         if x.shape[2] * x.shape[3] == 1 and min(out_channels, in_channels_per_group) < 64:
             if out_channels <= 4 and groups == 1:
-                in_shape = x.shape
-                x = w.squeeze(3).squeeze(2) @ x.reshape([in_shape[0], in_channels_per_group, -1])
-                x = x.reshape([in_shape[0], out_channels, in_shape[2], in_shape[3]])
+                in_shape = x.shape   # [N, C, 1, 1]
+                aaaaaaaa_w = w.squeeze(3).squeeze(2)   # [out_C, C, 1, 1] -> [out_C, C]
+                aaaaaaaa_x = x.reshape([in_shape[0], in_channels_per_group, -1])   # [N, C, 1, 1] -> [N, C, 1]
+                # @运算符表示的是矩阵相乘
+                aaaaaaaa3 = aaaaaaaa_w @ aaaaaaaa_x   # [out_C, C] @ [N, C, 1] = [N, out_C, 1]
+                # aaaaaaaa3 = paddle.matmul(aaaaaaaa_w, aaaaaaaa_x)  # 等价于这一句
+                x = aaaaaaaa3
+                x = x.reshape([in_shape[0], out_channels, in_shape[2], in_shape[3]])   # [N, out_C, 1] -> [N, out_C, 1, 1]
             else:
                 # x = x.to(memory_format=torch.contiguous_format)
                 # w = w.to(memory_format=torch.contiguous_format)
                 x = F.conv2d(x, w, groups=groups)
             # return x.to(memory_format=torch.channels_last)
-            return x
+            return x, w_flip
 
     # Otherwise => execute using conv2d_gradfix.
     if transpose:
@@ -238,7 +243,7 @@ def _conv2d_wrapper(x, w, stride=1, padding=0, groups=1, transpose=False, flip_w
         out = F.conv2d(x, weight=w, bias=None, stride=stride, padding=padding, dilation=1, groups=groups)
         return out, w_flip
 
-def _conv2d_wrapper_grad(dloss_dout, out, temp_tensors, x, w, stride=1, padding=0, groups=1, transpose=False, flip_weight=True):
+def _conv2d_wrapper_grad(dloss_dout, w_flip, x, w, stride=1, padding=0, groups=1, transpose=False, flip_weight=True):
     """Wrapper for the underlying `conv2d()` and `conv_transpose2d()` implementations.
     """
     out_channels, in_channels_per_group, kh, kw = w.shape
@@ -248,21 +253,26 @@ def _conv2d_wrapper_grad(dloss_dout, out, temp_tensors, x, w, stride=1, padding=
     if kw == 1 and kh == 1 and stride == 1 and padding in [0, [0, 0], (0, 0)] and not transpose:
         if x.shape[2] * x.shape[3] == 1 and min(out_channels, in_channels_per_group) < 64:
             if out_channels <= 4 and groups == 1:
-                raise NotImplementedError("downy \'{}\' is not implemented.".format('aaaaa'))
+                dloss_dout = dloss_dout.squeeze(3)   # [N, out_C, 1, 1] -> [N, out_C, 1]
+
+                # loss对输入x的偏导数
+                dloss_dout = paddle.unsqueeze(dloss_dout, 1)      # [N, 1, out_C, 1]
+                dout_dx = w_flip.squeeze(3).squeeze(2)   # [out_C, C, 1, 1] -> [out_C, C]   out对x的偏导数是w_flip。
+                dout_dx = paddle.transpose(dout_dx, [1, 0])   # [out_C, C] -> [C, out_C]
+                dout_dx = paddle.unsqueeze(dout_dx, axis=[0, 3])  # [1, C, out_C, 1]
+                dloss_dx = dloss_dout * dout_dx  # [N, C, out_C, 1]  使用复合函数求导法则（链式法则）
+                dloss_dx = paddle.sum(dloss_dx, axis=[2, 3], keepdim=True)  # [N, C, 1, 1]   把偏移数量那一维求和
             else:
-                raise NotImplementedError("downy \'{}\' is not implemented.".format('aaaaa'))
-            return x
+                dloss_dx = F.conv2d_transpose(x=dloss_dout, weight=w_flip, output_padding=0, groups=groups)
+            return dloss_dx
 
     # Otherwise => execute using conv2d_gradfix.
     if transpose:
-        pass
+        dloss_dx = F.conv2d(x=dloss_dout, weight=w_flip, stride=stride, padding=padding, groups=groups)
     else:
-        pass
+        dloss_dx = F.conv2d_transpose(x=dloss_dout, weight=w_flip, stride=stride, padding=padding, output_padding=0, groups=groups)
 
-    # Flip weight if requested.
-    if not flip_weight: # conv2d() actually performs correlation (flip_weight=True) not convolution (flip_weight=False).
-        w = w.flip([2, 3])
-    return 1
+    return dloss_dx
 
 
 
