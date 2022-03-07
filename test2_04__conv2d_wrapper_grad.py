@@ -49,13 +49,13 @@ for batch_idx in range(8):
     # transpose = True
     # flip_weight = True
 
-    # x_shape = [1, 512, 8, 8]
-    # w_shape = [512, 512, 3, 3]
-    # stride = 1
-    # padding = [1, 1]
-    # groups = 1
-    # transpose = False
-    # flip_weight = True
+    x_shape = [1, 512, 8, 8]
+    w_shape = [512, 512, 3, 3]
+    stride = 1
+    padding = [1, 1]
+    groups = 1
+    transpose = False
+    flip_weight = True
 
     # x_shape = [1, 512, 8, 8]
     # w_shape = [3, 512, 1, 1]
