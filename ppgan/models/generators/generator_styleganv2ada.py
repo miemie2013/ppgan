@@ -276,7 +276,62 @@ def _conv2d_wrapper_grad(dloss_dout, x, w, stride=1, padding=0, groups=1, transp
     else:
         dloss_dx = F.conv2d_transpose(x=dloss_dout, weight=w_flip, stride=stride, padding=padding, output_padding=0, groups=groups)
 
-    return dloss_dx
+        # 求dloss_dW
+        N, out_C, out_H, out_W = dloss_dout.shape
+        out_C, c, kH, kW = w.shape
+        g = groups
+        oc = out_C // g
+        if isinstance(padding, int):
+            padding_h = padding
+            padding_w = padding
+            pad_x = F.pad(x, [padding, padding, padding, padding])  # [N, in_C, pad_H, pad_W]
+        elif isinstance(padding, list):
+            if len(padding) == 2:
+                padding_h = padding[0]
+                padding_w = padding[1]
+                pad_x = F.pad(x, [padding_h, padding_h, padding_w, padding_w])  # [N, in_C, pad_H, pad_W]
+            else:
+                raise NotImplementedError("not implemented.")
+        else:
+            raise NotImplementedError("not implemented.")
+        N, in_C, pad_H, pad_W = pad_x.shape
+        pad_x = paddle.transpose(pad_x, [2, 3, 0, 1])  # [N, in_C, pad_H, pad_W] -> [pad_H, pad_W, N, in_C]
+        pad_x = paddle.reshape(pad_x, (pad_H, pad_W, N, g, c))  # [pad_H, pad_W, N, g, c]
+        kerner_center_y, kerner_center_x = paddle.meshgrid([paddle.arange(out_H), paddle.arange(out_W)])
+        kerner_center_y = kerner_center_y * stride + padding_h
+        kerner_center_x = kerner_center_x * stride + padding_w
+        assert kH == kW
+        if kH == 3:
+            kerner_center_yx_00 = paddle.stack((kerner_center_y - 1, kerner_center_x - 1), 2).cast(dtype='int32')
+            kerner_center_yx_01 = paddle.stack((kerner_center_y - 1, kerner_center_x), 2).cast(dtype='int32')
+            kerner_center_yx_02 = paddle.stack((kerner_center_y - 1, kerner_center_x + 1), 2).cast(dtype='int32')
+            kerner_center_yx_10 = paddle.stack((kerner_center_y, kerner_center_x - 1), 2).cast(dtype='int32')
+            kerner_center_yx_11 = paddle.stack((kerner_center_y, kerner_center_x), 2).cast(dtype='int32')
+            kerner_center_yx_12 = paddle.stack((kerner_center_y, kerner_center_x + 1), 2).cast(dtype='int32')
+            kerner_center_yx_20 = paddle.stack((kerner_center_y + 1, kerner_center_x - 1), 2).cast(dtype='int32')
+            kerner_center_yx_21 = paddle.stack((kerner_center_y + 1, kerner_center_x), 2).cast(dtype='int32')
+            kerner_center_yx_22 = paddle.stack((kerner_center_y + 1, kerner_center_x + 1), 2).cast(dtype='int32')
+            kerner_pos_yx = paddle.stack((kerner_center_yx_00, kerner_center_yx_01, kerner_center_yx_02,
+                                          kerner_center_yx_10, kerner_center_yx_11, kerner_center_yx_12,
+                                          kerner_center_yx_20, kerner_center_yx_21, kerner_center_yx_22),
+                                         0)  # [kH*kW, out_H, out_W, 2]
+        elif kH == 1:
+            kerner_center_yx_00 = paddle.stack((kerner_center_y, kerner_center_x), 2).cast(dtype='int32')
+            kerner_pos_yx = paddle.unsqueeze(kerner_center_yx_00, 0)  # [kH*kW, out_H, out_W, 2]
+        else:
+            raise NotImplementedError("kH \'{}\' is not implemented.".format(kH))
+        kerner_pos_yx = paddle.reshape(kerner_pos_yx, (-1, 2))  # [kH*kW, out_H, out_W, 2] -> [kH*kW*out_H*out_W, 2]
+        kerner_pos_yx.stop_gradient = True
+        dY_dW = paddle.gather_nd(pad_x, kerner_pos_yx)  # [pad_H, pad_W, N, g, c] -> [kH*kW*out_H*out_W, N, g, c]
+        dY_dW = paddle.reshape(dY_dW, (kH, kW, out_H, out_W, N, g, c))        # [kH, kW, out_H, out_W, N, g, c]
+        dY_dW = paddle.transpose(dY_dW, [4, 5, 6, 2, 3, 0, 1])                # [N, g, c, out_H, out_W, kH, kW]
+        dY_dW = paddle.reshape(dY_dW, (N, g, 1, c, out_H, out_W, kH, kW))     # [N, g, 1, c, out_H, out_W, kH, kW]
+        grad = paddle.reshape(dloss_dout, (N, g, oc, 1, out_H, out_W, 1, 1))  # [N, g, oc, 1, out_H, out_W, 1, 1]
+        dloss_dW = grad * dY_dW                                               # [N, g, oc, c, out_H, out_W, kH, kW]
+        dloss_dW = paddle.sum(dloss_dW, axis=[0, 4, 5])                       # [g, oc, c, kH, kW]
+        dloss_dW = paddle.reshape(dloss_dW, (g * oc, c, kH, kW))              # [g*oc, c, kH, kW]
+
+    return dloss_dx, dloss_dW
 
 
 

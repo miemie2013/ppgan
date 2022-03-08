@@ -228,7 +228,7 @@ for batch_idx in range(8):
     # dy_dw = paddle.grad(outputs=[y.sum()], inputs=[w], create_graph=True)[0]
     dysum_dy = paddle.ones(y.shape, dtype=paddle.float32)
     # dy_dx, dy_dw = _conv2d_wrapper_grad(dysum_dy, x=x, w=w, stride=stride, padding=padding, groups=groups, transpose=transpose, flip_weight=flip_weight)
-    dy_dx = _conv2d_wrapper_grad(dysum_dy, x=x, w=w, stride=stride, padding=padding, groups=groups, transpose=transpose, flip_weight=flip_weight)
+    dy_dx, dy_dw = _conv2d_wrapper_grad(dysum_dy, x=x, w=w, stride=stride, padding=padding, groups=groups, transpose=transpose, flip_weight=flip_weight)
 
     aaaaaa = y.numpy()
     ddd = np.sum((y_pytorch - aaaaaa) ** 2)
@@ -238,7 +238,7 @@ for batch_idx in range(8):
     ddd = np.sum((dy_dx_pytorch - dy_dx_paddle) ** 2)
     print('ddd=%.6f' % ddd)
 
-    # dy_dw_paddle = dy_dw.numpy()
-    # ddd = np.sum((dy_dw_pytorch - dy_dw_paddle) ** 2)
-    # print('ddd=%.6f' % ddd)
+    dy_dw_paddle = dy_dw.numpy()
+    ddd = np.sum((dy_dw_pytorch - dy_dw_paddle) ** 2)
+    print('ddd=%.6f' % ddd)
 print()

@@ -15,7 +15,7 @@ for batch_idx in range(20):
     stride = 2
     padding = 1
     dilation = 1
-    groups = 1
+    groups = 32
 
     dy_dx_pytorch = dic2['batch_%.3d.dy_dx'%batch_idx]
     dy_dw_pytorch = dic2['batch_%.3d.dy_dw'%batch_idx]
@@ -44,9 +44,12 @@ for batch_idx in range(20):
     # 求dloss_dW
     N, out_C, out_H, out_W = y.shape
     out_C, c, kH, kW = w.shape
+    g = groups
+    oc = out_C // g
     pad_x = F.pad(x, [padding, padding, padding, padding])  # [N, in_C, pad_H, pad_W]
     N, in_C, pad_H, pad_W = pad_x.shape
     pad_x = paddle.transpose(pad_x, [2, 3, 0, 1])  # [N, in_C, pad_H, pad_W] -> [pad_H, pad_W, N, in_C]
+    pad_x = paddle.reshape(pad_x, (pad_H, pad_W, N, g, c))  # [pad_H, pad_W, N, g, c]
     kerner_center_y, kerner_center_x = paddle.meshgrid([paddle.arange(out_H), paddle.arange(out_W)])
     kerner_center_y = kerner_center_y * stride + padding
     kerner_center_x = kerner_center_x * stride + padding
@@ -71,13 +74,14 @@ for batch_idx in range(20):
         raise NotImplementedError("kH \'{}\' is not implemented.".format(kH))
     kerner_pos_yx = paddle.reshape(kerner_pos_yx, (-1, 2))  # [kH*kW, out_H, out_W, 2] -> [kH*kW*out_H*out_W, 2]
     kerner_pos_yx.stop_gradient = True
-    dY_dW = paddle.gather_nd(pad_x, kerner_pos_yx)  # [pad_H, pad_W, N, in_C] -> [kH*kW*out_H*out_W, N, in_C]
-    dY_dW = paddle.reshape(dY_dW, (kH, kW, out_H, out_W, N, in_C))  # [kH, kW, out_H, out_W, N, in_C]
-    dY_dW = paddle.transpose(dY_dW, [4, 5, 2, 3, 0, 1])             # [N, in_C, out_H, out_W, kH, kW]
-    dY_dW = paddle.reshape(dY_dW, (N, 1, in_C, out_H, out_W, kH, kW))     # [N, 1, in_C, out_H, out_W, kH, kW]
-    grad = paddle.reshape(dysum_dy, (N, out_C, 1, out_H, out_W, 1, 1))    # [N, out_C, 1, out_H, out_W, 1, 1]
-    dloss_dW = grad * dY_dW                                              # [N, out_C, in_C, out_H, out_W, kH, kW]
-    dloss_dW = paddle.sum(dloss_dW, axis=[0, 3, 4])    # [out_C, in_C, kH, kW]
+    dY_dW = paddle.gather_nd(pad_x, kerner_pos_yx)  # [pad_H, pad_W, N, g, c] -> [kH*kW*out_H*out_W, N, g, c]
+    dY_dW = paddle.reshape(dY_dW, (kH, kW, out_H, out_W, N, g, c))  # [kH, kW, out_H, out_W, N, g, c]
+    dY_dW = paddle.transpose(dY_dW, [4, 5, 6, 2, 3, 0, 1])             # [N, g, c, out_H, out_W, kH, kW]
+    dY_dW = paddle.reshape(dY_dW, (N, g, 1, c, out_H, out_W, kH, kW))     # [N, g, 1, c, out_H, out_W, kH, kW]
+    grad = paddle.reshape(dysum_dy, (N, g, oc, 1, out_H, out_W, 1, 1))    # [N, g, oc, 1, out_H, out_W, 1, 1]
+    dloss_dW = grad * dY_dW                                               # [N, g, oc, c, out_H, out_W, kH, kW]
+    dloss_dW = paddle.sum(dloss_dW, axis=[0, 4, 5])    # [g, oc, c, kH, kW]
+    dloss_dW = paddle.reshape(dloss_dW, (g*oc, c, kH, kW))
     dy_dw = dloss_dW
 
     aaaaaa = y.numpy()

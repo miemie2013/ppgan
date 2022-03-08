@@ -11,7 +11,7 @@ for batch_idx in range(20):
     stride = 2
     padding = 1
     dilation = 1
-    groups = 1
+    groups = 32
 
     w = torch.randn([512, 256 // groups, kernel_size, kernel_size])
     x = torch.randn([2, 256, 16, 16])
