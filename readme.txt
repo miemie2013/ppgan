@@ -441,9 +441,9 @@ python applications/tools/animeganv2.py --input_image 'D://PycharmProjects/Paddl
 
 python applications/tools/animeganv2.py --input_image 'D://PycharmProjects/PaddleGAN-develop/yingbb23.png'
 
-python applications/tools/animeganv2.py --input_image yingbb23.png
+python applications/tools/animeganv2.py --input_image epoch00000227_seedidx00000002.png
 
-
+python tools/main.py --config-file configs/animeganv2.yaml --evaluate-only
 
 
 ======================== lap_style ========================
@@ -471,6 +471,9 @@ python applications/tools/lapstyle.py --style ocean --content_img 'D://PycharmPr
 
 星星
 python applications/tools/lapstyle.py --style stars --content_img 'D://PycharmProjects/Paddle-PPYOLO-master/images/test/000000221754.jpg'
+
+
+python applications/tools/lapstyle.py --style stars --content_img 'D://GitHub/ppgan/epoch00000227_seedidx00000002.png'
 
 
 
