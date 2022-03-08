@@ -5,17 +5,62 @@ import numpy as np
 import torch.nn.functional as F
 
 
+
+
 dic = {}
 for batch_idx in range(20):
-    kernel_size = 3
-    stride = 2
-    padding = 1
+    kernel_size = 1
+    stride = 1
+    padding = 0
     output_padding = 0
     dilation = 1
-    groups = 256
+    groups = 1
 
-    w = torch.randn([512, 256 // groups, kernel_size, kernel_size])
-    x = torch.randn([2, 512, 16, 16])
+    kernel_size = 1
+    stride = 2
+    padding = 0
+    output_padding = 0
+    dilation = 1
+    groups = 1
+
+    kernel_size = 3
+    stride = 1
+    padding = 0
+    output_padding = 0
+    dilation = 1
+    groups = 1
+
+    # kernel_size = 3
+    # stride = 2
+    # padding = 0
+    # output_padding = 0
+    # dilation = 1
+    # groups = 1
+
+    # kernel_size = 3
+    # stride = 1
+    # padding = 1
+    # output_padding = 0
+    # dilation = 1
+    # groups = 1
+
+    # kernel_size = 3
+    # stride = 2
+    # padding = 1
+    # output_padding = 0
+    # dilation = 1
+    # groups = 1
+
+    # kernel_size = 3
+    # stride = 2
+    # padding = 1
+    # output_padding = 0
+    # dilation = 1
+    # groups = 2
+
+    w = torch.randn([4, 6 // groups, kernel_size, kernel_size])
+    # x = torch.randn([2, 4, 512, 512])
+    x = torch.randn([2, 4, 2, 2])
     w.requires_grad_(True)
     x.requires_grad_(True)
     bias = None
