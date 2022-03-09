@@ -257,24 +257,152 @@ def _conv2d_wrapper_grad(dloss_dout, x, w, stride=1, padding=0, groups=1, transp
     if kw == 1 and kh == 1 and stride == 1 and padding in [0, [0, 0], (0, 0)] and not transpose:
         if x.shape[2] * x.shape[3] == 1 and min(out_channels, in_channels_per_group) < 64:
             if out_channels <= 4 and groups == 1:
+                N, out_C, _, _ = dloss_dout.shape
+                out_C, C, _, _ = w.shape
                 dloss_dout = dloss_dout.squeeze(3)   # [N, out_C, 1, 1] -> [N, out_C, 1]
 
                 # loss对输入x的偏导数
                 dloss_dout = paddle.unsqueeze(dloss_dout, 1)      # [N, 1, out_C, 1]
-                dout_dx = w_flip.squeeze(3).squeeze(2)   # [out_C, C, 1, 1] -> [out_C, C]   out对x的偏导数是w_flip。
-                dout_dx = paddle.transpose(dout_dx, [1, 0])   # [out_C, C] -> [C, out_C]
+                dout_dx = w_flip.squeeze(3).squeeze(2)            # [out_C, C, 1, 1] -> [out_C, C]   out对x的偏导数是w_flip。
+                dout_dx = paddle.transpose(dout_dx, [1, 0])       # [out_C, C] -> [C, out_C]
                 dout_dx = paddle.unsqueeze(dout_dx, axis=[0, 3])  # [1, C, out_C, 1]
                 dloss_dx = dloss_dout * dout_dx  # [N, C, out_C, 1]  使用复合函数求导法则（链式法则）
                 dloss_dx = paddle.sum(dloss_dx, axis=[2, 3], keepdim=True)  # [N, C, 1, 1]   把偏移数量那一维求和
+
+                # 求dloss_dW
+                in_shape = x.shape   # [N, C, 1, 1]
+                # dout_dW = x.reshape([in_shape[0], in_channels_per_group, -1])   # [N, C, 1, 1] -> [N, C, 1]
+                dout_dW = x   # [N, C, 1, 1]
+                dloss_dW = dloss_dout * dout_dW   # [N, C, out_C, 1]
+                dloss_dW = paddle.sum(dloss_dW, axis=[0, 3])   # [C, out_C]
+                dloss_dW = paddle.transpose(dloss_dW, [1, 0])  # [out_C, C]
+                dloss_dW = paddle.reshape(dloss_dW, (out_C, C, 1, 1))  # [out_C, C, 1, 1]
             else:
                 dloss_dx = F.conv2d_transpose(x=dloss_dout, weight=w_flip, output_padding=0, groups=groups)
-            return dloss_dx
+
+                # 求dloss_dW
+                N, out_C, out_H, out_W = dloss_dout.shape
+                out_C, c, kH, kW = w.shape
+                g = groups
+                oc = out_C // g
+                if isinstance(padding, int):
+                    pad_x = F.pad(x, [padding, padding, padding, padding])  # [N, in_C, pad_H, pad_W]
+                elif isinstance(padding, list):
+                    if len(padding) == 2:
+                        padding_h = padding[0]
+                        padding_w = padding[1]
+                        pad_x = F.pad(x, [padding_h, padding_h, padding_w, padding_w])  # [N, in_C, pad_H, pad_W]
+                    else:
+                        raise NotImplementedError("not implemented.")
+                else:
+                    raise NotImplementedError("not implemented.")
+                N, in_C, pad_H, pad_W = pad_x.shape
+                pad_x = paddle.transpose(pad_x, [2, 3, 0, 1])  # [N, in_C, pad_H, pad_W] -> [pad_H, pad_W, N, in_C]
+                pad_x = paddle.reshape(pad_x, (pad_H, pad_W, N, g, c))  # [pad_H, pad_W, N, g, c]
+                kerner_center_y, kerner_center_x = paddle.meshgrid([paddle.arange(out_H), paddle.arange(out_W)])
+                kerner_center_y = kerner_center_y * stride + (kH - 1) // 2
+                kerner_center_x = kerner_center_x * stride + (kW - 1) // 2
+                assert kH == kW
+                if kH == 1:
+                    kerner_center_yx_00 = paddle.stack((kerner_center_y, kerner_center_x), 2).cast(dtype='int32')
+                    kerner_pos_yx = paddle.unsqueeze(kerner_center_yx_00, 0)  # [kH*kW, out_H, out_W, 2]
+                else:
+                    raise NotImplementedError("kH \'{}\' is not implemented.".format(kH))
+                kerner_pos_yx = paddle.reshape(kerner_pos_yx,
+                                               (-1, 2))  # [kH*kW, out_H, out_W, 2] -> [kH*kW*out_H*out_W, 2]
+                kerner_pos_yx.stop_gradient = True
+                dY_dW = paddle.gather_nd(pad_x,
+                                         kerner_pos_yx)  # [pad_H, pad_W, N, g, c] -> [kH*kW*out_H*out_W, N, g, c]
+                dY_dW = paddle.reshape(dY_dW, (kH, kW, out_H, out_W, N, g, c))  # [kH, kW, out_H, out_W, N, g, c]
+                dY_dW = paddle.transpose(dY_dW, [4, 5, 6, 2, 3, 0, 1])  # [N, g, c, out_H, out_W, kH, kW]
+                dY_dW = paddle.reshape(dY_dW, (N, g, 1, c, out_H, out_W, kH, kW))  # [N, g, 1, c, out_H, out_W, kH, kW]
+                grad = paddle.reshape(dloss_dout,
+                                      (N, g, oc, 1, out_H, out_W, 1, 1))  # [N, g, oc, 1, out_H, out_W, 1, 1]
+                # 旧的方案，用逐元素相乘，显存爆炸
+                # dloss_dW = grad * dY_dW                                               # [N, g, oc, c, out_H, out_W, kH, kW]
+                # dloss_dW = paddle.sum(dloss_dW, axis=[0, 4, 5])    # [g, oc, c, kH, kW]
+                # dloss_dW = paddle.reshape(dloss_dW, (g*oc, c, kH, kW))
+                # 新的方案，用1x1卷积等价实现，显存不爆炸。
+                dY_dW = paddle.transpose(dY_dW, [3, 1, 2, 0, 4, 5, 6, 7])  # [c, g, 1, N, out_H, out_W, kH, kW]
+                grad = paddle.transpose(grad, [3, 1, 2, 0, 4, 5, 6, 7])  # [1, g, oc, N, out_H, out_W, 1, 1]
+                dY_dW = paddle.reshape(dY_dW, (c, g * N * out_H * out_W, kH, kW))
+                grad = paddle.reshape(grad, (g * oc, N * out_H * out_W, 1, 1))
+                dloss_dW = F.conv2d(dY_dW, grad, groups=g)  # [c, g*oc, kH, kW]
+                dloss_dW = paddle.transpose(dloss_dW, [1, 0, 2, 3])  # [g*oc, c, kH, kW]
+            if not flip_weight:
+                dloss_dW = dloss_dW.flip([2, 3])
+            return dloss_dx, dloss_dW
 
     # Otherwise => execute using conv2d_gradfix.
     if transpose:
         dloss_dx = F.conv2d(x=dloss_dout, weight=w_flip, stride=stride, padding=padding, groups=groups)
+
+        # 求dloss_dW
+        N, in_C, in_H, in_W = x.shape
+        N, out_C, out_H, out_W = dloss_dout.shape
+        in_C, oc, kH, kW = w.shape
+        g = groups
+        c = in_C // g
+
+        if isinstance(padding, int):
+            pad_dloss_dy = F.pad(dloss_dout, [padding, padding, padding, padding])  # [N, in_C, pad_H, pad_W]
+        elif isinstance(padding, list):
+            if len(padding) == 2:
+                padding_h = padding[0]
+                padding_w = padding[1]
+                pad_dloss_dy = F.pad(dloss_dout, [padding_h, padding_h, padding_w, padding_w])  # [N, in_C, pad_H, pad_W]
+            else:
+                raise NotImplementedError("not implemented.")
+        else:
+            raise NotImplementedError("not implemented.")
+        N, out_C, pad_H, pad_W = pad_dloss_dy.shape
+        pad_dloss_dy = paddle.transpose(pad_dloss_dy,
+                                        [2, 3, 0, 1])  # [N, out_C, pad_H, pad_W] -> [pad_H, pad_W, N, out_C]
+        pad_dloss_dy = paddle.reshape(pad_dloss_dy, (pad_H, pad_W, N, g, oc))  # [pad_H, pad_W, N, g, oc]
+        kerner_center_y, kerner_center_x = paddle.meshgrid([paddle.arange(in_H), paddle.arange(in_W)])
+        kerner_center_y = kerner_center_y * stride + (kH - 1) // 2
+        kerner_center_x = kerner_center_x * stride + (kW - 1) // 2
+        assert kH == kW
+        if kH == 3:
+            kerner_center_yx_00 = paddle.stack((kerner_center_y - 1, kerner_center_x - 1), 2).cast(dtype='int32')
+            kerner_center_yx_01 = paddle.stack((kerner_center_y - 1, kerner_center_x), 2).cast(dtype='int32')
+            kerner_center_yx_02 = paddle.stack((kerner_center_y - 1, kerner_center_x + 1), 2).cast(dtype='int32')
+            kerner_center_yx_10 = paddle.stack((kerner_center_y, kerner_center_x - 1), 2).cast(dtype='int32')
+            kerner_center_yx_11 = paddle.stack((kerner_center_y, kerner_center_x), 2).cast(dtype='int32')
+            kerner_center_yx_12 = paddle.stack((kerner_center_y, kerner_center_x + 1), 2).cast(dtype='int32')
+            kerner_center_yx_20 = paddle.stack((kerner_center_y + 1, kerner_center_x - 1), 2).cast(dtype='int32')
+            kerner_center_yx_21 = paddle.stack((kerner_center_y + 1, kerner_center_x), 2).cast(dtype='int32')
+            kerner_center_yx_22 = paddle.stack((kerner_center_y + 1, kerner_center_x + 1), 2).cast(dtype='int32')
+            kerner_pos_yx = paddle.stack((kerner_center_yx_00, kerner_center_yx_01, kerner_center_yx_02,
+                                          kerner_center_yx_10, kerner_center_yx_11, kerner_center_yx_12,
+                                          kerner_center_yx_20, kerner_center_yx_21, kerner_center_yx_22),
+                                         0)  # [kH*kW, in_H, in_W, 2]
+        elif kH == 1:
+            kerner_center_yx_00 = paddle.stack((kerner_center_y, kerner_center_x), 2).cast(dtype='int32')
+            kerner_pos_yx = paddle.unsqueeze(kerner_center_yx_00, 0)  # [kH*kW, in_H, in_W, 2]
+        else:
+            raise NotImplementedError("kH \'{}\' is not implemented.".format(kH))
+        kerner_pos_yx = paddle.reshape(kerner_pos_yx, (-1, 2))  # [kH*kW, in_H, in_W, 2] -> [kH*kW*in_H*in_W, 2]
+        kerner_pos_yx.stop_gradient = True
+        dloss_dY = paddle.gather_nd(pad_dloss_dy, kerner_pos_yx)  # [pad_H, pad_W, N, g, oc] -> [kH*kW*in_H*in_W, N, g, oc]
+        dloss_dY = paddle.reshape(dloss_dY, (kH, kW, in_H, in_W, N, g, oc))      # [kH, kW, in_H, in_W, N, g, oc]
+        dloss_dY = paddle.transpose(dloss_dY, [4, 5, 6, 2, 3, 0, 1])             # [N, g, oc, in_H, in_W, kH, kW]
+        dloss_dY = paddle.reshape(dloss_dY, (N, g, 1, oc, in_H, in_W, kH, kW))   # [N, g, 1, oc, in_H, in_W, kH, kW]
+        dY_dW = paddle.reshape(x, (N, g, c, 1, in_H, in_W, 1, 1))                # [N, g, c, 1, in_H, in_W, 1, 1]
+        # 旧的方案，用逐元素相乘，显存爆炸
+        # dloss_dW = dloss_dY * dY_dW                                              # [N, g, c, oc, in_H, in_W, kH, kW]
+        # dloss_dW = paddle.sum(dloss_dW, axis=[0, 4, 5])                          # [g, c, oc, kH, kW]
+        # dloss_dW = paddle.reshape(dloss_dW, (g * c, oc, kH, kW))
+        # 新的方案，用1x1卷积等价实现，显存不爆炸。
+        dloss_dY = paddle.transpose(dloss_dY, [3, 1, 2, 0, 4, 5, 6, 7])  # [oc, g, 1, N, in_H, in_W, kH, kW]
+        dY_dW = paddle.transpose(dY_dW, [3, 1, 2, 0, 4, 5, 6, 7])        # [1, g, c, N, in_H, in_W, 1, 1]
+        dloss_dY = paddle.reshape(dloss_dY, (oc, g*N*in_H*in_W, kH, kW))
+        dY_dW = paddle.reshape(dY_dW, (g*c, N*in_H*in_W, 1, 1))
+        dloss_dW = F.conv2d(dloss_dY, dY_dW, groups=g)  # [oc, g*c, kH, kW]
+        dloss_dW = paddle.transpose(dloss_dW, [1, 0, 2, 3])  # [g*c, oc, kH, kW]
     else:
-        dloss_dx = F.conv2d_transpose(x=dloss_dout, weight=w_flip, stride=stride, padding=padding, output_padding=0, groups=groups)
+        output_padding = stride - 1
+        dloss_dx = F.conv2d_transpose(x=dloss_dout, weight=w_flip, stride=stride, padding=padding, output_padding=output_padding, groups=groups)
 
         # 求dloss_dW
         N, out_C, out_H, out_W = dloss_dout.shape
@@ -282,8 +410,6 @@ def _conv2d_wrapper_grad(dloss_dout, x, w, stride=1, padding=0, groups=1, transp
         g = groups
         oc = out_C // g
         if isinstance(padding, int):
-            padding_h = padding
-            padding_w = padding
             pad_x = F.pad(x, [padding, padding, padding, padding])  # [N, in_C, pad_H, pad_W]
         elif isinstance(padding, list):
             if len(padding) == 2:
@@ -298,8 +424,8 @@ def _conv2d_wrapper_grad(dloss_dout, x, w, stride=1, padding=0, groups=1, transp
         pad_x = paddle.transpose(pad_x, [2, 3, 0, 1])  # [N, in_C, pad_H, pad_W] -> [pad_H, pad_W, N, in_C]
         pad_x = paddle.reshape(pad_x, (pad_H, pad_W, N, g, c))  # [pad_H, pad_W, N, g, c]
         kerner_center_y, kerner_center_x = paddle.meshgrid([paddle.arange(out_H), paddle.arange(out_W)])
-        kerner_center_y = kerner_center_y * stride + padding_h
-        kerner_center_x = kerner_center_x * stride + padding_w
+        kerner_center_y = kerner_center_y * stride + (kH - 1) // 2
+        kerner_center_x = kerner_center_x * stride + (kW - 1) // 2
         assert kH == kW
         if kH == 3:
             kerner_center_yx_00 = paddle.stack((kerner_center_y - 1, kerner_center_x - 1), 2).cast(dtype='int32')
@@ -327,10 +453,20 @@ def _conv2d_wrapper_grad(dloss_dout, x, w, stride=1, padding=0, groups=1, transp
         dY_dW = paddle.transpose(dY_dW, [4, 5, 6, 2, 3, 0, 1])                # [N, g, c, out_H, out_W, kH, kW]
         dY_dW = paddle.reshape(dY_dW, (N, g, 1, c, out_H, out_W, kH, kW))     # [N, g, 1, c, out_H, out_W, kH, kW]
         grad = paddle.reshape(dloss_dout, (N, g, oc, 1, out_H, out_W, 1, 1))  # [N, g, oc, 1, out_H, out_W, 1, 1]
-        dloss_dW = grad * dY_dW                                               # [N, g, oc, c, out_H, out_W, kH, kW]
-        dloss_dW = paddle.sum(dloss_dW, axis=[0, 4, 5])                       # [g, oc, c, kH, kW]
-        dloss_dW = paddle.reshape(dloss_dW, (g * oc, c, kH, kW))              # [g*oc, c, kH, kW]
+        # 旧的方案，用逐元素相乘，显存爆炸
+        # dloss_dW = grad * dY_dW                                               # [N, g, oc, c, out_H, out_W, kH, kW]
+        # dloss_dW = paddle.sum(dloss_dW, axis=[0, 4, 5])    # [g, oc, c, kH, kW]
+        # dloss_dW = paddle.reshape(dloss_dW, (g*oc, c, kH, kW))
+        # 新的方案，用1x1卷积等价实现，显存不爆炸。
+        dY_dW = paddle.transpose(dY_dW, [3, 1, 2, 0, 4, 5, 6, 7])    # [c, g, 1, N, out_H, out_W, kH, kW]
+        grad = paddle.transpose(grad, [3, 1, 2, 0, 4, 5, 6, 7])      # [1, g, oc, N, out_H, out_W, 1, 1]
+        dY_dW = paddle.reshape(dY_dW, (c, g*N*out_H*out_W, kH, kW))
+        grad = paddle.reshape(grad, (g*oc, N*out_H*out_W, 1, 1))
+        dloss_dW = F.conv2d(dY_dW, grad, groups=g)  # [c, g*oc, kH, kW]
+        dloss_dW = paddle.transpose(dloss_dW, [1, 0, 2, 3])  # [g*oc, c, kH, kW]
 
+    if not flip_weight:
+        dloss_dW = dloss_dW.flip([2, 3])
     return dloss_dx, dloss_dW
 
 

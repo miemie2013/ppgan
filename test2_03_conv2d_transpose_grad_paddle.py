@@ -16,47 +16,47 @@ for batch_idx in range(20):
     dilation = 1
     groups = 1
 
-    kernel_size = 1
-    stride = 2
-    padding = 0
-    output_padding = 0
-    dilation = 1
-    groups = 1
+    # kernel_size = 1
+    # stride = 2
+    # padding = 0
+    # output_padding = 0
+    # dilation = 1
+    # groups = 1
 
-    kernel_size = 3
-    stride = 1
-    padding = 0
-    output_padding = 0
-    dilation = 1
-    groups = 1
+    # kernel_size = 3
+    # stride = 1
+    # padding = 0
+    # output_padding = 0
+    # dilation = 1
+    # groups = 1
 
-    kernel_size = 3
-    stride = 2
-    padding = 0
-    output_padding = 0
-    dilation = 1
-    groups = 1
+    # kernel_size = 3
+    # stride = 2
+    # padding = 0
+    # output_padding = 0
+    # dilation = 1
+    # groups = 1
 
-    kernel_size = 3
-    stride = 1
-    padding = 1
-    output_padding = 0
-    dilation = 1
-    groups = 2
+    # kernel_size = 3
+    # stride = 1
+    # padding = 1
+    # output_padding = 0
+    # dilation = 1
+    # groups = 2
 
-    kernel_size = 3
-    stride = 2
-    padding = 1
-    output_padding = 0
-    dilation = 1
-    groups = 1
+    # kernel_size = 3
+    # stride = 2
+    # padding = 1
+    # output_padding = 0
+    # dilation = 1
+    # groups = 1
 
-    kernel_size = 3
-    stride = 2
-    padding = 1
-    output_padding = 0
-    dilation = 1
-    groups = 2
+    # kernel_size = 3
+    # stride = 2
+    # padding = 1
+    # output_padding = 0
+    # dilation = 1
+    # groups = 2
 
     dy_dx_pytorch = dic2['batch_%.3d.dy_dx'%batch_idx]
     dy_dw_pytorch = dic2['batch_%.3d.dy_dw'%batch_idx]
@@ -116,9 +116,18 @@ for batch_idx in range(20):
     dloss_dY = paddle.transpose(dloss_dY, [4, 5, 6, 2, 3, 0, 1])                # [N, g, oc, in_H, in_W, kH, kW]
     dloss_dY = paddle.reshape(dloss_dY, (N, g, 1, oc, in_H, in_W, kH, kW))      # [N, g, 1, oc, in_H, in_W, kH, kW]
     dY_dW = paddle.reshape(x, (N, g, c, 1, in_H, in_W, 1, 1))                   # [N, g, c, 1, in_H, in_W, 1, 1]
-    dloss_dW = dloss_dY * dY_dW                                                 # [N, g, c, oc, in_H, in_W, kH, kW]
-    dloss_dW = paddle.sum(dloss_dW, axis=[0, 4, 5])    # [g, c, oc, kH, kW]
-    dloss_dW = paddle.reshape(dloss_dW, (g*c, oc, kH, kW))
+    # 旧的方案，用逐元素相乘，显存爆炸
+    # dloss_dW = dloss_dY * dY_dW                                                 # [N, g, c, oc, in_H, in_W, kH, kW]
+    # dloss_dW = paddle.sum(dloss_dW, axis=[0, 4, 5])    # [g, c, oc, kH, kW]
+    # dloss_dW = paddle.reshape(dloss_dW, (g*c, oc, kH, kW))
+    # 新的方案，用1x1卷积等价实现，显存不爆炸。
+    dloss_dY = paddle.transpose(dloss_dY, [3, 1, 2, 0, 4, 5, 6, 7])  # [oc, g, 1, N, in_H, in_W, kH, kW]
+    dY_dW = paddle.transpose(dY_dW, [3, 1, 2, 0, 4, 5, 6, 7])        # [1, g, c, N, in_H, in_W, 1, 1]
+    dloss_dY = paddle.reshape(dloss_dY, (oc, g*N*in_H*in_W, kH, kW))
+    dY_dW = paddle.reshape(dY_dW, (g*c, N*in_H*in_W, 1, 1))
+    dloss_dW = F.conv2d(dloss_dY, dY_dW, groups=g)  # [oc, g*c, kH, kW]
+    dloss_dW = paddle.transpose(dloss_dW, [1, 0, 2, 3])  # [g*c, oc, kH, kW]
+
     dy_dw = dloss_dW
 
     aaaaaa = y.numpy()

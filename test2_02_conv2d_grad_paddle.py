@@ -12,19 +12,19 @@ grad_layer = Conv2D_Grad()
 dic2 = np.load('02_grad.npz')
 for batch_idx in range(20):
     print('======================== batch_%.3d ========================'%batch_idx)
-    kernel_size = 1
-    stride = 1
-    padding = 0
-    output_padding = 0
-    dilation = 1
-    groups = 1
+    # kernel_size = 1
+    # stride = 1
+    # padding = 0
+    # output_padding = 0
+    # dilation = 1
+    # groups = 1
 
     # kernel_size = 1
     # stride = 2
     # padding = 0
     # output_padding = 0
     # dilation = 1
-    # groups = 1
+    # groups = 2
 
     # kernel_size = 3
     # stride = 1
@@ -33,26 +33,26 @@ for batch_idx in range(20):
     # dilation = 1
     # groups = 1
 
-    kernel_size = 3
-    stride = 2
-    padding = 0
-    output_padding = 0
-    dilation = 1
-    groups = 1
+    # kernel_size = 3
+    # stride = 2
+    # padding = 0
+    # output_padding = 0
+    # dilation = 1
+    # groups = 2
 
-    kernel_size = 3
-    stride = 1
-    padding = 1
-    output_padding = 0
-    dilation = 1
-    groups = 2
+    # kernel_size = 3
+    # stride = 1
+    # padding = 1
+    # output_padding = 0
+    # dilation = 1
+    # groups = 2
 
-    kernel_size = 3
-    stride = 2
-    padding = 1
-    output_padding = 0
-    dilation = 1
-    groups = 1
+    # kernel_size = 3
+    # stride = 2
+    # padding = 1
+    # output_padding = 0
+    # dilation = 1
+    # groups = 1
 
     kernel_size = 3
     stride = 2
@@ -137,9 +137,18 @@ for batch_idx in range(20):
     dY_dW = paddle.transpose(dY_dW, [4, 5, 6, 2, 3, 0, 1])             # [N, g, c, out_H, out_W, kH, kW]
     dY_dW = paddle.reshape(dY_dW, (N, g, 1, c, out_H, out_W, kH, kW))     # [N, g, 1, c, out_H, out_W, kH, kW]
     grad = paddle.reshape(dysum_dy, (N, g, oc, 1, out_H, out_W, 1, 1))    # [N, g, oc, 1, out_H, out_W, 1, 1]
-    dloss_dW = grad * dY_dW                                               # [N, g, oc, c, out_H, out_W, kH, kW]
-    dloss_dW = paddle.sum(dloss_dW, axis=[0, 4, 5])    # [g, oc, c, kH, kW]
-    dloss_dW = paddle.reshape(dloss_dW, (g*oc, c, kH, kW))
+    # 旧的方案，用逐元素相乘，显存爆炸
+    # dloss_dW = grad * dY_dW                                               # [N, g, oc, c, out_H, out_W, kH, kW]
+    # dloss_dW = paddle.sum(dloss_dW, axis=[0, 4, 5])    # [g, oc, c, kH, kW]
+    # dloss_dW = paddle.reshape(dloss_dW, (g*oc, c, kH, kW))
+    # 新的方案，用1x1卷积等价实现，显存不爆炸。
+    dY_dW = paddle.transpose(dY_dW, [3, 1, 2, 0, 4, 5, 6, 7])    # [c, g, 1, N, out_H, out_W, kH, kW]
+    grad = paddle.transpose(grad, [3, 1, 2, 0, 4, 5, 6, 7])      # [1, g, oc, N, out_H, out_W, 1, 1]
+    dY_dW = paddle.reshape(dY_dW, (c, g*N*out_H*out_W, kH, kW))
+    grad = paddle.reshape(grad, (g*oc, N*out_H*out_W, 1, 1))
+    dloss_dW = F.conv2d(dY_dW, grad, groups=g)  # [c, g*oc, kH, kW]
+    dloss_dW = paddle.transpose(dloss_dW, [1, 0, 2, 3])  # [g*oc, c, kH, kW]
+
     dy_dw = dloss_dW
 
     aaaaaa = y.numpy()

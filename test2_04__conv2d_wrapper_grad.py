@@ -17,13 +17,21 @@ for batch_idx in range(8):
     transpose = False
     flip_weight = False
 
-    # x_shape = [1, 8, 1, 1]
-    # w_shape = [16, 8, 1, 1]
-    # stride = 1
-    # padding = [0, 0]
-    # groups = 1
-    # transpose = False
-    # flip_weight = True
+    x_shape = [1, 8, 1, 1]
+    w_shape = [16, 8, 1, 1]
+    stride = 1
+    padding = [0, 0]
+    groups = 1
+    transpose = False
+    flip_weight = True
+
+    x_shape = [1, 8, 1, 1]
+    w_shape = [16, 4, 1, 1]
+    stride = 1
+    padding = [0, 0]
+    groups = 2
+    transpose = False
+    flip_weight = False
 
     # x_shape = [1, 512, 4, 4]
     # w_shape = [512, 512, 3, 3]
@@ -49,13 +57,13 @@ for batch_idx in range(8):
     # transpose = True
     # flip_weight = True
 
-    x_shape = [1, 512, 8, 8]
-    w_shape = [512, 512, 3, 3]
-    stride = 1
-    padding = [1, 1]
-    groups = 1
-    transpose = False
-    flip_weight = True
+    # x_shape = [1, 512, 8, 8]
+    # w_shape = [512, 512, 3, 3]
+    # stride = 1
+    # padding = [1, 1]
+    # groups = 1
+    # transpose = False
+    # flip_weight = True
 
     # x_shape = [1, 512, 8, 8]
     # w_shape = [3, 512, 1, 1]
