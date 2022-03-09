@@ -980,7 +980,7 @@ class Conv2dLayer(nn.Layer):
         w = self.weight * self.weight_gain
         b = paddle.cast(self.bias, dtype=x.dtype) if self.bias is not None else None
         flip_weight = (self.up == 1)  # slightly faster
-        x = conv2d_resample(x=x, w=paddle.cast(w, dtype=x.dtype), filter=self.resample_filter, up=self.up, down=self.down, padding=self.padding, flip_weight=flip_weight)
+        x, x_1 = conv2d_resample(x=x, w=paddle.cast(w, dtype=x.dtype), filter=self.resample_filter, up=self.up, down=self.down, padding=self.padding, flip_weight=flip_weight)
 
         act_gain = self.act_gain * gain
         act_clamp = self.conv_clamp * gain if self.conv_clamp is not None else None
@@ -1219,23 +1219,137 @@ def modulated_conv2d(
     # Execute by scaling the activations before and after the convolution.
     if not fused_modconv:
         x = x * paddle.cast(styles, dtype=x.dtype).reshape((batch_size, -1, 1, 1))
-        x = conv2d_resample(x=x, w=paddle.cast(weight, dtype=x.dtype), filter=resample_filter, up=up, down=down, padding=padding, flip_weight=flip_weight)
+        x, x_1 = conv2d_resample(x=x, w=paddle.cast(weight, dtype=x.dtype), filter=resample_filter, up=up, down=down, padding=padding, flip_weight=flip_weight)
+        x_2 = x
         if demodulate and noise is not None:
             x = x * paddle.cast(dcoefs, dtype=x.dtype).reshape((batch_size, -1, 1, 1)) + paddle.cast(noise, dtype=x.dtype)
         elif demodulate:
             x = x * paddle.cast(dcoefs, dtype=x.dtype).reshape((batch_size, -1, 1, 1))
         elif noise is not None:
             x = x + paddle.cast(noise, dtype=x.dtype)
-        return x
+        return x, x_1, x_2
 
     # Execute as one fused op using grouped convolution.
-    x = x.reshape((1, -1, *x.shape[2:]))
-    w = w.reshape((-1, in_channels, kh, kw))
-    x = conv2d_resample(x=x, w=paddle.cast(w, dtype=x.dtype), filter=resample_filter, up=up, down=down, padding=padding, groups=batch_size, flip_weight=flip_weight)
-    x = x.reshape((batch_size, -1, *x.shape[2:]))
-    if noise is not None:
-        x = x + noise
-    return x
+    else:
+        x = x.reshape((1, -1, *x.shape[2:]))
+        w = w.reshape((-1, in_channels, kh, kw))
+        x, x_1 = conv2d_resample(x=x, w=paddle.cast(w, dtype=x.dtype), filter=resample_filter, up=up, down=down, padding=padding, groups=batch_size, flip_weight=flip_weight)
+        x = x.reshape((batch_size, -1, *x.shape[2:]))
+        if noise is not None:
+            x = x + noise
+        return x, x_1
+
+def modulated_conv2d_grad(dloss_dout, x_1, x_2,
+    x,                          # Input tensor of shape [batch_size, in_channels, in_height, in_width].
+    weight,                     # Weight tensor of shape [out_channels, in_channels, kernel_height, kernel_width].
+    styles,                     # Modulation coefficients of shape [batch_size, in_channels].
+    noise           = None,     # Optional noise tensor to add to the output activations.
+    up              = 1,        # Integer upsampling factor.
+    down            = 1,        # Integer downsampling factor.
+    padding         = 0,        # Padding with respect to the upsampled image.
+    resample_filter = None,     # Low-pass filter to apply when resampling activations. Must be prepared beforehand by calling upfirdn2d.setup_filter().
+    demodulate      = True,     # Apply weight demodulation?
+    flip_weight     = True,     # False = convolution, True = correlation (matches torch.nn.functional.conv2d).
+    fused_modconv   = True,     # Perform modulation, convolution, and demodulation as a single fused operation?
+):
+    batch_size = x.shape[0]
+    out_channels, in_channels, kh, kw = weight.shape
+    # misc.assert_shape(weight, [out_channels, in_channels, kh, kw]) # [OIkk]
+    # misc.assert_shape(x, [batch_size, in_channels, None, None]) # [NIHW]
+    # misc.assert_shape(styles, [batch_size, in_channels]) # [NI]
+
+    # Pre-normalize inputs to avoid FP16 overflow.
+    if x.dtype == paddle.float16 and demodulate:
+        d0, d1, d2, d3 = weight.shape
+        weight_temp = weight.reshape((d0, d1, d2 * d3))
+        weight_temp = paddle.norm(weight_temp, p=np.inf, axis=[1, 2], keepdim=True)
+        weight_temp = weight_temp.reshape((d0, 1, 1, 1))
+        weight = weight * (1 / np.sqrt(in_channels * kh * kw) / weight_temp) # max_Ikk
+        styles_temp = paddle.norm(styles, p=np.inf, axis=1, keepdim=True)
+        styles = styles / styles_temp # max_I
+
+    # Calculate per-sample weights and demodulation coefficients.
+    w = None
+    dcoefs = None
+    if demodulate or fused_modconv:
+        w = weight.unsqueeze(0)  # [NOIkk]
+        w0 = w
+        w = w * styles.reshape((batch_size, 1, -1, 1, 1))  # [NOIkk]
+        w1 = w
+    if demodulate:
+        dcoefs = (w.square().sum(axis=[2, 3, 4]) + 1e-8).rsqrt()  # [NO]
+    if demodulate and fused_modconv:
+        w = w * dcoefs.reshape((batch_size, -1, 1, 1, 1))  # [NOIkk]
+        w3 = w
+
+    # Execute by scaling the activations before and after the convolution.
+    if not fused_modconv:
+        dloss_dx = dloss_dout
+
+        # x = x * paddle.cast(styles, dtype=x.dtype).reshape((batch_size, -1, 1, 1))
+        # x = conv2d_resample(x=x, w=paddle.cast(weight, dtype=x.dtype), filter=resample_filter, up=up, down=down, padding=padding, flip_weight=flip_weight)
+        # if demodulate and noise is not None:
+        #     x = x * paddle.cast(dcoefs, dtype=x.dtype).reshape((batch_size, -1, 1, 1)) + paddle.cast(noise, dtype=x.dtype)
+        # elif demodulate:
+        #     x = x * paddle.cast(dcoefs, dtype=x.dtype).reshape((batch_size, -1, 1, 1))
+        # elif noise is not None:
+        #     x = x + paddle.cast(noise, dtype=x.dtype)
+
+
+        '''
+        loss对styles的导数比较复杂，因为本层中styles可能被使用了多次，比如，
+        dcoefs的表达式包含有styles，x和styles相乘之后，又和dcoefs相乘。
+        为了求出loss对styles的导数，
+
+        简化运算关系：
+        Y = conv2d_resample(x * styles) * dcoefs(styles) = u * v
+        dY_dstyles = u'v * x + uv'
+        '''
+        if demodulate and noise is not None:
+            # x = x * paddle.cast(dcoefs, dtype=x.dtype).reshape((batch_size, -1, 1, 1)) + paddle.cast(noise, dtype=x.dtype)
+            dloss_ddcoefs = dloss_dx * x_2
+            dloss_ddcoefs = paddle.sum(dloss_ddcoefs, axis=[2, 3])
+            dloss_dx = dloss_dx * paddle.cast(dcoefs, dtype=x.dtype).reshape((batch_size, -1, 1, 1))
+        elif demodulate:
+            # x = x * paddle.cast(dcoefs, dtype=x.dtype).reshape((batch_size, -1, 1, 1))
+            raise NotImplementedError("not implemented.")
+        elif noise is not None:
+            pass
+        dloss_dx, dloss_dweight = conv2d_resample_grad(dloss_dx, x_1, x, paddle.cast(weight, dtype=x.dtype), filter=resample_filter, up=up, down=down, padding=padding, flip_weight=flip_weight)
+        dloss_dstyles = dloss_dx * x
+        dloss_dstyles = paddle.sum(dloss_dstyles, axis=[2, 3])
+        dloss_dx = dloss_dx * paddle.cast(styles, dtype=x.dtype).reshape((batch_size, -1, 1, 1))
+
+        if demodulate and fused_modconv:
+            # 不可能执行这个，因为fused_modconv肯定是False
+            pass
+        if demodulate:
+            # dcoefs = (w.square().sum(axis=[2, 3, 4]) + 1e-8).rsqrt()  # [NO]
+            dloss_dw_square_sum_add_1e8 = -0.5 * dloss_ddcoefs * dcoefs * dcoefs * dcoefs
+            dloss_dw_square_sum = dloss_dw_square_sum_add_1e8
+            dloss_dw_square = paddle.unsqueeze(dloss_dw_square_sum, axis=[2, 3, 4])
+            dloss_dw_square = paddle.tile(dloss_dw_square, [1, 1, w.shape[2], w.shape[3], w.shape[4]])
+            dloss_dw1 = dloss_dw_square * 2 * w
+        if demodulate or fused_modconv:
+            # w = weight.unsqueeze(0)  # [NOIkk]
+            # w = w * styles.reshape((batch_size, 1, -1, 1, 1))  # [NOIkk]
+            dloss_dstyles_2 = dloss_dw1 * w0
+            dloss_dstyles_2 = paddle.sum(dloss_dstyles_2, axis=[2, 3, 4])
+            # dloss_dstyles += dloss_dstyles_2
+
+
+        print('eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee')
+        return dloss_dx, dloss_dstyles
+
+    # Execute as one fused op using grouped convolution.
+    else:
+        x = x.reshape((1, -1, *x.shape[2:]))
+        w = w.reshape((-1, in_channels, kh, kw))
+        x, x_1 = conv2d_resample(x=x, w=paddle.cast(w, dtype=x.dtype), filter=resample_filter, up=up, down=down, padding=padding, groups=batch_size, flip_weight=flip_weight)
+        x = x.reshape((batch_size, -1, *x.shape[2:]))
+        if noise is not None:
+            x = x + noise
+        return x
 
 
 class SynthesisLayer(nn.Layer):
