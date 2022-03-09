@@ -1302,11 +1302,21 @@ def modulated_conv2d_grad(dloss_dout, x_1, x_2,
         为了求出loss对styles的导数，
 
         简化运算关系：
-        Y = conv2d_resample(x * styles) * dcoefs(styles) = u * v
-        dY_dstyles = u'v * x + uv'
+        out = conv2d_resample(x * styles) * dcoefs(styles) = u * v
+        dout_dstyles = u'v * x + uv' = du * v * x + u * dv
+        其中u = x_2, v = dcoefs, x = 未被复写的输入x
+        du是out对conv2d_resample的输入(x * styles)的导数
         '''
         if demodulate and noise is not None:
-            # x = x * paddle.cast(dcoefs, dtype=x.dtype).reshape((batch_size, -1, 1, 1)) + paddle.cast(noise, dtype=x.dtype)
+            u = x_2
+            v = paddle.cast(dcoefs, dtype=x.dtype).reshape((batch_size, -1, 1, 1))
+
+            #
+            doutsum_dout = paddle.ones(dloss_dout.shape, dtype=paddle.float32)
+            du, _ = conv2d_resample_grad(doutsum_dout, x_1, x, paddle.cast(weight, dtype=x.dtype),
+                                         filter=resample_filter, up=up, down=down, padding=padding,
+                                         flip_weight=flip_weight)
+
             dloss_ddcoefs = dloss_dx * x_2
             dloss_ddcoefs = paddle.sum(dloss_ddcoefs, axis=[2, 3])
             dloss_dx = dloss_dx * paddle.cast(dcoefs, dtype=x.dtype).reshape((batch_size, -1, 1, 1))
