@@ -12,10 +12,54 @@ grad_layer = Conv2D_Grad()
 dic2 = np.load('02_grad.npz')
 for batch_idx in range(20):
     print('======================== batch_%.3d ========================'%batch_idx)
+    kernel_size = 1
+    stride = 1
+    padding = 0
+    output_padding = 0
+    dilation = 1
+    groups = 1
+
+    # kernel_size = 1
+    # stride = 2
+    # padding = 0
+    # output_padding = 0
+    # dilation = 1
+    # groups = 1
+
+    # kernel_size = 3
+    # stride = 1
+    # padding = 0
+    # output_padding = 0
+    # dilation = 1
+    # groups = 1
+
+    kernel_size = 3
+    stride = 2
+    padding = 0
+    output_padding = 0
+    dilation = 1
+    groups = 1
+
+    kernel_size = 3
+    stride = 1
+    padding = 1
+    output_padding = 0
+    dilation = 1
+    groups = 2
+
+    kernel_size = 3
     stride = 2
     padding = 1
+    output_padding = 0
     dilation = 1
-    groups = 32
+    groups = 1
+
+    kernel_size = 3
+    stride = 2
+    padding = 1
+    output_padding = 0
+    dilation = 1
+    groups = 2
 
     dy_dx_pytorch = dic2['batch_%.3d.dy_dx'%batch_idx]
     dy_dw_pytorch = dic2['batch_%.3d.dy_dw'%batch_idx]
@@ -39,7 +83,21 @@ for batch_idx in range(20):
     # dy_dw = paddle.grad(outputs=[y.sum()], inputs=[w], create_graph=True)[0]
     dysum_dy = paddle.ones(y.shape, dtype=paddle.float32)
     # dy_dx = grad_layer(dysum_dy, y, x=x, weight=w, bias=bias, stride=stride, padding=padding, dilation=dilation, groups=groups)
-    dy_dx = F.conv2d_transpose(x=dysum_dy, weight=w, bias=bias, stride=stride, padding=padding, output_padding=1, dilation=dilation, groups=groups)
+    # output_padding = 111
+    # if kernel_size == 1 and stride == 1 and padding == 0:
+    #     output_padding = 0
+    # elif kernel_size == 1 and stride == 2 and padding == 0:
+    #     output_padding = 1
+    # elif kernel_size == 3 and stride == 1 and padding == 0:
+    #     output_padding = 0
+    # elif kernel_size == 3 and stride == 2 and padding == 0:
+    #     output_padding = 1
+    # elif kernel_size == 3 and stride == 1 and padding == 1:
+    #     output_padding = 0
+    # elif kernel_size == 3 and stride == 2 and padding == 1:
+    #     output_padding = 1
+    output_padding = stride - 1
+    dy_dx = F.conv2d_transpose(x=dysum_dy, weight=w, bias=bias, stride=stride, padding=padding, output_padding=output_padding, dilation=dilation, groups=groups)
 
     # 求dloss_dW
     N, out_C, out_H, out_W = y.shape
@@ -51,8 +109,8 @@ for batch_idx in range(20):
     pad_x = paddle.transpose(pad_x, [2, 3, 0, 1])  # [N, in_C, pad_H, pad_W] -> [pad_H, pad_W, N, in_C]
     pad_x = paddle.reshape(pad_x, (pad_H, pad_W, N, g, c))  # [pad_H, pad_W, N, g, c]
     kerner_center_y, kerner_center_x = paddle.meshgrid([paddle.arange(out_H), paddle.arange(out_W)])
-    kerner_center_y = kerner_center_y * stride + padding
-    kerner_center_x = kerner_center_x * stride + padding
+    kerner_center_y = kerner_center_y * stride + (kH - 1) // 2
+    kerner_center_x = kerner_center_x * stride + (kW - 1) // 2
     assert kH == kW
     if kH == 3:
         kerner_center_yx_00 = paddle.stack((kerner_center_y - 1, kerner_center_x - 1), 2).cast(dtype='int32')

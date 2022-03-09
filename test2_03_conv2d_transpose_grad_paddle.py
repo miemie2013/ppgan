@@ -37,26 +37,26 @@ for batch_idx in range(20):
     dilation = 1
     groups = 1
 
-    # kernel_size = 3
-    # stride = 1
-    # padding = 1
-    # output_padding = 0
-    # dilation = 1
-    # groups = 2
+    kernel_size = 3
+    stride = 1
+    padding = 1
+    output_padding = 0
+    dilation = 1
+    groups = 2
 
-    # kernel_size = 3
-    # stride = 2
-    # padding = 1
-    # output_padding = 0
-    # dilation = 1
-    # groups = 1
+    kernel_size = 3
+    stride = 2
+    padding = 1
+    output_padding = 0
+    dilation = 1
+    groups = 1
 
-    # kernel_size = 3
-    # stride = 2
-    # padding = 1
-    # output_padding = 0
-    # dilation = 1
-    # groups = 2
+    kernel_size = 3
+    stride = 2
+    padding = 1
+    output_padding = 0
+    dilation = 1
+    groups = 2
 
     dy_dx_pytorch = dic2['batch_%.3d.dy_dx'%batch_idx]
     dy_dw_pytorch = dic2['batch_%.3d.dy_dw'%batch_idx]
@@ -83,55 +83,40 @@ for batch_idx in range(20):
     g = groups
     c = in_C // g
 
-    padding_x = kH
-    pad_x = F.pad(x, [padding_x, padding_x, padding_x, padding_x])  # [N, in_C, pad_x_H, pad_x_W]
-    transpose_x = paddle.transpose(pad_x, [2, 3, 0, 1])  # [N, in_C, pad_x_H, pad_x_W] -> [pad_x_H, pad_x_W, N, in_C]
-    pad_y = F.pad(y, [padding, padding, padding, padding])  # [N, in_C, pad_x_H, pad_x_W]
-    _, _, pad_y_H, pad_y_W = pad_y.shape
-    Y_pos_y, Y_pos_x = paddle.meshgrid([paddle.arange(pad_y_H), paddle.arange(pad_y_W)])
-    Y_pos_y = Y_pos_y + padding_x
-    Y_pos_x = Y_pos_x + padding_x
+    pad_dloss_dy = F.pad(dysum_dy, [padding, padding, padding, padding])  # [N, in_C, pad_H, pad_W]
+    N, out_C, pad_H, pad_W = pad_dloss_dy.shape
+    pad_dloss_dy = paddle.transpose(pad_dloss_dy, [2, 3, 0, 1])  # [N, out_C, pad_H, pad_W] -> [pad_H, pad_W, N, out_C]
+    pad_dloss_dy = paddle.reshape(pad_dloss_dy, (pad_H, pad_W, N, g, oc))  # [pad_H, pad_W, N, g, oc]
+    kerner_center_y, kerner_center_x = paddle.meshgrid([paddle.arange(in_H), paddle.arange(in_W)])
+    kerner_center_y = kerner_center_y * stride + (kH - 1) // 2
+    kerner_center_x = kerner_center_x * stride + (kW - 1) // 2
     assert kH == kW
-    if kH == 3 and stride == 1:
-        Y_pos_yx_00 = paddle.stack((Y_pos_y, Y_pos_x), 2).cast(dtype='int32')   # [out_H, out_W, 2]
-        Y_pos_yx_01 = paddle.stack((Y_pos_y, Y_pos_x - 1), 2).cast(dtype='int32')   # [out_H, out_W, 2]
-        Y_pos_yx_02 = paddle.stack((Y_pos_y, Y_pos_x - 2), 2).cast(dtype='int32')   # [out_H, out_W, 2]
-        Y_pos_yx_10 = paddle.stack((Y_pos_y - 1, Y_pos_x), 2).cast(dtype='int32')   # [out_H, out_W, 2]
-        Y_pos_yx_11 = paddle.stack((Y_pos_y - 1, Y_pos_x - 1), 2).cast(dtype='int32')   # [out_H, out_W, 2]
-        Y_pos_yx_12 = paddle.stack((Y_pos_y - 1, Y_pos_x - 2), 2).cast(dtype='int32')   # [out_H, out_W, 2]
-        Y_pos_yx_20 = paddle.stack((Y_pos_y - 2, Y_pos_x), 2).cast(dtype='int32')   # [out_H, out_W, 2]
-        Y_pos_yx_21 = paddle.stack((Y_pos_y - 2, Y_pos_x - 1), 2).cast(dtype='int32')   # [out_H, out_W, 2]
-        Y_pos_yx_22 = paddle.stack((Y_pos_y - 2, Y_pos_x - 2), 2).cast(dtype='int32')   # [out_H, out_W, 2]
-        Y_pos_yx = paddle.stack((Y_pos_yx_00, Y_pos_yx_01, Y_pos_yx_02,
-                                 Y_pos_yx_10, Y_pos_yx_11, Y_pos_yx_12,
-                                 Y_pos_yx_20, Y_pos_yx_21, Y_pos_yx_22), 0)  # [kH*kW, out_H, out_W, 2]
-    elif kH == 3 and stride == 2:
-        Y_pos_yx_00 = paddle.stack((Y_pos_y, Y_pos_x), 2).cast(dtype='int32')   # [out_H, out_W, 2]
-        Y_pos_yx_01 = paddle.stack((Y_pos_y, Y_pos_x - 1), 2).cast(dtype='int32')   # [out_H, out_W, 2]
-        Y_pos_yx_02 = paddle.stack((Y_pos_y, Y_pos_x - 2), 2).cast(dtype='int32')   # [out_H, out_W, 2]
-        Y_pos_yx_10 = paddle.stack((Y_pos_y - 1, Y_pos_x), 2).cast(dtype='int32')   # [out_H, out_W, 2]
-        Y_pos_yx_11 = paddle.stack((Y_pos_y - 1, Y_pos_x - 1), 2).cast(dtype='int32')   # [out_H, out_W, 2]
-        Y_pos_yx_12 = paddle.stack((Y_pos_y - 1, Y_pos_x - 2), 2).cast(dtype='int32')   # [out_H, out_W, 2]
-        Y_pos_yx_20 = paddle.stack((Y_pos_y - 2, Y_pos_x), 2).cast(dtype='int32')   # [out_H, out_W, 2]
-        Y_pos_yx_21 = paddle.stack((Y_pos_y - 2, Y_pos_x - 1), 2).cast(dtype='int32')   # [out_H, out_W, 2]
-        Y_pos_yx_22 = paddle.stack((Y_pos_y - 2, Y_pos_x - 2), 2).cast(dtype='int32')   # [out_H, out_W, 2]
-        Y_pos_yx = paddle.stack((Y_pos_yx_00, Y_pos_yx_01, Y_pos_yx_02,
-                                 Y_pos_yx_10, Y_pos_yx_11, Y_pos_yx_12,
-                                 Y_pos_yx_20, Y_pos_yx_21, Y_pos_yx_22), 0)  # [kH*kW, out_H, out_W, 2]
-    elif kH == 1 and stride == 1:
-        Y_pos_yx_00 = paddle.stack((Y_pos_y, Y_pos_x), 2).cast(dtype='int32')   # [out_H, out_W, 2]
-        Y_pos_yx = paddle.unsqueeze(Y_pos_yx_00, 0)  # [kH*kW, out_H, out_W, 2]
+    if kH == 3:
+        kerner_center_yx_00 = paddle.stack((kerner_center_y - 1, kerner_center_x - 1), 2).cast(dtype='int32')
+        kerner_center_yx_01 = paddle.stack((kerner_center_y - 1, kerner_center_x), 2).cast(dtype='int32')
+        kerner_center_yx_02 = paddle.stack((kerner_center_y - 1, kerner_center_x + 1), 2).cast(dtype='int32')
+        kerner_center_yx_10 = paddle.stack((kerner_center_y, kerner_center_x - 1), 2).cast(dtype='int32')
+        kerner_center_yx_11 = paddle.stack((kerner_center_y, kerner_center_x), 2).cast(dtype='int32')
+        kerner_center_yx_12 = paddle.stack((kerner_center_y, kerner_center_x + 1), 2).cast(dtype='int32')
+        kerner_center_yx_20 = paddle.stack((kerner_center_y + 1, kerner_center_x - 1), 2).cast(dtype='int32')
+        kerner_center_yx_21 = paddle.stack((kerner_center_y + 1, kerner_center_x), 2).cast(dtype='int32')
+        kerner_center_yx_22 = paddle.stack((kerner_center_y + 1, kerner_center_x + 1), 2).cast(dtype='int32')
+        kerner_pos_yx = paddle.stack((kerner_center_yx_00, kerner_center_yx_01, kerner_center_yx_02,
+                                      kerner_center_yx_10, kerner_center_yx_11, kerner_center_yx_12,
+                                      kerner_center_yx_20, kerner_center_yx_21, kerner_center_yx_22), 0)  # [kH*kW, in_H, in_W, 2]
+    elif kH == 1:
+        kerner_center_yx_00 = paddle.stack((kerner_center_y, kerner_center_x), 2).cast(dtype='int32')
+        kerner_pos_yx = paddle.unsqueeze(kerner_center_yx_00, 0)  # [kH*kW, in_H, in_W, 2]
     else:
         raise NotImplementedError("kH \'{}\' is not implemented.".format(kH))
-    Y_pos_yx = paddle.reshape(Y_pos_yx, (-1, 2))  # [kH*kW, out_H, out_W, 2] -> [kH*kW*out_H*out_W, 2]
-    Y_pos_yx.stop_gradient = True
-    dY_dW = paddle.gather_nd(transpose_x, Y_pos_yx)  # [pad_x_H, pad_x_W, N, in_C] -> [kH*kW*out_H*out_W, N, in_C]
-    dY_dW = paddle.reshape(dY_dW, (kH, kW, pad_y_H, pad_y_W, N, g, c))  # [kH, kW, out_H, out_W, N, g, c]
-    dY_dW = paddle.transpose(dY_dW, [4, 5, 6, 2, 3, 0, 1])                # [N, g, c, out_H, out_W, kH, kW]
-    dY_dW = paddle.reshape(dY_dW, (N, g, c, 1, pad_y_H, pad_y_W, kH, kW))     # [N, g, c, 1, out_H, out_W, kH, kW]
-    grad = F.pad(dysum_dy, [padding, padding, padding, padding])          # [N, in_C, pad_x_H, pad_x_W]
-    grad = paddle.reshape(grad, (N, g, 1, oc, pad_y_H, pad_y_W, 1, 1))    # [N, g, 1, oc, out_H, out_W, 1, 1]
-    dloss_dW = grad * dY_dW                                               # [N, g, c, oc, out_H, out_W, kH, kW]
+    kerner_pos_yx = paddle.reshape(kerner_pos_yx, (-1, 2))  # [kH*kW, in_H, in_W, 2] -> [kH*kW*in_H*in_W, 2]
+    kerner_pos_yx.stop_gradient = True
+    dloss_dY = paddle.gather_nd(pad_dloss_dy, kerner_pos_yx)  # [pad_H, pad_W, N, g, oc] -> [kH*kW*in_H*in_W, N, g, oc]
+    dloss_dY = paddle.reshape(dloss_dY, (kH, kW, in_H, in_W, N, g, oc))         # [kH, kW, in_H, in_W, N, g, oc]
+    dloss_dY = paddle.transpose(dloss_dY, [4, 5, 6, 2, 3, 0, 1])                # [N, g, oc, in_H, in_W, kH, kW]
+    dloss_dY = paddle.reshape(dloss_dY, (N, g, 1, oc, in_H, in_W, kH, kW))      # [N, g, 1, oc, in_H, in_W, kH, kW]
+    dY_dW = paddle.reshape(x, (N, g, c, 1, in_H, in_W, 1, 1))                   # [N, g, c, 1, in_H, in_W, 1, 1]
+    dloss_dW = dloss_dY * dY_dW                                                 # [N, g, c, oc, in_H, in_W, kH, kW]
     dloss_dW = paddle.sum(dloss_dW, axis=[0, 4, 5])    # [g, c, oc, kH, kW]
     dloss_dW = paddle.reshape(dloss_dW, (g*c, oc, kH, kW))
     dy_dw = dloss_dW
@@ -144,7 +129,7 @@ for batch_idx in range(20):
     ddd = np.sum((dy_dx_pytorch - dy_dx_paddle) ** 2)
     print('ddd=%.6f' % ddd)
 
-    aaaaaa = dy_dw.numpy()
-    ddd = np.sum((dy_dw_pytorch - aaaaaa) ** 2)
+    dy_dw_paddle = dy_dw.numpy()
+    ddd = np.sum((dy_dw_pytorch - dy_dw_paddle) ** 2)
     print('ddd=%.6f' % ddd)
 print()
