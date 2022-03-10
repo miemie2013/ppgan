@@ -38,9 +38,11 @@ def fff(
         x = x * styles.to(x.dtype).reshape(batch_size, -1, 1, 1)
         x = rrr(x)
         if demodulate and noise is not None:
-            x = x * dcoefs.to(x.dtype).reshape(batch_size, -1, 1, 1)
+            x = x * dcoefs.to(x.dtype).reshape(batch_size, -1, 1, 1) + noise.to(x.dtype)
         elif demodulate:
             x = x * dcoefs.to(x.dtype).reshape(batch_size, -1, 1, 1)
+        elif noise is not None:
+            x = x.add_(noise.to(x.dtype))
         return x
 
 

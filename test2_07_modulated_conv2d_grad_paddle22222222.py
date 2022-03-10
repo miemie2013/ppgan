@@ -35,15 +35,17 @@ def fff(
 
     # Execute by scaling the activations before and after the convolution.
     if not fused_modconv:
-        x = x * paddle.cast(styles, dtype=x.dtype).reshape((batch_size, -1, 1, 1))
-        x_mul_styles = x
-        x = conv2d_resample(x)
-        x_2 = x
+        x_mul_styles = x * paddle.cast(styles, dtype=x.dtype).reshape((batch_size, -1, 1, 1))
+        x_2 = conv2d_resample(x_mul_styles)
         if demodulate and noise is not None:
-            x = x * paddle.cast(dcoefs, dtype=x.dtype).reshape((batch_size, -1, 1, 1))
+            out = x_2 * paddle.cast(dcoefs, dtype=x.dtype).reshape((batch_size, -1, 1, 1)) + paddle.cast(noise, dtype=x.dtype)
         elif demodulate:
-            x = x * paddle.cast(dcoefs, dtype=x.dtype).reshape((batch_size, -1, 1, 1))
-        return x, x_2, x_mul_styles
+            out = x_2 * paddle.cast(dcoefs, dtype=x.dtype).reshape((batch_size, -1, 1, 1))
+        elif noise is not None:
+            out = x_2 + paddle.cast(noise, dtype=x.dtype)
+        else:
+            out = x_2
+        return out, x_2, x_mul_styles
 
 
 
@@ -75,18 +77,12 @@ def fff_grad(dloss_dout, x_2, x_mul_styles,
         w0 = w
         w = w * styles.reshape((batch_size, 1, -1, 1, 1))  # [NOIkk]
         w1 = w
+        _, _, D_w1_2, D_w1_3, D_w1_4 = w1.shape
     if demodulate:
         dcoefs = w.sum(axis=[2,3,4])  # [NO]
 
     # Execute by scaling the activations before and after the convolution.
     if not fused_modconv:
-        # x = x * paddle.cast(styles, dtype=x.dtype).reshape((batch_size, -1, 1, 1))
-        # x = conv2d_resample(x)
-        # if demodulate and noise is not None:
-        #     x = x * paddle.cast(dcoefs, dtype=x.dtype).reshape((batch_size, -1, 1, 1))
-        # elif demodulate:
-        #     x = x * paddle.cast(dcoefs, dtype=x.dtype).reshape((batch_size, -1, 1, 1))
-
         '''
         loss对styles的导数比较复杂，因为本层中styles可能被使用了多次，比如，
         dcoefs的表达式包含有styles，x和styles相乘之后，又和dcoefs相乘。
@@ -95,63 +91,86 @@ def fff_grad(dloss_dout, x_2, x_mul_styles,
         简化运算关系：
         out = conv2d_resample(x * styles) * dcoefs(styles) = u * v
         dout_dstyles = u'v * x + uv' = du * v * x + u * dv
-        = dout_dx_mul_styles * dx_mul_styles_dstyles * v + u * ddcoefs_dstyles
-        = dout_dx_mul_styles * x * v + u * ddcoefs_dstyles
+        = dconv2d_resample__dx_mul_styles * dx_mul_styles_dstyles * v + u * ddcoefs_dstyles
+        = dconv2d_resample__dx_mul_styles * x * v + u * ddcoefs_dstyles
+        
+        dloss_dstyles = dloss_dout * dout_dstyles
+        = dloss_dout * dconv2d_resample__dx_mul_styles * x * v   +   dloss_dout * u * ddcoefs_dstyles
+        = dloss_dstyles_1 + dloss_dstyles_2
 
         其中u = x_2, v = dcoefs, x = 未被复写的输入x
-        du是out对conv2d_resample的输入(x * styles)的导数
+        du是conv2d_resample的输出x_2对conv2d_resample的输入(x * styles)的导数
         '''
-        dloss_dx = dloss_dout
+
+        # x_mul_styles = x * paddle.cast(styles, dtype=x.dtype).reshape((batch_size, -1, 1, 1))
+        # x_2 = conv2d_resample(x_mul_styles)
+        # if demodulate and noise is not None:
+        #     out = x_2 * paddle.cast(dcoefs, dtype=x.dtype).reshape((batch_size, -1, 1, 1)) + paddle.cast(noise, dtype=x.dtype)
+        # elif demodulate:
+        #     out = x_2 * paddle.cast(dcoefs, dtype=x.dtype).reshape((batch_size, -1, 1, 1))
+        # elif noise is not None:
+        #     out = x_2 + paddle.cast(noise, dtype=x.dtype)
+        # else:
+        #     out = x_2
+
         if demodulate and noise is not None:
             u = x_2
             v = paddle.cast(dcoefs, dtype=x.dtype).reshape((batch_size, -1, 1, 1))
-
-            dout_dout = paddle.ones(dloss_dout.shape, dtype=paddle.float32)
-            dout_dx_mul_styles, _ = conv2d_resample_grad(dout_dout, x_1, x_mul_styles,
-                                                         paddle.cast(weight, dtype=x.dtype), filter=resample_filter,
-                                                         up=up, down=down, padding=padding, flip_weight=flip_weight)
+            dloss_dx_2 = dloss_dout * v
+            dloss_dv = dloss_dout * v
 
         elif demodulate:
             # x = x * paddle.cast(dcoefs, dtype=x.dtype).reshape((batch_size, -1, 1, 1))
             raise NotImplementedError("not implemented.")
         elif noise is not None:
-            pass
+            dloss_dx_2 = dloss_dout
+        else:
+            dloss_dx_2 = dloss_dout
 
-        dloss_dx, dloss_dweight = conv2d_resample_grad(dloss_dx, x_1, x, paddle.cast(weight, dtype=x.dtype), filter=resample_filter, up=up, down=down, padding=padding, flip_weight=flip_weight)
+        dloss_dx_mul_styles = conv2d_resample_grad(dloss_dx_2)
+        dloss_dx = dloss_dx_mul_styles * paddle.cast(styles, dtype=x.dtype).reshape((batch_size, -1, 1, 1))
 
-        dloss_dx = dloss_dx * paddle.cast(styles, dtype=x.dtype).reshape((batch_size, -1, 1, 1))
+        # dconv2d_resample__dconv2d_resample = paddle.ones(x_2.shape, dtype=paddle.float32)
+        # dconv2d_resample__dx_mul_styles = conv2d_resample_grad(dconv2d_resample__dconv2d_resample)
+
 
         if demodulate and fused_modconv:
             # 不可能执行这个，因为fused_modconv肯定是False
             pass
         if demodulate:
-            # dcoefs = (w.square().sum(axis=[2, 3, 4]) + 1e-8).rsqrt()  # [NO]
             ddcoefs_ddcoefs = paddle.ones(dcoefs.shape, dtype=paddle.float32)
-            ddcoefs_dw_square_sum_add_1e8 = -0.5 * ddcoefs_ddcoefs * dcoefs * dcoefs * dcoefs
-            ddcoefs_dw_square_sum = ddcoefs_dw_square_sum_add_1e8
-            ddcoefs_dw_square = paddle.unsqueeze(ddcoefs_dw_square_sum, axis=[2, 3, 4])
-            ddcoefs_dw_square = paddle.tile(ddcoefs_dw_square, [1, 1, w.shape[2], w.shape[3], w.shape[4]])
-            ddcoefs_dw1 = ddcoefs_dw_square * 2 * w
+            # sum()的求导有2步，先unsqueeze()再tile()，变回求和之前的形状。
+            ddcoefs_dw1 = paddle.unsqueeze(ddcoefs_ddcoefs, axis=[2, 3, 4])
+            ddcoefs_dw1 = paddle.tile(ddcoefs_dw1, [1, 1, D_w1_2, D_w1_3, D_w1_4])
         if demodulate or fused_modconv:
+            pass
             # w = weight.unsqueeze(0)  # [NOIkk]
             # w = w * styles.reshape((batch_size, 1, -1, 1, 1))  # [NOIkk]
-            ddcoefs_dstyles = ddcoefs_dw1 * w0
-            ddcoefs_dstyles = paddle.sum(ddcoefs_dstyles, axis=[1, 3, 4])
-            ddcoefs_dstyles = paddle.unsqueeze(ddcoefs_dstyles, axis=[2, 3])
-            aaaaaaaaaaa1 = dout_dx_mul_styles
-            aaaaaaaaaaa2 = x
-            aaaaaaaaaaa3 = v
-            aaaaaaaaaaa4 = u
-            aaaaaaaaaaa5 = ddcoefs_dstyles
-            aaaaaaaaaaa6 = ddcoefs_dw1
-            aaaaaaaaaaa7 = w0
-            dout_dstyles = dout_dx_mul_styles * x * v + u * ddcoefs_dstyles
+            # ddcoefs_dstyles = ddcoefs_dw1 * w0
+            # ddcoefs_dstyles = paddle.sum(ddcoefs_dstyles, axis=[1, 3, 4])
+            # ddcoefs_dstyles = paddle.unsqueeze(ddcoefs_dstyles, axis=[2, 3])
+            # aaaaaaaaaaa1 = dconv2d_resample__dx_mul_styles
+            # aaaaaaaaaaa2 = x
+            # aaaaaaaaaaa3 = v
+            # aaaaaaaaaaa4 = u
+            # aaaaaaaaaaa5 = ddcoefs_dstyles
+            # aaaaaaaaaaa6 = ddcoefs_dw1
+            # aaaaaaaaaaa7 = w0
+            # ddcoefs_dstyles = ddcoefs_dw1 * w0
+            # ddcoefs_dstyles = paddle.sum(ddcoefs_dstyles, axis=[1, 3, 4], keepdim=True)
             print()
-            dloss_dstyles = dloss_dout * dout_dstyles
-            dloss_dstyles = paddle.sum(dloss_dstyles, axis=[2, 3])
+            # dout_dstyles_1和dout_dstyles_2分别变回styles原来的形状，再求和
+            # dout_dstyles_1 = dconv2d_resample__dx_mul_styles * x * v
+            # dout_dstyles_1 = paddle.sum(dout_dstyles_1, axis=[2, 3], keepdim=False)
+            # dout_dstyles_2 = u * ddcoefs_dstyles
+            # dout_dstyles = dout_dstyles_1 + dout_dstyles_2
+            # print()
+            # dloss_dstyles = dloss_dout * dout_dstyles
+            # dloss_dstyles = paddle.sum(dloss_dstyles, axis=[2, 3])
 
 
         print('eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee')
+        dloss_dstyles = None
         return dloss_dx, dloss_dstyles
 
 
@@ -471,15 +490,15 @@ for batch_idx in range(8):
     dy_dx, dy_dstyles = fff_grad(dysum_dy, x_2, x_mul_styles, x, w, styles, noise, up=up, down=down, padding=padding, resample_filter=resample_filter,
                                               demodulate=demodulate, flip_weight=flip_weight, fused_modconv=fused_modconv)
 
-    aaaaaa = y.numpy()
-    ddd = np.mean((y_pytorch - aaaaaa) ** 2)
+    y_paddle = y.numpy()
+    ddd = np.mean((y_pytorch - y_paddle) ** 2)
     print('ddd=%.6f' % ddd)
 
     dy_dx_paddle = dy_dx.numpy()
     ddd = np.mean((dy_dx_pytorch - dy_dx_paddle) ** 2)
     print('ddd=%.6f' % ddd)
 
-    dy_dstyles_paddle = dy_dstyles.numpy()
-    ddd = np.mean((dy_dstyles_pytorch - dy_dstyles_paddle) ** 2)
-    print('ddd=%.6f' % ddd)
+    # dy_dstyles_paddle = dy_dstyles.numpy()
+    # ddd = np.mean((dy_dstyles_pytorch - dy_dstyles_paddle) ** 2)
+    # print('ddd=%.6f' % ddd)
 print()
