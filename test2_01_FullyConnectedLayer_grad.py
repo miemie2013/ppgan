@@ -32,13 +32,14 @@ for batch_idx in range(20):
     ws.requires_grad_(True)
 
     styles = model(ws)
-    dstyles_dws = torch.autograd.grad(outputs=[styles.sum()], inputs=[ws], create_graph=True, only_inputs=True)[0]
+    styles2 = styles.square()
+    dstyles2_dws = torch.autograd.grad(outputs=[styles2.sum()], inputs=[ws], create_graph=True, only_inputs=True)[0]
 
-    dic['batch_%.3d.dstyles_dws'%batch_idx] = dstyles_dws.cpu().detach().numpy()
+    dic['batch_%.3d.dstyles2_dws'%batch_idx] = dstyles2_dws.cpu().detach().numpy()
     dic['batch_%.3d.output'%batch_idx] = styles.cpu().detach().numpy()
     dic['batch_%.3d.input'%batch_idx] = ws.cpu().detach().numpy()
 
-    loss = dstyles_dws.sum() + styles.sum()
+    loss = dstyles2_dws.sum() + styles2.sum()
     loss.backward()
     optimizer.step()
 np.savez('01_fullyConnectedLayer_grad', **dic)

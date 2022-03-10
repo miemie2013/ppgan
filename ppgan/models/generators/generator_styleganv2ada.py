@@ -122,9 +122,9 @@ def bias_act(x, b=None, dim=1, act='linear', alpha=None, gain=None, clamp=None):
         x = paddle.clip(x, -clamp, clamp)
     clamp_x = x
     temp_tensors = {}
-    temp_tensors['gain_x'] = gain_x.detach()
-    temp_tensors['act_x'] = act_x.detach()
-    temp_tensors['x_add_b'] = x_add_b.detach()
+    temp_tensors['gain_x'] = gain_x
+    temp_tensors['act_x'] = act_x
+    temp_tensors['x_add_b'] = x_add_b
     return clamp_x, temp_tensors
 
 
@@ -1422,8 +1422,8 @@ class ToRGBLayer(nn.Layer):
 
     def forward(self, x, w, fused_modconv=True):
         self.grad_layer.w = w.detach()
-        # styles = self.affine(w) * self.weight_gain
-        styles = w
+        styles = self.affine(w) * self.weight_gain
+        # styles = w
         self.grad_layer.styles = styles.detach()
         self.grad_layer.x = x.detach()
         self.grad_layer.fused_modconv = fused_modconv
@@ -1480,9 +1480,9 @@ class ToRGBLayer_Grad(nn.Layer):
         dloss_dx2 = bias_act_grad(dloss_dout, out, temp_tensors, b=b, clamp=self.conv_clamp)
 
         dloss_dx, dloss_dstyles = modulated_conv2d_grad(dloss_dx2, x_1, x_2, x_mul_styles, x=x, weight=self.weight, styles=styles, demodulate=False, fused_modconv=fused_modconv)
-        # dloss_daffine_w = dloss_dstyles * self.weight_gain
-        # dloss_dw = self.affine.grad_layer(dloss_daffine_w)
-        dloss_dw = dloss_dstyles
+        dloss_daffine_w = dloss_dstyles * self.weight_gain
+        dloss_dw = self.affine.grad_layer(dloss_daffine_w)
+        # dloss_dw = dloss_dstyles
         return dloss_dx, dloss_dw, dloss_dstyles
 
 

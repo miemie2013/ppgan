@@ -29,24 +29,40 @@ for batch_idx in range(20):
     optimizer.clear_gradients()
     ws = dic2['batch_%.3d.input'%batch_idx]
     styles_pytorch = dic2['batch_%.3d.output'%batch_idx]
-    dstyles_dws_pytorch = dic2['batch_%.3d.dstyles_dws'%batch_idx]
+    dstyles2_dws_pytorch = dic2['batch_%.3d.dstyles2_dws'%batch_idx]
     ws = paddle.to_tensor(ws)
     ws.stop_gradient = False
     styles = model(ws)
-    # dstyles_dws = paddle.grad(outputs=[styles.sum()], inputs=[ws], create_graph=True)[0]
-    # dysum_dy = paddle.grad(outputs=[styles.sum()], inputs=[styles], create_graph=True)[0]
-    dysum_dy = paddle.ones(styles.shape, dtype=paddle.float32)
-    dstyles_dws = model.grad_layer(dysum_dy)
+
+    # 记录styles_clone
+
+    # 正确的
+    styles_clone = styles
+    # styles_clone = styles.clone()
+
+    # 错误的
+    # styles_clone = styles.detach()
+    # styles_clone = styles.numpy()
+    # styles_clone = paddle.to_tensor(styles_clone)
+    # styles_clone = paddle.ones(styles.shape, dtype=paddle.float32)
+    # styles_clone.set_value(styles)
+
+
+    styles2 = styles.square()
+    # dstyles2_dws = paddle.grad(outputs=[styles2.sum()], inputs=[ws], create_graph=True)[0]
+    dstyles2_dstyles2 = paddle.ones(styles2.shape, dtype=paddle.float32)
+    dstyles2_dstyles = dstyles2_dstyles2 * 2 * styles_clone
+    dstyles2_dws = model.grad_layer(dstyles2_dstyles)
 
     aaaaaa = styles.numpy()
     ddd = np.sum((styles_pytorch - aaaaaa) ** 2)
     print('ddd=%.6f' % ddd)
 
-    aaaaaa = dstyles_dws.numpy()
-    ddd = np.sum((dstyles_dws_pytorch - aaaaaa) ** 2)
+    aaaaaa = dstyles2_dws.numpy()
+    ddd = np.sum((dstyles2_dws_pytorch - aaaaaa) ** 2)
     print('ddd=%.6f' % ddd)
 
-    loss = dstyles_dws.sum() + styles.sum()
+    loss = dstyles2_dws.sum() + styles2.sum()
     loss.backward()
     optimizer.step()
 print()
