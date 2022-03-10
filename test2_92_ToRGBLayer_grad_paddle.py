@@ -51,9 +51,9 @@ for batch_idx in range(20):
     ddd = np.sum((dy_dws_pytorch - dy_dws_paddle) ** 2)
     print('ddd=%.6f' % ddd)
 
-    # loss = dy_dx.sum() + dy_dws.sum() + y.sum()
+    loss = dy_dx.sum() + dy_dws.sum() + y.sum()
     # loss = dy_dx.sum() + y.sum()
-    loss = dy_dws.sum() + y.sum()
+    # loss = dy_dws.sum() + y.sum()
     # loss = y.sum()
     loss.backward()
     optimizer.step()

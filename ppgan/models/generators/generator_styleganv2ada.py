@@ -1286,7 +1286,7 @@ def modulated_conv2d_grad(dloss_dout, x_1, x_2, x_mul_styles,
     if not fused_modconv:
         if demodulate:
             dloss_dx_2 = dloss_dout * paddle.cast(dcoefs, dtype=x.dtype).reshape((batch_size, -1, 1, 1))
-            dloss_dstyles_1 = dloss_dx_2         # du * v
+            dloss_dstyles_1 = dloss_dout * paddle.cast(dcoefs, dtype=x.dtype).reshape((batch_size, -1, 1, 1))         # du * v
             dloss_dstyles_2 = x_2 * dloss_dout   # u * dv
             dloss_dstyles_2 = paddle.sum(dloss_dstyles_2, axis=[2, 3])
         elif noise is not None:
@@ -1294,13 +1294,14 @@ def modulated_conv2d_grad(dloss_dout, x_1, x_2, x_mul_styles,
         else:
             dloss_dx_2 = dloss_dout
         dloss_dx_mul_styles, dloss_dweight = conv2d_resample_grad(dloss_dx_2, x_1, x_mul_styles, paddle.cast(weight, dtype=x.dtype), filter=resample_filter, up=up, down=down, padding=padding, flip_weight=flip_weight)
-        dloss_dstyles_1 = dloss_dx_mul_styles
+        if demodulate:
+            dloss_dstyles_1, _ = conv2d_resample_grad(dloss_dstyles_1, x_1, x_mul_styles, paddle.cast(weight, dtype=x.dtype), filter=resample_filter, up=up, down=down, padding=padding, flip_weight=flip_weight)
+            dloss_dstyles_1 = dloss_dstyles_1 * x
+            dloss_dstyles_1 = paddle.sum(dloss_dstyles_1, axis=[2, 3])
         if not demodulate:
             dloss_dstyles = dloss_dx_mul_styles * x
             dloss_dstyles = paddle.sum(dloss_dstyles, axis=[2, 3])
         dloss_dx = dloss_dx_mul_styles * paddle.cast(styles, dtype=x.dtype).reshape((batch_size, -1, 1, 1))
-        dloss_dstyles_1 = dloss_dstyles_1 * x
-        dloss_dstyles_1 = paddle.sum(dloss_dstyles_1, axis=[2, 3])
 
         if demodulate and fused_modconv:
             # 不可能执行这个，因为fused_modconv肯定是False

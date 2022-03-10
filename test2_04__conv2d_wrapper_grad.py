@@ -19,7 +19,7 @@ class Model(torch.nn.Module):
 lr = 0.0001
 dic = {}
 batch_size = 2
-for batch_idx in range(8):
+for batch_idx in range(20):
     x_shape = [1, 8, 1, 1]
     w_shape = [4, 8, 1, 1]
     stride = 1
@@ -44,37 +44,37 @@ for batch_idx in range(8):
     transpose = False
     flip_weight = False
 
-    # x_shape = [1, 512, 4, 4]
-    # w_shape = [512, 512, 3, 3]
-    # stride = 1
-    # padding = [1, 1]
-    # groups = 1
-    # transpose = False
-    # flip_weight = True
+    x_shape = [1, 512, 4, 4]
+    w_shape = [512, 512, 3, 3]
+    stride = 1
+    padding = [1, 1]
+    groups = 1
+    transpose = False
+    flip_weight = True
 
-    # x_shape = [1, 512, 4, 4]
-    # w_shape = [3, 512, 1, 1]
-    # stride = 1
-    # padding = [0, 0]
-    # groups = 1
-    # transpose = False
-    # flip_weight = True
+    x_shape = [1, 512, 4, 4]
+    w_shape = [3, 512, 1, 1]
+    stride = 1
+    padding = [0, 0]
+    groups = 1
+    transpose = False
+    flip_weight = True
 
-    # x_shape = [1, 512, 4, 4]
-    # w_shape = [512, 512, 3, 3]
-    # stride = 2
-    # padding = [0, 0]
-    # groups = 1
-    # transpose = True
-    # flip_weight = True
+    x_shape = [1, 512, 4, 4]
+    w_shape = [512, 512, 3, 3]
+    stride = 2
+    padding = [0, 0]
+    groups = 1
+    transpose = True
+    flip_weight = True
 
-    # x_shape = [1, 512, 8, 8]
-    # w_shape = [512, 512, 3, 3]
-    # stride = 1
-    # padding = [1, 1]
-    # groups = 1
-    # transpose = False
-    # flip_weight = True
+    x_shape = [1, 512, 8, 8]
+    w_shape = [512, 512, 3, 3]
+    stride = 1
+    padding = [1, 1]
+    groups = 1
+    transpose = False
+    flip_weight = True
 
     # x_shape = [1, 512, 8, 8]
     # w_shape = [3, 512, 1, 1]
@@ -180,13 +180,13 @@ for batch_idx in range(8):
     # transpose = False
     # flip_weight = True
 
-    # x_shape = [1, 256, 128, 128]
-    # w_shape = [256, 128, 3, 3]
-    # stride = 2
-    # padding = [0, 0]
-    # groups = 1
-    # transpose = True
-    # flip_weight = True
+    x_shape = [1, 256, 128, 128]
+    w_shape = [256, 128, 3, 3]
+    stride = 2
+    padding = [0, 0]
+    groups = 1
+    transpose = True
+    flip_weight = True
 
     # x_shape = [1, 128, 256, 256]
     # w_shape = [128, 128, 3, 3]
@@ -252,6 +252,8 @@ for batch_idx in range(8):
 
 
     loss = y.sum() + dy_dx.sum() + dy_dw.sum()
+    # loss = y.sum() + dy_dx.sum()
+    # loss = y.sum() + dy_dw.sum()
     loss.backward()
     optimizer.step()
     optimizer.zero_grad(set_to_none=True)
