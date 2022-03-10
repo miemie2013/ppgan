@@ -1261,13 +1261,7 @@ def modulated_conv2d_grad(dloss_dout, x_1, x_2, x_mul_styles,
 
     # Pre-normalize inputs to avoid FP16 overflow.
     if x.dtype == paddle.float16 and demodulate:
-        d0, d1, d2, d3 = weight.shape
-        weight_temp = weight.reshape((d0, d1, d2 * d3))
-        weight_temp = paddle.norm(weight_temp, p=np.inf, axis=[1, 2], keepdim=True)
-        weight_temp = weight_temp.reshape((d0, 1, 1, 1))
-        weight = weight * (1 / np.sqrt(in_channels * kh * kw) / weight_temp) # max_Ikk
-        styles_temp = paddle.norm(styles, p=np.inf, axis=1, keepdim=True)
-        styles = styles / styles_temp # max_I
+        raise NotImplementedError("not implemented.")
 
     # Calculate per-sample weights and demodulation coefficients.
     w = None
@@ -1321,18 +1315,12 @@ def modulated_conv2d_grad(dloss_dout, x_1, x_2, x_mul_styles,
             dloss_dstyles_2 = paddle.sum(dloss_dstyles_2, axis=[1, 3, 4])
             dloss_dstyles = dloss_dstyles_1 + dloss_dstyles_2
 
-        print('eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee')
+        # print('eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee')
         return dloss_dx, dloss_dstyles
 
     # Execute as one fused op using grouped convolution.
     else:
-        x = x.reshape((1, -1, *x.shape[2:]))
-        w = w.reshape((-1, in_channels, kh, kw))
-        x, x_1 = conv2d_resample(x=x, w=paddle.cast(w, dtype=x.dtype), filter=resample_filter, up=up, down=down, padding=padding, groups=batch_size, flip_weight=flip_weight)
-        x = x.reshape((batch_size, -1, *x.shape[2:]))
-        if noise is not None:
-            x = x + noise
-        return x
+        raise NotImplementedError("not implemented.")
 
 
 class SynthesisLayer(nn.Layer):
