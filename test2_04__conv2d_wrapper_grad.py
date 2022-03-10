@@ -188,45 +188,45 @@ for batch_idx in range(20):
     transpose = True
     flip_weight = True
 
-    # x_shape = [1, 128, 256, 256]
-    # w_shape = [128, 128, 3, 3]
-    # stride = 1
-    # padding = [1, 1]
-    # groups = 1
-    # transpose = False
-    # flip_weight = True
+    x_shape = [1, 128, 256, 256]
+    w_shape = [128, 128, 3, 3]
+    stride = 1
+    padding = [1, 1]
+    groups = 1
+    transpose = False
+    flip_weight = True
 
-    # x_shape = [1, 128, 256, 256]
-    # w_shape = [3, 128, 1, 1]
-    # stride = 1
-    # padding = [0, 0]
-    # groups = 1
-    # transpose = False
-    # flip_weight = True
+    x_shape = [1, 128, 256, 256]
+    w_shape = [3, 128, 1, 1]
+    stride = 1
+    padding = [0, 0]
+    groups = 1
+    transpose = False
+    flip_weight = True
 
-    # x_shape = [1, 128, 256, 256]
-    # w_shape = [128, 64, 3, 3]
-    # stride = 2
-    # padding = [0, 0]
-    # groups = 1
-    # transpose = True
-    # flip_weight = True
+    x_shape = [1, 128, 256, 256]
+    w_shape = [128, 64, 3, 3]
+    stride = 2
+    padding = [0, 0]
+    groups = 1
+    transpose = True
+    flip_weight = True
 
-    # x_shape = [1, 64, 512, 512]
-    # w_shape = [64, 64, 3, 3]
-    # stride = 1
-    # padding = [1, 1]
-    # groups = 1
-    # transpose = False
-    # flip_weight = True
+    x_shape = [1, 64, 512, 512]
+    w_shape = [64, 64, 3, 3]
+    stride = 1
+    padding = [1, 1]
+    groups = 1
+    transpose = False
+    flip_weight = True
 
-    # x_shape = [1, 64, 512, 512]
-    # w_shape = [3, 64, 1, 1]
-    # stride = 1
-    # padding = [0, 0]
-    # groups = 1
-    # transpose = False
-    # flip_weight = True
+    x_shape = [1, 64, 512, 512]
+    w_shape = [3, 64, 1, 1]
+    stride = 1
+    padding = [0, 0]
+    groups = 1
+    transpose = False
+    flip_weight = True
 
 
 
