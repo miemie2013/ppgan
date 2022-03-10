@@ -122,9 +122,9 @@ def bias_act(x, b=None, dim=1, act='linear', alpha=None, gain=None, clamp=None):
         x = paddle.clip(x, -clamp, clamp)
     clamp_x = x
     temp_tensors = {}
-    temp_tensors['gain_x'] = gain_x
-    temp_tensors['act_x'] = act_x
-    temp_tensors['x_add_b'] = x_add_b
+    temp_tensors['gain_x'] = gain_x.detach()
+    temp_tensors['act_x'] = act_x.detach()
+    temp_tensors['x_add_b'] = x_add_b.detach()
     return clamp_x, temp_tensors
 
 
@@ -768,7 +768,7 @@ def conv2d_resample(x, w, filter=None, up=1, down=1, padding=0, groups=1, flip_w
         x = upfirdn2d(x, filter, down=down, padding=[px0, px1, py0, py1], flip_filter=flip_filter)
         x_1 = x
         x = _conv2d_wrapper(x=x, w=w, groups=groups, flip_weight=flip_weight)
-        return x, x_1
+        return x, x_1.detach()
 
     # Fast path: 1x1 convolution with upsampling only => convolve first, then upsample.
     if kw == 1 and kh == 1 and (up > 1 and down == 1):
@@ -801,7 +801,7 @@ def conv2d_resample(x, w, filter=None, up=1, down=1, padding=0, groups=1, flip_w
         x = upfirdn2d(x, filter, padding=[px0 + pxt, px1 + pxt, py0 + pyt, py1 + pyt], gain=up ** 2, flip_filter=flip_filter)
         if down > 1:
             x = upfirdn2d(x, filter, down=down, flip_filter=flip_filter)
-        return x, x_1
+        return x, x_1.detach()
 
     # Fast path: no up/downsampling, padding supported by the underlying implementation => use plain conv2d.
     if up == 1 and down == 1:
@@ -1228,7 +1228,11 @@ def modulated_conv2d(
             out = x_2 + paddle.cast(noise, dtype=x.dtype)
         else:
             out = x_2
-        return out, x_1, x_2, x_mul_styles
+        if x_1 is not None:
+            x_1_ = x_1.detach()
+        else:
+            x_1_ = None
+        return out, x_1_, x_2.detach(), x_mul_styles.detach()
 
     # Execute as one fused op using grouped convolution.
     else:
@@ -1418,8 +1422,19 @@ class ToRGBLayer(nn.Layer):
     def forward(self, x, w, fused_modconv=True):
         styles = self.affine(w) * self.weight_gain
         self.grad_layer.styles = styles.detach()
-        x2 = modulated_conv2d(x=x, weight=self.weight, styles=styles, demodulate=False, fused_modconv=fused_modconv)
+        self.grad_layer.x = x.detach()
+        self.grad_layer.fused_modconv = fused_modconv
+        self.grad_layer.weight_gain = self.weight_gain
+        self.grad_layer.weight = self.weight
+        self.grad_layer.affine = self.affine
+        x2, x_1, x_2, x_mul_styles = modulated_conv2d(x=x, weight=self.weight, styles=styles, demodulate=False, fused_modconv=fused_modconv)
         self.grad_layer.x2 = x2.detach()
+        if x_1 is not None:
+            self.grad_layer.x_1 = x_1.detach()
+        else:
+            self.grad_layer.x_1 = None
+        self.grad_layer.x_2 = x_2.detach()
+        self.grad_layer.x_mul_styles = x_mul_styles.detach()
         b = paddle.cast(self.bias, dtype=x.dtype)
         self.grad_layer.b = b
         out, temp_tensors = bias_act(x2, b, clamp=self.conv_clamp)
@@ -1447,12 +1462,23 @@ class ToRGBLayer_Grad(nn.Layer):
         gain_x2 = self.gain_x2
         act_x2 = self.act_x2
         x2_add_b = self.x2_add_b
+
+        x = self.x
+        x_1 = self.x_1
+        x_2 = self.x_2
+        x_mul_styles = self.x_mul_styles
+        fused_modconv = self.fused_modconv
+
         temp_tensors = {}
         temp_tensors['gain_x'] = gain_x2
         temp_tensors['act_x'] = act_x2
         temp_tensors['x_add_b'] = x2_add_b
         dloss_dx2 = bias_act_grad(dloss_dout, out, temp_tensors, b=b, clamp=self.conv_clamp)
-        return dloss_dx2
+
+        dloss_dx, dloss_dstyles = modulated_conv2d_grad(dloss_dx2, x_1, x_2, x_mul_styles, x=x, weight=self.weight, styles=styles, demodulate=False, fused_modconv=fused_modconv)
+        dloss_daffine_w = dloss_dstyles * self.weight_gain
+        dloss_dw = self.affine.grad_layer(dloss_daffine_w)
+        return dloss_dx, dloss_dw
 
 
 

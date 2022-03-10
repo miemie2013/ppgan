@@ -34,24 +34,27 @@ for batch_idx in range(20):
     x.stop_gradient = False
     y = model(x, ws, fused_modconv=fused_modconv)
 
-    dy_dx = paddle.grad(outputs=[y.sum()], inputs=[x], create_graph=True)[0]
-    dy_dws = paddle.grad(outputs=[y.sum()], inputs=[ws], create_graph=True)[0]
-    # dysum_dy = paddle.ones(y.shape, dtype=paddle.float32)
-    # dy_dx, dy_dws = model.grad_layer(dysum_dy)
+    # dy_dx = paddle.grad(outputs=[y.sum()], inputs=[x], create_graph=True)[0]
+    # dy_dws = paddle.grad(outputs=[y.sum()], inputs=[ws], create_graph=True)[0]
+    dysum_dy = paddle.ones(y.shape, dtype=paddle.float32)
+    dy_dx, dy_dws = model.grad_layer(dysum_dy)
 
-    aaaaaa = y.numpy()
-    ddd = np.sum((y_pytorch - aaaaaa) ** 2)
+    y_paddle = y.numpy()
+    ddd = np.sum((y_pytorch - y_paddle) ** 2)
     print('ddd=%.6f' % ddd)
 
-    aaaaaa = dy_dx.numpy()
-    ddd = np.sum((dy_dx_pytorch - aaaaaa) ** 2)
+    dy_dx_paddle = dy_dx.numpy()
+    ddd = np.sum((dy_dx_pytorch - dy_dx_paddle) ** 2)
     print('ddd=%.6f' % ddd)
 
-    aaaaaa = dy_dws.numpy()
-    ddd = np.sum((dy_dws_pytorch - aaaaaa) ** 2)
+    dy_dws_paddle = dy_dws.numpy()
+    ddd = np.sum((dy_dws_pytorch - dy_dws_paddle) ** 2)
     print('ddd=%.6f' % ddd)
 
-    loss = dy_dx.sum() + dy_dws.sum() + y.sum()
+    # loss = dy_dx.sum() + dy_dws.sum() + y.sum()
+    # loss = dy_dx.sum() + y.sum()
+    loss = dy_dws.sum() + y.sum()
+    # loss = y.sum()
     loss.backward()
     optimizer.step()
 print()
