@@ -6,6 +6,17 @@ import torch.nn.functional as F
 from torch_utils.ops.conv2d_resample import conv2d_resample
 
 
+class Model(torch.nn.Module):
+    def __init__(self, w_shape):
+        super().__init__()
+        self.weight = torch.nn.Parameter(torch.randn(w_shape))
+
+    def forward(self, x, f, up, down, padding, groups, flip_weight, flip_filter):
+        y = conv2d_resample(x, self.weight, f=f, up=up, down=down, padding=padding, groups=groups, flip_weight=flip_weight, flip_filter=flip_filter)
+        return y
+
+
+lr = 0.0001
 dic = {}
 batch_size = 2
 for batch_idx in range(8):
@@ -254,9 +265,7 @@ for batch_idx in range(8):
     # flip_filter = False
 
     x_shape[0] = batch_size
-    w = torch.randn(w_shape)
     x = torch.randn(x_shape)
-    w.requires_grad_(True)
     x.requires_grad_(True)
     if f_shape is None:
         f = None
@@ -264,17 +273,31 @@ for batch_idx in range(8):
         f = torch.randn(f_shape)
         # f.requires_grad_(True)
 
-    y = conv2d_resample(x, w, f=f, up=up, down=down, padding=padding, groups=groups, flip_weight=flip_weight, flip_filter=flip_filter)
+    if batch_idx == 0:
+        model = Model(w_shape)
+        model.train()
+        optimizer = torch.optim.SGD(model.parameters(), lr=lr, momentum=0.9)
+        torch.save(model.state_dict(), "model.pth")
+
+
+    y = model(x, f=f, up=up, down=down, padding=padding, groups=groups, flip_weight=flip_weight, flip_filter=flip_filter)
 
     dy_dx = torch.autograd.grad(outputs=[y.sum()], inputs=[x], create_graph=True, only_inputs=True)[0]
-    dy_dw = torch.autograd.grad(outputs=[y.sum()], inputs=[w], create_graph=True, only_inputs=True)[0]
+    dy_dw = torch.autograd.grad(outputs=[y.sum()], inputs=[model.weight], create_graph=True, only_inputs=True)[0]
 
     dic['batch_%.3d.dy_dx'%batch_idx] = dy_dx.cpu().detach().numpy()
     dic['batch_%.3d.dy_dw'%batch_idx] = dy_dw.cpu().detach().numpy()
     dic['batch_%.3d.y'%batch_idx] = y.cpu().detach().numpy()
     dic['batch_%.3d.x'%batch_idx] = x.cpu().detach().numpy()
-    dic['batch_%.3d.w'%batch_idx] = w.cpu().detach().numpy()
     if f is not None:
         dic['batch_%.3d.f'%batch_idx] = f.cpu().detach().numpy()
+
+
+    loss = y.sum() + dy_dx.sum() + dy_dw.sum()
+    # loss = y.sum() + dy_dx.sum()
+    # loss = y.sum() + dy_dw.sum()
+    loss.backward()
+    optimizer.step()
+    optimizer.zero_grad(set_to_none=True)
 np.savez('06_grad', **dic)
 print()

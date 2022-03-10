@@ -6,6 +6,17 @@ import paddle.nn.functional as F
 from ppgan.models.generators.generator_styleganv2ada import conv2d_resample, conv2d_resample_grad
 
 
+class Model(paddle.nn.Layer):
+    def __init__(self, w_shape):
+        super().__init__()
+        self.weight = self.create_parameter(w_shape, default_initializer=paddle.nn.initializer.Normal())
+
+    def forward(self, x, f, up, down, padding, groups, flip_weight, flip_filter):
+        y, x_1 = conv2d_resample(x, self.weight, filter=f, up=up, down=down, padding=padding, groups=groups, flip_weight=flip_weight, flip_filter=flip_filter)
+        return y, x_1
+
+
+lr = 0.0001
 dic2 = np.load('06_grad.npz')
 for batch_idx in range(8):
     print('======================== batch_%.3d ========================'%batch_idx)
@@ -256,25 +267,28 @@ for batch_idx in range(8):
     dy_dx_pytorch = dic2['batch_%.3d.dy_dx'%batch_idx]
     dy_dw_pytorch = dic2['batch_%.3d.dy_dw'%batch_idx]
     y_pytorch = dic2['batch_%.3d.y'%batch_idx]
-    w = dic2['batch_%.3d.w'%batch_idx]
     x = dic2['batch_%.3d.x'%batch_idx]
     x = paddle.to_tensor(x)
     x.stop_gradient = False
-    w = paddle.to_tensor(w)
-    w.stop_gradient = False
     if 'batch_%.3d.f'%batch_idx in dic2.keys():
         f = paddle.to_tensor(dic2['batch_%.3d.f'%batch_idx])
     else:
         f = None
 
-    y, x_1 = conv2d_resample(x, w, filter=f, up=up, down=down, padding=padding, groups=groups, flip_weight=flip_weight, flip_filter=flip_filter)
-    # dy_dx = paddle.grad(outputs=[y.sum()], inputs=[x], create_graph=True)[0]
-    # dy_dw = paddle.grad(outputs=[y.sum()], inputs=[w], create_graph=True)[0]
-    dysum_dy = paddle.ones(y.shape, dtype=paddle.float32)
-    dy_dx, dy_dw = conv2d_resample_grad(dysum_dy, x_1, x, w, filter=f, up=up, down=down, padding=padding, groups=groups, flip_weight=flip_weight, flip_filter=flip_filter)
+    if batch_idx == 0:
+        model = Model(w_shape)
+        model.train()
+        optimizer = paddle.optimizer.Momentum(parameters=model.parameters(), learning_rate=lr, momentum=0.9)
+        model.set_state_dict(paddle.load("model.pdparams"))
 
-    aaaaaa = y.numpy()
-    ddd = np.mean((y_pytorch - aaaaaa) ** 2)
+    y, x_1 = model(x, f=f, up=up, down=down, padding=padding, groups=groups, flip_weight=flip_weight, flip_filter=flip_filter)
+    # dy_dx = paddle.grad(outputs=[y.sum()], inputs=[x], create_graph=True)[0]
+    # dy_dw = paddle.grad(outputs=[y.sum()], inputs=[model.weight], create_graph=True)[0]
+    dysum_dy = paddle.ones(y.shape, dtype=paddle.float32)
+    dy_dx, dy_dw = conv2d_resample_grad(dysum_dy, x_1, x, model.weight, filter=f, up=up, down=down, padding=padding, groups=groups, flip_weight=flip_weight, flip_filter=flip_filter)
+
+    y_paddle = y.numpy()
+    ddd = np.mean((y_pytorch - y_paddle) ** 2)
     print('ddd=%.6f' % ddd)
 
     dy_dx_paddle = dy_dx.numpy()
@@ -284,4 +298,11 @@ for batch_idx in range(8):
     dy_dw_paddle = dy_dw.numpy()
     ddd = np.mean((dy_dw_pytorch - dy_dw_paddle) ** 2)
     print('ddd=%.6f' % ddd)
+
+    loss = y.sum() + dy_dx.sum() + dy_dw.sum()
+    # loss = y.sum() + dy_dx.sum()
+    # loss = y.sum() + dy_dw.sum()
+    loss.backward()
+    optimizer.step()
+    optimizer.clear_gradients()
 print()
