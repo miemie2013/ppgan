@@ -1218,17 +1218,17 @@ def modulated_conv2d(
 
     # Execute by scaling the activations before and after the convolution.
     if not fused_modconv:
-        x = x * paddle.cast(styles, dtype=x.dtype).reshape((batch_size, -1, 1, 1))
-        x_mul_styles = x
-        x, x_1 = conv2d_resample(x=x, w=paddle.cast(weight, dtype=x.dtype), filter=resample_filter, up=up, down=down, padding=padding, flip_weight=flip_weight)
-        x_2 = x
+        x_mul_styles = x * paddle.cast(styles, dtype=x.dtype).reshape((batch_size, -1, 1, 1))
+        x_2, x_1 = conv2d_resample(x=x_mul_styles, w=paddle.cast(weight, dtype=x.dtype), filter=resample_filter, up=up, down=down, padding=padding, flip_weight=flip_weight)
         if demodulate and noise is not None:
-            x = x * paddle.cast(dcoefs, dtype=x.dtype).reshape((batch_size, -1, 1, 1)) + paddle.cast(noise, dtype=x.dtype)
+            out = x_2 * paddle.cast(dcoefs, dtype=x.dtype).reshape((batch_size, -1, 1, 1)) + paddle.cast(noise, dtype=x.dtype)
         elif demodulate:
-            x = x * paddle.cast(dcoefs, dtype=x.dtype).reshape((batch_size, -1, 1, 1))
+            out = x_2 * paddle.cast(dcoefs, dtype=x.dtype).reshape((batch_size, -1, 1, 1))
         elif noise is not None:
-            x = x + paddle.cast(noise, dtype=x.dtype)
-        return x, x_1, x_2, x_mul_styles
+            out = x_2 + paddle.cast(noise, dtype=x.dtype)
+        else:
+            out = x_2
+        return out, x_1, x_2, x_mul_styles
 
     # Execute as one fused op using grouped convolution.
     else:
@@ -1277,6 +1277,7 @@ def modulated_conv2d_grad(dloss_dout, x_1, x_2, x_mul_styles,
         w0 = w
         w = w * styles.reshape((batch_size, 1, -1, 1, 1))  # [NOIkk]
         w1 = w
+        _, _, D_w1_2, D_w1_3, D_w1_4 = w1.shape
     if demodulate:
         dcoefs = (w.square().sum(axis=[2, 3, 4]) + 1e-8).rsqrt()  # [NO]
     if demodulate and fused_modconv:
@@ -1285,69 +1286,40 @@ def modulated_conv2d_grad(dloss_dout, x_1, x_2, x_mul_styles,
 
     # Execute by scaling the activations before and after the convolution.
     if not fused_modconv:
-        dloss_dx = dloss_dout
-
-        '''
-        loss对styles的导数比较复杂，因为本层中styles可能被使用了多次，比如，
-        dcoefs的表达式包含有styles，x和styles相乘之后，又和dcoefs相乘。
-        为了求出loss对styles的导数，
-
-        简化运算关系：
-        out = conv2d_resample(x * styles) * dcoefs(styles) = u * v
-        dout_dstyles = u'v * x + uv' = du * v * x + u * dv
-        = dout_dx_mul_styles * dx_mul_styles_dstyles * v + u * ddcoefs_dstyles
-        = dout_dx_mul_styles * x * v + u * ddcoefs_dstyles
-        
-        其中u = x_2, v = dcoefs, x = 未被复写的输入x
-        du是out对conv2d_resample的输入(x * styles)的导数
-        '''
-        if demodulate and noise is not None:
-            u = x_2
-            v = paddle.cast(dcoefs, dtype=x.dtype).reshape((batch_size, -1, 1, 1))
-
-            dout_dout = paddle.ones(dloss_dout.shape, dtype=paddle.float32)
-            dout_dx_mul_styles, _ = conv2d_resample_grad(dout_dout, x_1, x_mul_styles, paddle.cast(weight, dtype=x.dtype), filter=resample_filter, up=up, down=down, padding=padding, flip_weight=flip_weight)
-
-        elif demodulate:
-            # x = x * paddle.cast(dcoefs, dtype=x.dtype).reshape((batch_size, -1, 1, 1))
-            raise NotImplementedError("not implemented.")
+        if demodulate:
+            dloss_dx_2 = dloss_dout * paddle.cast(dcoefs, dtype=x.dtype).reshape((batch_size, -1, 1, 1))
+            dloss_dstyles_1 = dloss_dx_2         # du * v
+            dloss_dstyles_2 = x_2 * dloss_dout   # u * dv
+            dloss_dstyles_2 = paddle.sum(dloss_dstyles_2, axis=[2, 3])
         elif noise is not None:
-            pass
-        dloss_dx, dloss_dweight = conv2d_resample_grad(dloss_dx, x_1, x, paddle.cast(weight, dtype=x.dtype), filter=resample_filter, up=up, down=down, padding=padding, flip_weight=flip_weight)
+            dloss_dx_2 = dloss_dout
+        else:
+            dloss_dx_2 = dloss_dout
+        dloss_dx_mul_styles, dloss_dweight = conv2d_resample_grad(dloss_dx_2, x_1, x_mul_styles, paddle.cast(weight, dtype=x.dtype), filter=resample_filter, up=up, down=down, padding=padding, flip_weight=flip_weight)
+        dloss_dstyles_1 = dloss_dx_mul_styles
         if not demodulate:
-            dloss_dstyles = dloss_dx * x
+            dloss_dstyles = dloss_dx_mul_styles * x
             dloss_dstyles = paddle.sum(dloss_dstyles, axis=[2, 3])
-        dloss_dx = dloss_dx * paddle.cast(styles, dtype=x.dtype).reshape((batch_size, -1, 1, 1))
+        dloss_dx = dloss_dx_mul_styles * paddle.cast(styles, dtype=x.dtype).reshape((batch_size, -1, 1, 1))
+        dloss_dstyles_1 = dloss_dstyles_1 * x
+        dloss_dstyles_1 = paddle.sum(dloss_dstyles_1, axis=[2, 3])
 
         if demodulate and fused_modconv:
             # 不可能执行这个，因为fused_modconv肯定是False
             pass
         if demodulate:
             # dcoefs = (w.square().sum(axis=[2, 3, 4]) + 1e-8).rsqrt()  # [NO]
-            ddcoefs_ddcoefs = paddle.ones(dcoefs.shape, dtype=paddle.float32)
-            ddcoefs_dw_square_sum_add_1e8 = -0.5 * ddcoefs_ddcoefs * dcoefs * dcoefs * dcoefs
-            ddcoefs_dw_square_sum = ddcoefs_dw_square_sum_add_1e8
-            ddcoefs_dw_square = paddle.unsqueeze(ddcoefs_dw_square_sum, axis=[2, 3, 4])
-            ddcoefs_dw_square = paddle.tile(ddcoefs_dw_square, [1, 1, w.shape[2], w.shape[3], w.shape[4]])
-            ddcoefs_dw1 = ddcoefs_dw_square * 2 * w
+            dloss_dw_square_sum_add_1e8 = -0.5 * dloss_dstyles_2 * dcoefs * dcoefs * dcoefs
+            dloss_dw_square_sum = dloss_dw_square_sum_add_1e8
+            dloss_dw_square = paddle.unsqueeze(dloss_dw_square_sum, axis=[2, 3, 4])
+            dloss_dw_square = paddle.tile(dloss_dw_square, [1, 1, w1.shape[2], w1.shape[3], w1.shape[4]])
+            dloss_dstyles_2 = dloss_dw_square * 2 * w1
         if demodulate or fused_modconv:
             # w = weight.unsqueeze(0)  # [NOIkk]
             # w = w * styles.reshape((batch_size, 1, -1, 1, 1))  # [NOIkk]
-            ddcoefs_dstyles = ddcoefs_dw1 * w0
-            ddcoefs_dstyles = paddle.sum(ddcoefs_dstyles, axis=[1, 3, 4])
-            ddcoefs_dstyles = paddle.unsqueeze(ddcoefs_dstyles, axis=[2, 3])
-            aaaaaaaaaaa1 = dout_dx_mul_styles
-            aaaaaaaaaaa2 = x
-            aaaaaaaaaaa3 = v
-            aaaaaaaaaaa4 = u
-            aaaaaaaaaaa5 = ddcoefs_dstyles
-            aaaaaaaaaaa6 = ddcoefs_dw1
-            aaaaaaaaaaa7 = w0
-            dout_dstyles = dout_dx_mul_styles * x * v + u * ddcoefs_dstyles
-            print()
-            dloss_dstyles = dloss_dout * dout_dstyles
-            dloss_dstyles = paddle.sum(dloss_dstyles, axis=[2, 3])
-
+            dloss_dstyles_2 = dloss_dstyles_2 * w0
+            dloss_dstyles_2 = paddle.sum(dloss_dstyles_2, axis=[1, 3, 4])
+            dloss_dstyles = dloss_dstyles_1 + dloss_dstyles_2
 
         print('eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee')
         return dloss_dx, dloss_dstyles
