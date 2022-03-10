@@ -128,7 +128,7 @@ def bias_act(x, b=None, dim=1, act='linear', alpha=None, gain=None, clamp=None):
     return clamp_x, temp_tensors
 
 
-def bias_act_grad(dloss_dclamp_x, clamp_x, temp_tensors, b=None, dim=1, act='linear', alpha=None, gain=None, clamp=None):
+def bias_act_grad(dloss_dclamp_x, temp_tensors, b=None, dim=1, act='linear', alpha=None, gain=None, clamp=None):
     gain_x = temp_tensors['gain_x']
     act_x = temp_tensors['act_x']
     x_add_b = temp_tensors['x_add_b']
@@ -176,7 +176,7 @@ def bias_act_grad(dloss_dclamp_x, clamp_x, temp_tensors, b=None, dim=1, act='lin
     elif act == 'tanh':
         raise NotImplementedError("activation \'{}\' is not implemented.".format(act))
     elif act == 'sigmoid':
-        raise NotImplementedError("activation \'{}\' is not implemented.".format(act))
+        dloss_dx_add_b = dloss_dact_x * act_x * (1.0 - act_x)
     elif act == 'elu':
         raise NotImplementedError("activation \'{}\' is not implemented.".format(act))
     elif act == 'selu':
@@ -1032,9 +1032,8 @@ class FullyConnectedLayer(nn.Layer):
             r = x.matmul(w.t())
             out, temp_tensors = bias_act(r, b, act=self.activation)
             self.grad_layer.gain_r = temp_tensors['gain_x'].detach()
-            self.grad_layer.act_r = temp_tensors['act_x'].detach()
+            self.grad_layer.act_r = temp_tensors['act_x']
             self.grad_layer.r_add_b = temp_tensors['x_add_b'].detach()
-        self.grad_layer.out = out.detach()
         return out
 
 
@@ -1057,7 +1056,6 @@ class FullyConnectedLayer_Grad(nn.Layer):
         self.b = None
 
     def forward(self, dloss_dout):
-        out = self.out
         b = self.b
         w = self.w   # [out_C, in_C]
         w_t = w.t()  # [in_C, out_C]
@@ -1076,7 +1074,7 @@ class FullyConnectedLayer_Grad(nn.Layer):
             temp_tensors['gain_x'] = gain_r
             temp_tensors['act_x'] = act_r
             temp_tensors['x_add_b'] = r_add_b
-            dloss_dr = bias_act_grad(dloss_dout, out, temp_tensors, act=self.activation)
+            dloss_dr = bias_act_grad(dloss_dout, temp_tensors, act=self.activation)
 
             # loss对输入x的偏导数
             dloss_dr = paddle.unsqueeze(dloss_dr, 1)      # [N, 1, out_C]
@@ -1444,7 +1442,6 @@ class ToRGBLayer(nn.Layer):
         self.grad_layer.gain_x2 = temp_tensors['gain_x'].detach()
         self.grad_layer.act_x2 = temp_tensors['act_x'].detach()
         self.grad_layer.x2_add_b = temp_tensors['x_add_b'].detach()
-        self.grad_layer.out = out.detach()
         return out, styles
 
 class ToRGBLayer_Grad(nn.Layer):
@@ -1461,7 +1458,6 @@ class ToRGBLayer_Grad(nn.Layer):
         styles = self.styles
         x2 = self.x2
         b = self.b
-        out = self.out
         gain_x2 = self.gain_x2
         act_x2 = self.act_x2
         x2_add_b = self.x2_add_b
@@ -1477,7 +1473,7 @@ class ToRGBLayer_Grad(nn.Layer):
         temp_tensors['gain_x'] = gain_x2
         temp_tensors['act_x'] = act_x2
         temp_tensors['x_add_b'] = x2_add_b
-        dloss_dx2 = bias_act_grad(dloss_dout, out, temp_tensors, b=b, clamp=self.conv_clamp)
+        dloss_dx2 = bias_act_grad(dloss_dout, temp_tensors, b=b, clamp=self.conv_clamp)
 
         dloss_dx, dloss_dstyles = modulated_conv2d_grad(dloss_dx2, x_1, x_2, x_mul_styles, x=x, weight=self.weight, styles=styles, demodulate=False, fused_modconv=fused_modconv)
         dloss_daffine_w = dloss_dstyles * self.weight_gain
