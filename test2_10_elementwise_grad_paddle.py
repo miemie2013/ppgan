@@ -26,9 +26,17 @@ for batch_idx in range(8):
 
     batch_size = 2
 
+
+    w = weight.unsqueeze(0)  # [NOIkk]
+    w0 = w
+    w = w * styles.reshape((batch_size, 1, -1, 1, 1))  # [NOIkk]
+    w1 = w
+    _, _, D_w1_2, D_w1_3, D_w1_4 = w1.shape
+    dcoefs = w.sum(axis=[2,3,4])  # [NO]
+
     x_mul_styles = x * paddle.cast(styles, dtype=x.dtype).reshape((batch_size, -1, 1, 1))
     rrr = F.sigmoid(x_mul_styles)
-    out = rrr * paddle.cast(styles, dtype=x.dtype).reshape((batch_size, -1, 1, 1))
+    out = rrr * paddle.cast(dcoefs, dtype=x.dtype).reshape((batch_size, -1, 1, 1))
     loss = paddle.square(out)
 
     '''
@@ -46,42 +54,44 @@ for batch_idx in range(8):
     du是conv2d_resample的输出x_2对conv2d_resample的输入(x * styles)的导数
     '''
 
-    # dloss_dx = paddle.grad(outputs=[loss.sum()], inputs=[x], create_graph=True)[0]
-    # dloss_dstyles = paddle.grad(outputs=[loss.sum()], inputs=[styles], create_graph=True)[0]
-
     dloss_dloss = paddle.ones(loss.shape, dtype=paddle.float32)
     dloss_dout = dloss_dloss * 2 * out
 
-    # dloss_dstyles = dloss_dout
-    u = rrr
-    v = paddle.cast(styles, dtype=x.dtype).reshape((batch_size, -1, 1, 1))
-    dloss_drrr = dloss_dout * v
-    v_dloss_drrr = v * dloss_dout * v
-    rrr_dloss_dv = rrr * dloss_dout * rrr
-    rrr_dloss_dstyles = paddle.sum(rrr_dloss_dv, axis=[2, 3])
-    # rrr_dloss_dstyles = paddle.reshape(rrr_dloss_dstyles, (batch_size, -1))
+    dloss_drrr = dloss_dout * paddle.cast(dcoefs, dtype=x.dtype).reshape((batch_size, -1, 1, 1))
+
+    dloss_dstyles_1 = paddle.cast(dcoefs, dtype=x.dtype).reshape((batch_size, -1, 1, 1)) * dloss_dout   # du * v
+    dloss_dstyles_2 = rrr * dloss_dout      # u * dv
+    dloss_dstyles_2 = paddle.sum(dloss_dstyles_2, axis=[2, 3])
 
 
     dloss_dx_mul_styles = dloss_drrr * rrr * (1.0 - rrr)
-    v_dloss_dx_mul_styles = v_dloss_drrr * rrr * (1.0 - rrr)
+    dloss_dstyles_1 = dloss_dstyles_1 * rrr * (1.0 - rrr)
 
     dloss_dx = dloss_dx_mul_styles * paddle.cast(styles, dtype=x.dtype).reshape((batch_size, -1, 1, 1))
-    v_dloss_dstyles = v_dloss_dx_mul_styles * x
-    v_dloss_dstyles = paddle.sum(v_dloss_dstyles, axis=[2, 3])
+    dloss_dstyles_1 = dloss_dstyles_1 * x
+    dloss_dstyles_1 = paddle.sum(dloss_dstyles_1, axis=[2, 3])
 
-    dloss_dstyles = rrr_dloss_dstyles + v_dloss_dstyles
+
+    # sum()的求导有2步，先unsqueeze()再tile()，变回求和之前的形状。
+    dloss_dstyles_2 = paddle.unsqueeze(dloss_dstyles_2, axis=[2, 3, 4])
+    dloss_dstyles_2 = paddle.tile(dloss_dstyles_2, [1, 1, D_w1_2, D_w1_3, D_w1_4])
+    dloss_dstyles_2 = dloss_dstyles_2 * w0
+    dloss_dstyles_2 = paddle.sum(dloss_dstyles_2, axis=[1, 3, 4])
+
+
+    dloss_dstyles = dloss_dstyles_1 + dloss_dstyles_2
 
 
 
     out_paddle = out.numpy()
-    ddd = np.sum((out_pytorch - out_paddle) ** 2)
+    ddd = np.mean((out_pytorch - out_paddle) ** 2)
     print('ddd=%.6f' % ddd)
 
     dloss_dstyles_paddle = dloss_dstyles.numpy()
-    ddd = np.sum((dloss_dstyles_pytorch - dloss_dstyles_paddle) ** 2)
+    ddd = np.mean((dloss_dstyles_pytorch - dloss_dstyles_paddle) ** 2)
     print('ddd=%.6f' % ddd)
 
     dloss_dx_paddle = dloss_dx.numpy()
-    ddd = np.sum((dloss_dx_pytorch - dloss_dx_paddle) ** 2)
+    ddd = np.mean((dloss_dx_pytorch - dloss_dx_paddle) ** 2)
     print('ddd=%.6f' % ddd)
 print()

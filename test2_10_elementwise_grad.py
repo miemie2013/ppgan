@@ -22,9 +22,14 @@ for batch_idx in range(8):
     styles.requires_grad_(True)
     batch_size = 2
 
+
+    w = weight.unsqueeze(0) # [NOIkk]
+    w = w * styles.reshape(batch_size, 1, -1, 1, 1) # [NOIkk]
+    dcoefs = w.sum(dim=[2,3,4])  # [NO]
+
     x_mul_styles = x * styles.to(x.dtype).reshape(batch_size, -1, 1, 1)
     rrrrrrrrrr = torch.sigmoid(x_mul_styles)
-    out = rrrrrrrrrr * styles.to(x.dtype).reshape(batch_size, -1, 1, 1)
+    out = rrrrrrrrrr * dcoefs.to(x.dtype).reshape(batch_size, -1, 1, 1)
     loss = torch.square(out)
 
     dloss_dstyles = torch.autograd.grad(outputs=[loss.sum()], inputs=[styles], create_graph=True, only_inputs=True)[0]
