@@ -18,7 +18,7 @@ class Model(paddle.nn.Layer):
 
 lr = 0.0001
 dic2 = np.load('06_grad.npz')
-for batch_idx in range(8):
+for batch_idx in range(20):
     print('======================== batch_%.3d ========================'%batch_idx)
     x_shape = [1, 512, 4, 4]
     w_shape = [512, 512, 3, 3]
@@ -30,15 +30,15 @@ for batch_idx in range(8):
     flip_weight = True
     flip_filter = False
 
-    # x_shape = [1, 512, 4, 4]
-    # w_shape = [3, 512, 1, 1]
-    # f_shape = None
-    # up = 1
-    # down = 1
-    # padding = 0
-    # groups = 1
-    # flip_weight = True
-    # flip_filter = False
+    x_shape = [1, 512, 4, 4]
+    w_shape = [3, 512, 1, 1]
+    f_shape = None
+    up = 1
+    down = 1
+    padding = 0
+    groups = 1
+    flip_weight = True
+    flip_filter = False
 
     # x_shape = [1, 512, 4, 4]
     # w_shape = [512, 512, 3, 3]
@@ -200,15 +200,15 @@ for batch_idx in range(8):
     # flip_weight = False
     # flip_filter = False
 
-    # x_shape = [1, 128, 256, 256]
-    # w_shape = [128, 128, 3, 3]
-    # f_shape = [4, 4]
-    # up = 1
-    # down = 1
-    # padding = 1
-    # groups = 1
-    # flip_weight = True
-    # flip_filter = False
+    x_shape = [1, 128, 256, 256]
+    w_shape = [128, 128, 3, 3]
+    f_shape = [4, 4]
+    up = 1
+    down = 1
+    padding = 1
+    groups = 1
+    flip_weight = True
+    flip_filter = False
 
     # x_shape = [1, 128, 256, 256]
     # w_shape = [3, 128, 1, 1]
@@ -288,14 +288,21 @@ for batch_idx in range(8):
     dy_dx, dy_dw = conv2d_resample_grad(dysum_dy, x_1, x, model.weight, filter=f, up=up, down=down, padding=padding, groups=groups, flip_weight=flip_weight, flip_filter=flip_filter)
 
     y_paddle = y.numpy()
-    ddd = np.mean((y_pytorch - y_paddle) ** 2)
+    ddd = np.sum((y_pytorch - y_paddle) ** 2)
     print('ddd=%.6f' % ddd)
 
     dy_dx_paddle = dy_dx.numpy()
-    ddd = np.mean((dy_dx_pytorch - dy_dx_paddle) ** 2)
+    ddd = np.sum((dy_dx_pytorch - dy_dx_paddle) ** 2)
     print('ddd=%.6f' % ddd)
 
     dy_dw_paddle = dy_dw.numpy()
+    ddd = np.sum((dy_dw_pytorch - dy_dw_paddle) ** 2)
+    print('ddd=%.6f' % ddd)
+
+    ddd = np.mean((y_pytorch - y_paddle) ** 2)
+    print('ddd=%.6f' % ddd)
+    ddd = np.mean((dy_dx_pytorch - dy_dx_paddle) ** 2)
+    print('ddd=%.6f' % ddd)
     ddd = np.mean((dy_dw_pytorch - dy_dw_paddle) ** 2)
     print('ddd=%.6f' % ddd)
 

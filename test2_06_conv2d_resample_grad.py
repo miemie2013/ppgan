@@ -19,7 +19,7 @@ class Model(torch.nn.Module):
 lr = 0.0001
 dic = {}
 batch_size = 2
-for batch_idx in range(8):
+for batch_idx in range(20):
     x_shape = [1, 512, 4, 4]
     w_shape = [512, 512, 3, 3]
     f_shape = [4, 4]
@@ -30,15 +30,15 @@ for batch_idx in range(8):
     flip_weight = True
     flip_filter = False
 
-    # x_shape = [1, 512, 4, 4]
-    # w_shape = [3, 512, 1, 1]
-    # f_shape = None
-    # up = 1
-    # down = 1
-    # padding = 0
-    # groups = 1
-    # flip_weight = True
-    # flip_filter = False
+    x_shape = [1, 512, 4, 4]
+    w_shape = [3, 512, 1, 1]
+    f_shape = None
+    up = 1
+    down = 1
+    padding = 0
+    groups = 1
+    flip_weight = True
+    flip_filter = False
 
     # x_shape = [1, 512, 4, 4]
     # w_shape = [512, 512, 3, 3]
@@ -200,15 +200,15 @@ for batch_idx in range(8):
     # flip_weight = False
     # flip_filter = False
 
-    # x_shape = [1, 128, 256, 256]
-    # w_shape = [128, 128, 3, 3]
-    # f_shape = [4, 4]
-    # up = 1
-    # down = 1
-    # padding = 1
-    # groups = 1
-    # flip_weight = True
-    # flip_filter = False
+    x_shape = [1, 128, 256, 256]
+    w_shape = [128, 128, 3, 3]
+    f_shape = [4, 4]
+    up = 1
+    down = 1
+    padding = 1
+    groups = 1
+    flip_weight = True
+    flip_filter = False
 
     # x_shape = [1, 128, 256, 256]
     # w_shape = [3, 128, 1, 1]
