@@ -1421,6 +1421,7 @@ class ToRGBLayer(nn.Layer):
         )
 
     def forward(self, x, w, fused_modconv=True):
+        self.grad_layer.w = w.detach()
         styles = self.affine(w) * self.weight_gain
         self.grad_layer.styles = styles.detach()
         self.grad_layer.x = x.detach()
@@ -1443,7 +1444,7 @@ class ToRGBLayer(nn.Layer):
         self.grad_layer.act_x2 = temp_tensors['act_x'].detach()
         self.grad_layer.x2_add_b = temp_tensors['x_add_b'].detach()
         self.grad_layer.out = out.detach()
-        return out
+        return out, styles
 
 class ToRGBLayer_Grad(nn.Layer):
     def __init__(self, in_channels, out_channels, w_dim, kernel_size=1, conv_clamp=None, channels_last=False):
@@ -1465,6 +1466,7 @@ class ToRGBLayer_Grad(nn.Layer):
         x2_add_b = self.x2_add_b
 
         x = self.x
+        w = self.w
         x_1 = self.x_1
         x_2 = self.x_2
         x_mul_styles = self.x_mul_styles
@@ -1479,7 +1481,7 @@ class ToRGBLayer_Grad(nn.Layer):
         dloss_dx, dloss_dstyles = modulated_conv2d_grad(dloss_dx2, x_1, x_2, x_mul_styles, x=x, weight=self.weight, styles=styles, demodulate=False, fused_modconv=fused_modconv)
         dloss_daffine_w = dloss_dstyles * self.weight_gain
         dloss_dw = self.affine.grad_layer(dloss_daffine_w)
-        return dloss_dx, dloss_dw
+        return dloss_dx, dloss_dw, dloss_dstyles
 
 
 

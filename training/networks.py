@@ -360,7 +360,7 @@ class ToRGBLayer(torch.nn.Module):
         styles = self.affine(w) * self.weight_gain
         x = modulated_conv2d(x=x, weight=self.weight, styles=styles, demodulate=False, fused_modconv=fused_modconv)
         x = bias_act.bias_act(x, self.bias.to(x.dtype), clamp=self.conv_clamp)
-        return x
+        return x, styles
 
 #----------------------------------------------------------------------------
 

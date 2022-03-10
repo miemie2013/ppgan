@@ -26,18 +26,20 @@ for batch_idx in range(20):
     x = dic2['batch_%.3d.input0'%batch_idx]
     ws = dic2['batch_%.3d.input1'%batch_idx]
     y_pytorch = dic2['batch_%.3d.output'%batch_idx]
+    dy_dstyles_pytorch = dic2['batch_%.3d.dy_dstyles'%batch_idx]
     dy_dws_pytorch = dic2['batch_%.3d.dy_dws'%batch_idx]
     dy_dx_pytorch = dic2['batch_%.3d.dy_dx'%batch_idx]
     ws = paddle.to_tensor(ws)
     ws.stop_gradient = False
     x = paddle.to_tensor(x)
     x.stop_gradient = False
-    y = model(x, ws, fused_modconv=fused_modconv)
+    y, styles = model(x, ws, fused_modconv=fused_modconv)
 
     # dy_dx = paddle.grad(outputs=[y.sum()], inputs=[x], create_graph=True)[0]
     # dy_dws = paddle.grad(outputs=[y.sum()], inputs=[ws], create_graph=True)[0]
+    # dy_dstyles = paddle.grad(outputs=[y.sum()], inputs=[styles], create_graph=True)[0]
     dysum_dy = paddle.ones(y.shape, dtype=paddle.float32)
-    dy_dx, dy_dws = model.grad_layer(dysum_dy)
+    dy_dx, dy_dws, dy_dstyles = model.grad_layer(dysum_dy)
 
     y_paddle = y.numpy()
     ddd = np.sum((y_pytorch - y_paddle) ** 2)
@@ -49,6 +51,10 @@ for batch_idx in range(20):
 
     dy_dws_paddle = dy_dws.numpy()
     ddd = np.sum((dy_dws_pytorch - dy_dws_paddle) ** 2)
+    print('ddd=%.6f' % ddd)
+
+    dy_dstyles_paddle = dy_dstyles.numpy()
+    ddd = np.sum((dy_dstyles_pytorch - dy_dstyles_paddle) ** 2)
     print('ddd=%.6f' % ddd)
 
     loss = dy_dx.sum() + dy_dws.sum() + y.sum()

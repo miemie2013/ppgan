@@ -28,12 +28,14 @@ for batch_idx in range(20):
     x = torch.randn([batch_size, 512, 16, 16])
     x.requires_grad_(True)
 
-    y = model(x, ws, fused_modconv=fused_modconv)
+    y, styles = model(x, ws, fused_modconv=fused_modconv)
     dy_dx = torch.autograd.grad(outputs=[y.sum()], inputs=[x], create_graph=True, only_inputs=True)[0]
     dy_dws = torch.autograd.grad(outputs=[y.sum()], inputs=[ws], create_graph=True, only_inputs=True)[0]
+    dy_dstyles = torch.autograd.grad(outputs=[y.sum()], inputs=[styles], create_graph=True, only_inputs=True)[0]
 
     dic['batch_%.3d.dy_dx'%batch_idx] = dy_dx.cpu().detach().numpy()
     dic['batch_%.3d.dy_dws'%batch_idx] = dy_dws.cpu().detach().numpy()
+    dic['batch_%.3d.dy_dstyles'%batch_idx] = dy_dstyles.cpu().detach().numpy()
     dic['batch_%.3d.output'%batch_idx] = y.cpu().detach().numpy()
     dic['batch_%.3d.input0'%batch_idx] = x.cpu().detach().numpy()
     dic['batch_%.3d.input1'%batch_idx] = ws.cpu().detach().numpy()
