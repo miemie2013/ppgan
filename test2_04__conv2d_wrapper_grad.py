@@ -6,6 +6,17 @@ import torch.nn.functional as F
 from torch_utils.ops.conv2d_resample import _conv2d_wrapper
 
 
+class Model(torch.nn.Module):
+    def __init__(self, w_shape):
+        super().__init__()
+        self.weight = torch.nn.Parameter(torch.randn(w_shape))
+
+    def forward(self, x, stride, padding, groups, transpose, flip_weight):
+        y = _conv2d_wrapper(x=x, w=self.weight, stride=stride, padding=padding, groups=groups, transpose=transpose, flip_weight=flip_weight)
+        return y
+
+
+lr = 0.0001
 dic = {}
 batch_size = 2
 for batch_idx in range(8):
@@ -220,20 +231,29 @@ for batch_idx in range(8):
 
 
     x_shape[0] = batch_size
-    w = torch.randn(w_shape)
     x = torch.randn(x_shape)
-    w.requires_grad_(True)
     x.requires_grad_(True)
 
-    y = _conv2d_wrapper(x=x, w=w, stride=stride, padding=padding, groups=groups, transpose=transpose, flip_weight=flip_weight)
+    if batch_idx == 0:
+        model = Model(w_shape)
+        model.train()
+        optimizer = torch.optim.SGD(model.parameters(), lr=lr, momentum=0.9)
+        torch.save(model.state_dict(), "model.pth")
+
+    y = model(x=x, stride=stride, padding=padding, groups=groups, transpose=transpose, flip_weight=flip_weight)
 
     dy_dx = torch.autograd.grad(outputs=[y.sum()], inputs=[x], create_graph=True, only_inputs=True)[0]
-    dy_dw = torch.autograd.grad(outputs=[y.sum()], inputs=[w], create_graph=True, only_inputs=True)[0]
+    dy_dw = torch.autograd.grad(outputs=[y.sum()], inputs=[model.weight], create_graph=True, only_inputs=True)[0]
 
     dic['batch_%.3d.dy_dx'%batch_idx] = dy_dx.cpu().detach().numpy()
     dic['batch_%.3d.dy_dw'%batch_idx] = dy_dw.cpu().detach().numpy()
     dic['batch_%.3d.y'%batch_idx] = y.cpu().detach().numpy()
     dic['batch_%.3d.x'%batch_idx] = x.cpu().detach().numpy()
-    dic['batch_%.3d.w'%batch_idx] = w.cpu().detach().numpy()
+
+
+    loss = y.sum() + dy_dx.sum() + dy_dw.sum()
+    loss.backward()
+    optimizer.step()
+    optimizer.zero_grad(set_to_none=True)
 np.savez('04_grad', **dic)
 print()
