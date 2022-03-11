@@ -63,7 +63,4 @@ for batch_idx in range(8):
     # loss = y.sum()
     loss.backward()
     optimizer.step()
-    del dy_dx
-    del dy_dws
-    del dy_dstyles
 print()

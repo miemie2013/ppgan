@@ -1031,9 +1031,9 @@ class FullyConnectedLayer(nn.Layer):
         else:
             r = x.matmul(w.t())
             out, temp_tensors = bias_act(r, b, act=self.activation)
-            self.grad_layer.gain_r = temp_tensors['gain_x']
-            self.grad_layer.act_r = temp_tensors['act_x']
-            self.grad_layer.r_add_b = temp_tensors['x_add_b']
+            self.grad_layer.gain_r = temp_tensors['gain_x'].detach()   # 计算bias_act()的梯度时，需要计算paddle.where(gain_x > clamp, ...)，gain_x必须加detach()
+            self.grad_layer.act_r = temp_tensors['act_x']    # 计算bias_act()的梯度时，且激活是sigmoid时，act_x要和梯度相乘，act_x不能加detach()
+            self.grad_layer.r_add_b = temp_tensors['x_add_b'].detach()   # 计算bias_act()的梯度时，且激活是relu之类时，需要计算paddle.where(x_add_b > 0.0, ...)，x_add_b必须加detach()
         return out
 
 
@@ -1429,19 +1429,19 @@ class ToRGBLayer(nn.Layer):
         self.grad_layer.weight = self.weight
         self.grad_layer.affine = self.affine
         x2, x_1, x_2, x_mul_styles = modulated_conv2d(x=x, weight=self.weight, styles=styles, demodulate=False, fused_modconv=fused_modconv)
-        self.grad_layer.x2 = x2.detach()
+        self.grad_layer.x2 = x2
         if x_1 is not None:
             self.grad_layer.x_1 = x_1
         else:
             self.grad_layer.x_1 = None
-        self.grad_layer.x_2 = x_2.detach()
-        self.grad_layer.x_mul_styles = x_mul_styles.detach()
+        self.grad_layer.x_2 = x_2
+        self.grad_layer.x_mul_styles = x_mul_styles
         b = paddle.cast(self.bias, dtype=x.dtype)
         self.grad_layer.b = b
         out, temp_tensors = bias_act(x2, b, clamp=self.conv_clamp)
-        self.grad_layer.gain_x2 = temp_tensors['gain_x'].detach()
-        self.grad_layer.act_x2 = temp_tensors['act_x'].detach()
-        self.grad_layer.x2_add_b = temp_tensors['x_add_b'].detach()
+        self.grad_layer.gain_x2 = temp_tensors['gain_x'].detach()  # 计算bias_act()的梯度时，需要计算paddle.where(gain_x > clamp, ...)，gain_x必须加detach()
+        self.grad_layer.act_x2 = temp_tensors['act_x']  # 计算bias_act()的梯度时，且激活是sigmoid时，act_x要和梯度相乘，act_x不能加detach()
+        self.grad_layer.x2_add_b = temp_tensors['x_add_b'].detach()  # 计算bias_act()的梯度时，且激活是relu之类时，需要计算paddle.where(x_add_b > 0.0, ...)，x_add_b必须加detach()
         return out, styles
 
 class ToRGBLayer_Grad(nn.Layer):
