@@ -8,11 +8,11 @@ from ppgan.models.generators.generator_styleganv2ada import FullyConnectedLayer
 in_channels = 512
 w_dim = 512
 
-activation = 'linear'
+# activation = 'linear'
 # activation = 'lrelu'
 # activation = 'relu'
 # activation = 'tanh'
-# activation = 'sigmoid'
+activation = 'sigmoid'
 # activation = 'elu'
 # activation = 'selu'
 # activation = 'softplus'

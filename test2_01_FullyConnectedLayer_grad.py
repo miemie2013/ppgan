@@ -8,11 +8,11 @@ batch_size = 2
 in_channels = 512
 w_dim = 512
 lr = 0.0001
-activation = 'linear'
+# activation = 'linear'
 # activation = 'lrelu'
 # activation = 'relu'
 # activation = 'tanh'
-# activation = 'sigmoid'
+activation = 'sigmoid'
 # activation = 'elu'
 # activation = 'selu'
 # activation = 'softplus'
@@ -32,7 +32,7 @@ for batch_idx in range(20):
     ws.requires_grad_(True)
 
     styles = model(ws)
-    styles2 = styles.square()
+    styles2 = torch.sigmoid(styles)
     dstyles2_dws = torch.autograd.grad(outputs=[styles2.sum()], inputs=[ws], create_graph=True, only_inputs=True)[0]
 
     dic['batch_%.3d.dstyles2_dws'%batch_idx] = dstyles2_dws.cpu().detach().numpy()

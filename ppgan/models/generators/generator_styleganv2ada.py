@@ -768,7 +768,7 @@ def conv2d_resample(x, w, filter=None, up=1, down=1, padding=0, groups=1, flip_w
         x = upfirdn2d(x, filter, down=down, padding=[px0, px1, py0, py1], flip_filter=flip_filter)
         x_1 = x
         x = _conv2d_wrapper(x=x, w=w, groups=groups, flip_weight=flip_weight)
-        return x, x_1.detach()
+        return x, x_1
 
     # Fast path: 1x1 convolution with upsampling only => convolve first, then upsample.
     if kw == 1 and kh == 1 and (up > 1 and down == 1):
@@ -801,7 +801,7 @@ def conv2d_resample(x, w, filter=None, up=1, down=1, padding=0, groups=1, flip_w
         x = upfirdn2d(x, filter, padding=[px0 + pxt, px1 + pxt, py0 + pyt, py1 + pyt], gain=up ** 2, flip_filter=flip_filter)
         if down > 1:
             x = upfirdn2d(x, filter, down=down, flip_filter=flip_filter)
-        return x, x_1.detach()
+        return x, x_1
 
     # Fast path: no up/downsampling, padding supported by the underlying implementation => use plain conv2d.
     if up == 1 and down == 1:
@@ -1031,9 +1031,9 @@ class FullyConnectedLayer(nn.Layer):
         else:
             r = x.matmul(w.t())
             out, temp_tensors = bias_act(r, b, act=self.activation)
-            self.grad_layer.gain_r = temp_tensors['gain_x'].detach()
+            self.grad_layer.gain_r = temp_tensors['gain_x']
             self.grad_layer.act_r = temp_tensors['act_x']
-            self.grad_layer.r_add_b = temp_tensors['x_add_b'].detach()
+            self.grad_layer.r_add_b = temp_tensors['x_add_b']
         return out
 
 
@@ -1227,10 +1227,10 @@ def modulated_conv2d(
         else:
             out = x_2
         if x_1 is not None:
-            x_1_ = x_1.detach()
+            x_1_ = x_1
         else:
             x_1_ = None
-        return out, x_1_, x_2.detach(), x_mul_styles.detach()
+        return out, x_1_, x_2, x_mul_styles
 
     # Execute as one fused op using grouped convolution.
     else:
@@ -1419,29 +1419,29 @@ class ToRGBLayer(nn.Layer):
         )
 
     def forward(self, x, w, fused_modconv=True):
-        self.grad_layer.w = w.detach()
+        self.grad_layer.w = w
         styles = self.affine(w) * self.weight_gain
         # styles = w
-        self.grad_layer.styles = styles.detach()
-        self.grad_layer.x = x.detach()
+        self.grad_layer.styles = styles
+        self.grad_layer.x = x
         self.grad_layer.fused_modconv = fused_modconv
         self.grad_layer.weight_gain = self.weight_gain
         self.grad_layer.weight = self.weight
         self.grad_layer.affine = self.affine
         x2, x_1, x_2, x_mul_styles = modulated_conv2d(x=x, weight=self.weight, styles=styles, demodulate=False, fused_modconv=fused_modconv)
-        self.grad_layer.x2 = x2.detach()
+        self.grad_layer.x2 = x2
         if x_1 is not None:
-            self.grad_layer.x_1 = x_1.detach()
+            self.grad_layer.x_1 = x_1
         else:
             self.grad_layer.x_1 = None
-        self.grad_layer.x_2 = x_2.detach()
-        self.grad_layer.x_mul_styles = x_mul_styles.detach()
+        self.grad_layer.x_2 = x_2
+        self.grad_layer.x_mul_styles = x_mul_styles
         b = paddle.cast(self.bias, dtype=x.dtype)
         self.grad_layer.b = b
         out, temp_tensors = bias_act(x2, b, clamp=self.conv_clamp)
-        self.grad_layer.gain_x2 = temp_tensors['gain_x'].detach()
-        self.grad_layer.act_x2 = temp_tensors['act_x'].detach()
-        self.grad_layer.x2_add_b = temp_tensors['x_add_b'].detach()
+        self.grad_layer.gain_x2 = temp_tensors['gain_x']
+        self.grad_layer.act_x2 = temp_tensors['act_x']
+        self.grad_layer.x2_add_b = temp_tensors['x_add_b']
         return out, styles
 
 class ToRGBLayer_Grad(nn.Layer):
