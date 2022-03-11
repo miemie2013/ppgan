@@ -19,7 +19,7 @@ class Model(torch.nn.Module):
 lr = 0.0001
 dic = {}
 batch_size = 2
-for batch_idx in range(20):
+for batch_idx in range(8):
     x_shape = [1, 8, 1, 1]
     w_shape = [4, 8, 1, 1]
     stride = 1
@@ -242,18 +242,21 @@ for batch_idx in range(20):
 
     y = model(x=x, stride=stride, padding=padding, groups=groups, transpose=transpose, flip_weight=flip_weight)
 
-    dy_dx = torch.autograd.grad(outputs=[y.sum()], inputs=[x], create_graph=True, only_inputs=True)[0]
-    dy_dw = torch.autograd.grad(outputs=[y.sum()], inputs=[model.weight], create_graph=True, only_inputs=True)[0]
+    # loss = torch.sigmoid(y)
+    loss = y
 
-    dic['batch_%.3d.dy_dx'%batch_idx] = dy_dx.cpu().detach().numpy()
-    dic['batch_%.3d.dy_dw'%batch_idx] = dy_dw.cpu().detach().numpy()
+    grads = torch.autograd.grad(outputs=[loss.sum()], inputs=[x, model.weight], create_graph=True, only_inputs=True)
+    dloss_dx, dloss_dw = grads
+
+    dic['batch_%.3d.dloss_dx'%batch_idx] = dloss_dx.cpu().detach().numpy()
+    dic['batch_%.3d.dloss_dw'%batch_idx] = dloss_dw.cpu().detach().numpy()
     dic['batch_%.3d.y'%batch_idx] = y.cpu().detach().numpy()
     dic['batch_%.3d.x'%batch_idx] = x.cpu().detach().numpy()
 
 
-    loss = y.sum() + dy_dx.sum() + dy_dw.sum()
-    # loss = y.sum() + dy_dx.sum()
-    # loss = y.sum() + dy_dw.sum()
+    # loss = loss.sum() + dloss_dx.sum() + dloss_dw.sum()
+    loss = loss.sum() + dloss_dx.sum()
+    # loss = loss.sum() + dloss_dw.sum()
     loss.backward()
     optimizer.step()
     optimizer.zero_grad(set_to_none=True)

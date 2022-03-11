@@ -18,7 +18,7 @@ class Model(paddle.nn.Layer):
 
 lr = 0.0001
 dic2 = np.load('04_grad.npz')
-for batch_idx in range(20):
+for batch_idx in range(8):
     print('======================== batch_%.3d ========================'%batch_idx)
     x_shape = [1, 8, 1, 1]
     w_shape = [4, 8, 1, 1]
@@ -231,8 +231,8 @@ for batch_idx in range(20):
 
 
 
-    dy_dx_pytorch = dic2['batch_%.3d.dy_dx'%batch_idx]
-    dy_dw_pytorch = dic2['batch_%.3d.dy_dw'%batch_idx]
+    dloss_dx_pytorch = dic2['batch_%.3d.dloss_dx'%batch_idx]
+    dloss_dw_pytorch = dic2['batch_%.3d.dloss_dw'%batch_idx]
     y_pytorch = dic2['batch_%.3d.y'%batch_idx]
     x = dic2['batch_%.3d.x'%batch_idx]
     x = paddle.to_tensor(x)
@@ -243,30 +243,49 @@ for batch_idx in range(20):
         model.train()
         optimizer = paddle.optimizer.Momentum(parameters=model.parameters(), learning_rate=lr, momentum=0.9)
         model.set_state_dict(paddle.load("model.pdparams"))
+    optimizer.clear_gradients()
 
 
     y = model(x=x, stride=stride, padding=padding, groups=groups, transpose=transpose, flip_weight=flip_weight)
 
-    # dy_dx = paddle.grad(outputs=[y.sum()], inputs=[x], create_graph=True)[0]
-    # dy_dw = paddle.grad(outputs=[y.sum()], inputs=[model.weight], create_graph=True)[0]
-    dysum_dy = paddle.ones(y.shape, dtype=paddle.float32)
-    dy_dx, dy_dw = _conv2d_wrapper_grad(dysum_dy, x=x, w=model.weight, stride=stride, padding=padding, groups=groups, transpose=transpose, flip_weight=flip_weight)
+    # loss = paddle.nn.functional.sigmoid(y)
+    # loss = paddle.tanh(y)
+    loss = y
+
+    # 总结：和梯度相乘的临时前向张量loss_clone一定要是本尊，不能加.detach()
+    # 正确的
+    # loss_clone = loss
+    # loss_clone = loss.clone()
+
+    # 错误的
+    # loss_clone = loss.detach()
+    # loss_clone = loss.numpy()
+    # loss_clone = paddle.to_tensor(loss_clone)
+    # loss_clone = paddle.ones(loss.shape, dtype=paddle.float32)
+    # loss_clone.set_value(loss)
+
+    # dloss_dx = paddle.grad(outputs=[loss.sum()], inputs=[x], create_graph=True)[0]
+    # dloss_dw = paddle.grad(outputs=[loss.sum()], inputs=[model.weight], create_graph=True)[0]
+    dloss_dx, dloss_dw = paddle.grad(outputs=[loss.sum()], inputs=[x, model.weight], create_graph=True)
+    # dloss_dloss = paddle.ones(loss.shape, dtype=paddle.float32)
+    # dloss_dy = dloss_dloss * loss_clone * (1.0 - loss_clone)   # 总结：和梯度相乘的临时前向张量loss_clone一定要是本尊，不能加.detach()
+    # dloss_dx, dloss_dw = _conv2d_wrapper_grad(dloss_dy, x=x, w=model.weight, stride=stride, padding=padding, groups=groups, transpose=transpose, flip_weight=flip_weight)
 
     y_paddle = y.numpy()
     ddd = np.sum((y_pytorch - y_paddle) ** 2)
     print('ddd=%.6f' % ddd)
 
-    dy_dx_paddle = dy_dx.numpy()
-    ddd = np.sum((dy_dx_pytorch - dy_dx_paddle) ** 2)
+    dloss_dx_paddle = dloss_dx.numpy()
+    ddd = np.sum((dloss_dx_pytorch - dloss_dx_paddle) ** 2)
     print('ddd=%.6f' % ddd)
 
-    dy_dw_paddle = dy_dw.numpy()
-    ddd = np.sum((dy_dw_pytorch - dy_dw_paddle) ** 2)
+    dloss_dw_paddle = dloss_dw.numpy()
+    ddd = np.sum((dloss_dw_pytorch - dloss_dw_paddle) ** 2)
     print('ddd=%.6f' % ddd)
 
-    loss = y.sum() + dy_dx.sum() + dy_dw.sum()
-    # loss = y.sum() + dy_dx.sum()
-    # loss = y.sum() + dy_dw.sum()
+    # loss = loss.sum() + dloss_dx.sum() + dloss_dw.sum()   # 使用paddle.grad()时，和pytorch获得不一样的结果xxx
+    loss = loss.sum() + dloss_dx.sum()   # 使用paddle.grad()时，和pytorch获得不一样的结果xxx
+    # loss = loss.sum() + dloss_dw.sum()     # 使用paddle.grad()时，可以和pytorch获得一样的结果。
     loss.backward()
     optimizer.step()
     optimizer.clear_gradients()
