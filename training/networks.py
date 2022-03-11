@@ -304,14 +304,10 @@ class SynthesisLayer(torch.nn.Module):
             self.noise_strength = torch.nn.Parameter(torch.zeros([]))
         self.bias = torch.nn.Parameter(torch.zeros([out_channels]))
 
-    def forward(self, x, w, dic, pre_name, noise_mode='random', fused_modconv=True, gain=1):
+    def forward(self, x, w, noise_mode='random', fused_modconv=True, gain=1):
         assert noise_mode in ['random', 'const', 'none']
         in_resolution = self.resolution // self.up
-        misc.assert_shape(x, [None, self.weight.shape[1], in_resolution, in_resolution])
         styles = self.affine(w)
-        dstyles_dw = torch.autograd.grad(outputs=[styles.sum()], inputs=[w], create_graph=True,
-                                      only_inputs=True)[0]
-        dic[pre_name + '.dstyles_dw'] = dstyles_dw.cpu().detach().numpy()
 
         noise = None
         if self.use_noise and noise_mode == 'random':
@@ -320,27 +316,12 @@ class SynthesisLayer(torch.nn.Module):
             noise = self.noise_const * self.noise_strength
 
         flip_weight = (self.up == 1) # slightly faster
-        x.requires_grad_(True)
         img2 = modulated_conv2d(x=x, weight=self.weight, styles=styles, noise=noise, up=self.up,
             padding=self.padding, resample_filter=self.resample_filter, flip_weight=flip_weight, fused_modconv=fused_modconv)
-
-        dimg2_dx = torch.autograd.grad(outputs=[img2.sum()], inputs=[x], create_graph=True,
-                                      only_inputs=True)[0]
-        dic[pre_name + '.dimg2_dx'] = dimg2_dx.cpu().detach().numpy()
-        dimg2_dw = torch.autograd.grad(outputs=[img2.sum()], inputs=[w], create_graph=True,
-                                      only_inputs=True)[0]
-        dic[pre_name + '.dimg2_dw'] = dimg2_dw.cpu().detach().numpy()
-
-        dimg2_dstyles = torch.autograd.grad(outputs=[img2.sum()], inputs=[styles], create_graph=True,
-                                      only_inputs=True)[0]
-        dic[pre_name + '.dimg2_dstyles'] = dimg2_dstyles.cpu().detach().numpy()
 
         act_gain = self.act_gain * gain
         act_clamp = self.conv_clamp * gain if self.conv_clamp is not None else None
         img3 = bias_act.bias_act(img2, self.bias.to(img2.dtype), act=self.activation, gain=act_gain, clamp=act_clamp)
-        dimg3_dimg2 = torch.autograd.grad(outputs=[img3.sum()], inputs=[img2], create_graph=True,
-                                      only_inputs=True)[0]
-        dic[pre_name + '.dimg3_dimg2'] = dimg3_dimg2.cpu().detach().numpy()
         return img3
 
 #----------------------------------------------------------------------------

@@ -1374,26 +1374,116 @@ class SynthesisLayer(nn.Layer):
         # self.bias = torch.nn.Parameter(torch.zeros([out_channels]))
         self.bias = self.create_parameter([out_channels, ],
                                           default_initializer=paddle.nn.initializer.Constant(0.0))
+        self.grad_layer = SynthesisLayer_Grad(
+            in_channels,
+            out_channels,
+            w_dim,
+            resolution,
+            kernel_size,
+            up,
+            use_noise,
+            activation,
+            resample_filter,
+            conv_clamp,
+            channels_last,
+        )
 
     def forward(self, x, w, noise_mode='random', fused_modconv=True, gain=1):
         assert noise_mode in ['random', 'const', 'none']
         in_resolution = self.resolution // self.up
         styles = self.affine(w)
+        self.grad_layer.w = w
+        self.grad_layer.styles = styles
+        self.grad_layer.affine = self.affine
 
         noise = None
         if self.use_noise and noise_mode == 'random':
             noise = paddle.randn([x.shape[0], 1, self.resolution, self.resolution]) * self.noise_strength
         if self.use_noise and noise_mode == 'const':
             noise = self.noise_const * self.noise_strength
+        self.grad_layer.noise = noise
 
         flip_weight = (self.up == 1) # slightly faster
-        img2 = modulated_conv2d(x=x, weight=self.weight, styles=styles, noise=noise, up=self.up,
+        self.grad_layer.flip_weight = flip_weight
+        self.grad_layer.x = x
+        self.grad_layer.weight = self.weight
+        self.grad_layer.resample_filter = self.resample_filter
+        self.grad_layer.fused_modconv = fused_modconv
+        img2, x_1, x_2, x_mul_styles = modulated_conv2d(x=x, weight=self.weight, styles=styles, noise=noise, up=self.up,
             padding=self.padding, resample_filter=self.resample_filter, flip_weight=flip_weight, fused_modconv=fused_modconv)
+        self.grad_layer.img2 = img2
+        self.grad_layer.x_1 = x_1
+        self.grad_layer.x_2 = x_2
+        self.grad_layer.x_mul_styles = x_mul_styles
 
         act_gain = self.act_gain * gain
         act_clamp = self.conv_clamp * gain if self.conv_clamp is not None else None
-        img3 = bias_act(img2, paddle.cast(self.bias, dtype=x.dtype), act=self.activation, gain=act_gain, clamp=act_clamp)
+        b = paddle.cast(self.bias, dtype=x.dtype)
+        self.grad_layer.act_gain = act_gain
+        self.grad_layer.act_clamp = act_clamp
+        self.grad_layer.b = b
+        img3, temp_tensors = bias_act(img2, b, act=self.activation, gain=act_gain, clamp=act_clamp)
+        self.grad_layer.gain_x2 = temp_tensors['gain_x'].detach()  # 计算bias_act()的梯度时，需要计算paddle.where(gain_x > clamp, ...)，gain_x必须加detach()
+        self.grad_layer.act_x2 = temp_tensors['act_x']  # 计算bias_act()的梯度时，且激活是sigmoid时，act_x要和梯度相乘，act_x不能加detach()
+        self.grad_layer.x2_add_b = temp_tensors['x_add_b'].detach()  # 计算bias_act()的梯度时，且激活是relu之类时，需要计算paddle.where(x_add_b > 0.0, ...)，x_add_b必须加detach()
         return img3
+
+
+
+class SynthesisLayer_Grad(nn.Layer):
+    def __init__(self,
+        in_channels,                    # Number of input channels.
+        out_channels,                   # Number of output channels.
+        w_dim,                          # Intermediate latent (W) dimensionality.
+        resolution,                     # Resolution of this layer.
+        kernel_size     = 3,            # Convolution kernel size.
+        up              = 1,            # Integer upsampling factor.
+        use_noise       = True,         # Enable noise input?
+        activation      = 'lrelu',      # Activation function: 'relu', 'lrelu', etc.
+        resample_filter = [1,3,3,1],    # Low-pass filter to apply when resampling activations.
+        conv_clamp      = None,         # Clamp the output of convolution layers to +-X, None = disable clamping.
+        channels_last   = False,        # Use channels_last format for the weights?
+    ):
+        super().__init__()
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.w_dim = w_dim
+        self.resolution = resolution
+        self.kernel_size = kernel_size
+        self.up = up
+        self.use_noise = use_noise
+        self.activation = activation
+        self.resample_filter = resample_filter
+        self.conv_clamp = conv_clamp
+        self.channels_last = channels_last
+
+    def forward(self, dloss_dout):
+        styles = self.styles
+        x2 = self.x2
+        b = self.b
+        gain_x2 = self.gain_x2
+        act_x2 = self.act_x2
+        x2_add_b = self.x2_add_b
+
+        x = self.x
+        x_1 = self.x_1
+        x_2 = self.x_2
+        noise = self.noise
+        flip_weight = self.flip_weight
+        x_mul_styles = self.x_mul_styles
+        fused_modconv = self.fused_modconv
+
+        temp_tensors = {}
+        temp_tensors['gain_x'] = gain_x2
+        temp_tensors['act_x'] = act_x2
+        temp_tensors['x_add_b'] = x2_add_b
+        dloss_dimg2 = bias_act_grad(dloss_dout, temp_tensors, b=b, act=self.activation, gain=self.act_gain, clamp=self.act_clamp)
+
+        dloss_dx, dloss_dstyles = modulated_conv2d_grad(dloss_dimg2, x_1, x_2, x_mul_styles, x=x, weight=self.weight, styles=styles, noise=noise, up=self.up,
+            padding=self.padding, resample_filter=self.resample_filter, flip_weight=flip_weight, fused_modconv=fused_modconv)
+        dloss_daffine_w = dloss_dstyles
+        dloss_dw = self.affine.grad_layer(dloss_daffine_w)
+        return dloss_dx, dloss_dw
 
 
 
