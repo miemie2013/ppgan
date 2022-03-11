@@ -401,6 +401,12 @@ def _conv2d_wrapper_grad(dloss_dout, x, w, stride=1, padding=0, groups=1, transp
         dloss_dW = F.conv2d(dloss_dY, dY_dW, groups=g)  # [oc, g*c, kH, kW]
         dloss_dW = paddle.transpose(dloss_dW, [1, 0, 2, 3])  # [g*c, oc, kH, kW]
     else:
+        # if kw == 1 and kh == 1 and stride == 1 and groups == 1:
+        #     www = paddle.transpose(w_flip, [1, 0, 2, 3])
+        #     dloss_dx = F.conv2d(x=dloss_dout, weight=www, stride=stride, padding=padding, groups=groups)
+        # else:
+        #     output_padding = stride - 1
+        #     dloss_dx = F.conv2d_transpose(x=dloss_dout, weight=w_flip, stride=stride, padding=padding, output_padding=output_padding, groups=groups)
         output_padding = stride - 1
         dloss_dx = F.conv2d_transpose(x=dloss_dout, weight=w_flip, stride=stride, padding=padding, output_padding=output_padding, groups=groups)
 

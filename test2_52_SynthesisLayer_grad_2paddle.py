@@ -28,8 +28,8 @@ def copy(name, w, std):
 
 toRGBLayer_std = toRGBLayer.state_dict()
 
-ckpt_file = 'pytorch_toRGBLayer.pth'
-save_name = 'pytorch_toRGBLayer.pdparams'
+ckpt_file = '52.pth'
+save_name = '52.pdparams'
 state_dict = torch.load(ckpt_file, map_location=torch.device('cpu'))
 
 

@@ -16,10 +16,10 @@ model = ToRGBLayer(out_channels, img_channels, w_dim=w_dim,
                    conv_clamp=conv_clamp, channels_last=channels_last)
 model.train()
 optimizer = paddle.optimizer.Momentum(parameters=model.parameters(), learning_rate=lr, momentum=0.9)
-model.set_state_dict(paddle.load("pytorch_toRGBLayer.pdparams"))
+model.set_state_dict(paddle.load("52.pdparams"))
 
 
-dic2 = np.load('02_toRGBLayer_grad.npz')
+dic2 = np.load('52.npz')
 for batch_idx in range(8):
     print('======================== batch_%.3d ========================'%batch_idx)
     optimizer.clear_gradients()

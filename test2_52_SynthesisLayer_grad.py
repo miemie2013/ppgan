@@ -1,7 +1,7 @@
 
 import torch
 import numpy as np
-from training.networks import ToRGBLayer
+from training.networks import SynthesisLayer
 
 
 w_dim = 512
@@ -13,11 +13,11 @@ fused_modconv = False
 batch_size = 2
 lr = 0.0001
 
-model = ToRGBLayer(out_channels, img_channels, w_dim=w_dim,
-                   conv_clamp=conv_clamp, channels_last=channels_last)
+model = SynthesisLayer(out_channels, img_channels, w_dim=w_dim,
+                       conv_clamp=conv_clamp, channels_last=channels_last)
 model.train()
 optimizer = torch.optim.SGD(model.parameters(), lr=lr, momentum=0.9)
-torch.save(model.state_dict(), "pytorch_toRGBLayer.pth")
+torch.save(model.state_dict(), "52.pth")
 
 dic = {}
 for batch_idx in range(8):
@@ -44,5 +44,5 @@ for batch_idx in range(8):
     # loss = y.sum()
     loss.backward()
     optimizer.step()
-np.savez('02_toRGBLayer_grad', **dic)
+np.savez('52', **dic)
 print()
