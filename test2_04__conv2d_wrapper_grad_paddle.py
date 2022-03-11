@@ -254,7 +254,7 @@ for batch_idx in range(8):
 
     # 总结：和梯度相乘的临时前向张量loss_clone一定要是本尊，不能加.detach()
     # 正确的
-    # loss_clone = loss
+    loss_clone = loss
     # loss_clone = loss.clone()
 
     # 错误的
@@ -266,10 +266,11 @@ for batch_idx in range(8):
 
     # dloss_dx = paddle.grad(outputs=[loss.sum()], inputs=[x], create_graph=True)[0]
     # dloss_dw = paddle.grad(outputs=[loss.sum()], inputs=[model.weight], create_graph=True)[0]
-    dloss_dx, dloss_dw = paddle.grad(outputs=[loss.sum()], inputs=[x, model.weight], create_graph=True)
-    # dloss_dloss = paddle.ones(loss.shape, dtype=paddle.float32)
+    # dloss_dx, dloss_dw = paddle.grad(outputs=[loss.sum()], inputs=[x, model.weight], create_graph=True)
+    dloss_dloss = paddle.ones(loss.shape, dtype=paddle.float32)
     # dloss_dy = dloss_dloss * loss_clone * (1.0 - loss_clone)   # 总结：和梯度相乘的临时前向张量loss_clone一定要是本尊，不能加.detach()
-    # dloss_dx, dloss_dw = _conv2d_wrapper_grad(dloss_dy, x=x, w=model.weight, stride=stride, padding=padding, groups=groups, transpose=transpose, flip_weight=flip_weight)
+    dloss_dy = dloss_dloss
+    dloss_dx, dloss_dw = _conv2d_wrapper_grad(dloss_dy, x=x, w=model.weight, stride=stride, padding=padding, groups=groups, transpose=transpose, flip_weight=flip_weight)
 
     y_paddle = y.numpy()
     ddd = np.sum((y_pytorch - y_paddle) ** 2)
