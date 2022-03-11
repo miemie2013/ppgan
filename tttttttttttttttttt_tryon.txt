@@ -1,0 +1,17 @@
+
+
+
+生成虚拟试衣数据集：
+try_on_001.py   将数据集的图片resize到指定分辨率
+
+2D-Human-Parsing-main          1_prepare_pasta.py
+见其mmmmmmmmmmmmm.txt+
+
+openpose           4d_4_1_keypoints.py
+openpose           4d_4_2_nokeypoints_images.py
+
+
+
+
+
+
