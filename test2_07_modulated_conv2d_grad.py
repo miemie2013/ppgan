@@ -297,6 +297,18 @@ for batch_idx in range(8):
     # flip_weight = True
     # fused_modconv = False
 
+    x_shape = [2, 64, 512, 512]
+    w_shape = [64, 64, 3, 3]
+    styles_shape = [2, 64]
+    noise_shape = None
+    up = 1
+    down = 1
+    padding = 1
+    resample_filter_shape = [4, 4]
+    demodulate = True
+    flip_weight = True
+    fused_modconv = True
+
 
 
 
@@ -340,9 +352,10 @@ for batch_idx in range(8):
         dic['batch_%.3d.resample_filter'%batch_idx] = resample_filter.cpu().detach().numpy()
 
 
-    loss = y.sum() + dy_dx.sum() + dy_dstyles.sum()
+    # loss = y.sum() + dy_dx.sum() + dy_dstyles.sum()
     # loss = y.sum() + dy_dx.sum()
     # loss = y.sum() + dy_dstyles.sum()
+    loss = y.sum()
     loss.backward()
     optimizer.step()
     optimizer.zero_grad(set_to_none=True)

@@ -297,6 +297,18 @@ for batch_idx in range(8):
     # flip_weight = True
     # fused_modconv = False
 
+    x_shape = [2, 64, 512, 512]
+    w_shape = [64, 64, 3, 3]
+    styles_shape = [2, 64]
+    noise_shape = None
+    up = 1
+    down = 1
+    padding = 1
+    resample_filter_shape = [4, 4]
+    demodulate = True
+    flip_weight = True
+    fused_modconv = True
+
 
 
 
@@ -329,11 +341,11 @@ for batch_idx in range(8):
 
     y, x_1, x_2, x_mul_styles = model(x, styles, noise, up=up, down=down, padding=padding, resample_filter=resample_filter,
                          demodulate=demodulate, flip_weight=flip_weight, fused_modconv=fused_modconv)
-    # dy_dx = paddle.grad(outputs=[y.sum()], inputs=[x], create_graph=True)[0]
-    # dy_dstyles = paddle.grad(outputs=[y.sum()], inputs=[styles], create_graph=True)[0]
-    dysum_dy = paddle.ones(y.shape, dtype=paddle.float32)
-    dy_dx, dy_dstyles = modulated_conv2d_grad(dysum_dy, x_1, x_2, x_mul_styles, x, model.weight, styles, noise, up=up, down=down, padding=padding, resample_filter=resample_filter,
-                                              demodulate=demodulate, flip_weight=flip_weight, fused_modconv=fused_modconv)
+    dy_dx = paddle.grad(outputs=[y.sum()], inputs=[x], create_graph=True)[0]
+    dy_dstyles = paddle.grad(outputs=[y.sum()], inputs=[styles], create_graph=True)[0]
+    # dysum_dy = paddle.ones(y.shape, dtype=paddle.float32)
+    # dy_dx, dy_dstyles = modulated_conv2d_grad(dysum_dy, x_1, x_2, x_mul_styles, x, model.weight, styles, noise, up=up, down=down, padding=padding, resample_filter=resample_filter,
+    #                                           demodulate=demodulate, flip_weight=flip_weight, fused_modconv=fused_modconv)
 
     y_paddle = y.numpy()
     ddd = np.sum((y_pytorch - y_paddle) ** 2)
@@ -354,9 +366,10 @@ for batch_idx in range(8):
     ddd = np.mean((dy_dstyles_pytorch - dy_dstyles_paddle) ** 2)
     print('ddd=%.6f' % ddd)
 
-    loss = y.sum() + dy_dx.sum() + dy_dstyles.sum()
+    # loss = y.sum() + dy_dx.sum() + dy_dstyles.sum()
     # loss = y.sum() + dy_dx.sum()
-    # loss = y.sum() + dy_dstyles.sum()
+    # loss = y.sum() + dy_dstyles.sum()    # 和pytorch获得一样的结果。
+    loss = y.sum()    # 和pytorch获得一样的结果。
     loss.backward()
     optimizer.step()
     optimizer.clear_gradients()

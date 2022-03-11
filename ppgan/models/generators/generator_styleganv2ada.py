@@ -1236,13 +1236,13 @@ def modulated_conv2d(
 
     # Execute as one fused op using grouped convolution.
     else:
-        x = x.reshape((1, -1, *x.shape[2:]))
+        xr = x.reshape((1, -1, *x.shape[2:]))
         w = w.reshape((-1, in_channels, kh, kw))
-        x, x_1 = conv2d_resample(x=x, w=paddle.cast(w, dtype=x.dtype), filter=resample_filter, up=up, down=down, padding=padding, groups=batch_size, flip_weight=flip_weight)
-        x = x.reshape((batch_size, -1, *x.shape[2:]))
+        x_2, x_1 = conv2d_resample(x=xr, w=paddle.cast(w, dtype=xr.dtype), filter=resample_filter, up=up, down=down, padding=padding, groups=batch_size, flip_weight=flip_weight)
+        out = x_2.reshape((batch_size, -1, *x_2.shape[2:]))
         if noise is not None:
-            x = x + noise
-        return x, x_1
+            out = out + noise
+        return out, x_1, x_2, xr
 
 def modulated_conv2d_grad(dloss_dout, x_1, x_2, x_mul_styles,
     x,                          # Input tensor of shape [batch_size, in_channels, in_height, in_width].
