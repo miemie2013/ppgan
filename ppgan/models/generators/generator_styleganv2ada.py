@@ -1226,11 +1226,7 @@ def modulated_conv2d(
             out = x_2 + paddle.cast(noise, dtype=x.dtype)
         else:
             out = x_2
-        if x_1 is not None:
-            x_1_ = x_1
-        else:
-            x_1_ = None
-        return out, x_1_, x_2, x_mul_styles
+        return out, x_1, x_2, x_mul_styles
 
     # Execute as one fused op using grouped convolution.
     else:
@@ -1421,7 +1417,6 @@ class ToRGBLayer(nn.Layer):
     def forward(self, x, w, fused_modconv=True):
         self.grad_layer.w = w
         styles = self.affine(w) * self.weight_gain
-        # styles = w
         self.grad_layer.styles = styles
         self.grad_layer.x = x
         self.grad_layer.fused_modconv = fused_modconv
@@ -1430,10 +1425,7 @@ class ToRGBLayer(nn.Layer):
         self.grad_layer.affine = self.affine
         x2, x_1, x_2, x_mul_styles = modulated_conv2d(x=x, weight=self.weight, styles=styles, demodulate=False, fused_modconv=fused_modconv)
         self.grad_layer.x2 = x2
-        if x_1 is not None:
-            self.grad_layer.x_1 = x_1
-        else:
-            self.grad_layer.x_1 = None
+        self.grad_layer.x_1 = x_1
         self.grad_layer.x_2 = x_2
         self.grad_layer.x_mul_styles = x_mul_styles
         b = paddle.cast(self.bias, dtype=x.dtype)
@@ -1442,7 +1434,7 @@ class ToRGBLayer(nn.Layer):
         self.grad_layer.gain_x2 = temp_tensors['gain_x'].detach()  # 计算bias_act()的梯度时，需要计算paddle.where(gain_x > clamp, ...)，gain_x必须加detach()
         self.grad_layer.act_x2 = temp_tensors['act_x']  # 计算bias_act()的梯度时，且激活是sigmoid时，act_x要和梯度相乘，act_x不能加detach()
         self.grad_layer.x2_add_b = temp_tensors['x_add_b'].detach()  # 计算bias_act()的梯度时，且激活是relu之类时，需要计算paddle.where(x_add_b > 0.0, ...)，x_add_b必须加detach()
-        return out, styles
+        return out
 
 class ToRGBLayer_Grad(nn.Layer):
     def __init__(self, in_channels, out_channels, w_dim, kernel_size=1, conv_clamp=None, channels_last=False):
@@ -1478,8 +1470,7 @@ class ToRGBLayer_Grad(nn.Layer):
         dloss_dx, dloss_dstyles = modulated_conv2d_grad(dloss_dx2, x_1, x_2, x_mul_styles, x=x, weight=self.weight, styles=styles, demodulate=False, fused_modconv=fused_modconv)
         dloss_daffine_w = dloss_dstyles * self.weight_gain
         dloss_dw = self.affine.grad_layer(dloss_daffine_w)
-        # dloss_dw = dloss_dstyles
-        return dloss_dx, dloss_dw, dloss_dstyles
+        return dloss_dx, dloss_dw
 
 
 
