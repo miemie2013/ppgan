@@ -20,7 +20,7 @@ model.set_state_dict(paddle.load("pytorch_toRGBLayer.pdparams"))
 
 
 dic2 = np.load('02_toRGBLayer_grad.npz')
-for batch_idx in range(20):
+for batch_idx in range(8):
     print('======================== batch_%.3d ========================'%batch_idx)
     optimizer.clear_gradients()
     x = dic2['batch_%.3d.input0'%batch_idx]

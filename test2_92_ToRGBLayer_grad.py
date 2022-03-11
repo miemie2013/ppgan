@@ -20,7 +20,7 @@ optimizer = torch.optim.SGD(model.parameters(), lr=lr, momentum=0.9)
 torch.save(model.state_dict(), "pytorch_toRGBLayer.pth")
 
 dic = {}
-for batch_idx in range(20):
+for batch_idx in range(8):
     optimizer.zero_grad(set_to_none=True)
 
     ws = torch.randn([batch_size, 512])

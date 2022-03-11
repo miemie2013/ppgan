@@ -19,7 +19,7 @@ class Model(torch.nn.Module):
 lr = 0.0001
 dic = {}
 batch_size = 2
-for batch_idx in range(20):
+for batch_idx in range(8):
     x_shape = [1, 512, 4, 4]
     w_shape = [512, 512, 3, 3]
     f_shape = [4, 4]

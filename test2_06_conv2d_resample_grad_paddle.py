@@ -18,7 +18,7 @@ class Model(paddle.nn.Layer):
 
 lr = 0.0001
 dic2 = np.load('06_grad.npz')
-for batch_idx in range(20):
+for batch_idx in range(8):
     print('======================== batch_%.3d ========================'%batch_idx)
     x_shape = [1, 512, 4, 4]
     w_shape = [512, 512, 3, 3]
