@@ -31,50 +31,50 @@ kernel_size = 1
 conv_clamp = 256
 channels_last = False
 
-# x_shape = [1, 512, 32, 32]
-# w_shape = [1, 512]
-# in_channels = 512
-# out_channels = 3
-# w_dim = 512
-# kernel_size = 1
-# conv_clamp = 256
-# channels_last = False
-#
-# x_shape = [1, 512, 64, 64]
-# w_shape = [1, 512]
-# in_channels = 512
-# out_channels = 3
-# w_dim = 512
-# kernel_size = 1
-# conv_clamp = 256
-# channels_last = False
-#
-# x_shape = [1, 256, 128, 128]
-# w_shape = [1, 512]
-# in_channels = 256
-# out_channels = 3
-# w_dim = 512
-# kernel_size = 1
-# conv_clamp = 256
-# channels_last = False
-#
-# x_shape = [1, 128, 256, 256]
-# w_shape = [1, 512]
-# in_channels = 128
-# out_channels = 3
-# w_dim = 512
-# kernel_size = 1
-# conv_clamp = 256
-# channels_last = False
-#
-# x_shape = [1, 64, 512, 512]
-# w_shape = [1, 512]
-# in_channels = 64
-# out_channels = 3
-# w_dim = 512
-# kernel_size = 1
-# conv_clamp = None
-# channels_last = False
+x_shape = [1, 512, 32, 32]
+w_shape = [1, 512]
+in_channels = 512
+out_channels = 3
+w_dim = 512
+kernel_size = 1
+conv_clamp = 256
+channels_last = False
+
+x_shape = [1, 512, 64, 64]
+w_shape = [1, 512]
+in_channels = 512
+out_channels = 3
+w_dim = 512
+kernel_size = 1
+conv_clamp = 256
+channels_last = False
+
+x_shape = [1, 256, 128, 128]
+w_shape = [1, 512]
+in_channels = 256
+out_channels = 3
+w_dim = 512
+kernel_size = 1
+conv_clamp = 256
+channels_last = False
+
+x_shape = [1, 128, 256, 256]
+w_shape = [1, 512]
+in_channels = 128
+out_channels = 3
+w_dim = 512
+kernel_size = 1
+conv_clamp = 256
+channels_last = False
+
+x_shape = [1, 64, 512, 512]
+w_shape = [1, 512]
+in_channels = 64
+out_channels = 3
+w_dim = 512
+kernel_size = 1
+conv_clamp = None
+channels_last = False
 
 
 
