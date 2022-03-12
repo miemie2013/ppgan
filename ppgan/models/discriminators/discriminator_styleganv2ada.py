@@ -95,22 +95,58 @@ class MinibatchStdLayer(nn.Layer):
         super().__init__()
         self.group_size = group_size
         self.num_channels = num_channels
+        self.grad_layer = MinibatchStdLayer_Grad(
+            group_size,
+            num_channels,
+        )
 
     def forward(self, x):
+        self.grad_layer.x = x
         N, C, H, W = x.shape
         # G = torch.min(torch.as_tensor(self.group_size), torch.as_tensor(N)) if self.group_size is not None else N
         G = min(self.group_size, N) if self.group_size is not None else N
         F = self.num_channels
         c = C // F
+        self.grad_layer.G = G
+        self.grad_layer.c = c
 
-        y = x.reshape((G, -1, F, c, H, W))    # [GnFcHW] Split minibatch N into n groups of size G, and channels C into F groups of size c.
-        y = y - y.mean(0)                   # [GnFcHW] Subtract mean over group.
-        y = y.square().mean(0)              # [nFcHW]  Calc variance over group.
-        y = (y + 1e-8).sqrt()               # [nFcHW]  Calc stddev over group.
-        y = y.mean([2, 3, 4])               # [nF]     Take average over channels and pixels.
-        y = y.reshape((-1, F, 1, 1))          # [nF11]   Add missing dimensions.
-        y = y.tile([G, 1, H, W])            # [NFHW]   Replicate over group and pixels.
-        x = paddle.concat([x, y], 1)        # [NCHW]   Append to input as new channels.
+        y0 = x.reshape((G, -1, F, c, H, W))    # [GnFcHW] Split minibatch N into n groups of size G, and channels C into F groups of size c.
+        y1 = y0 - y0.mean(0)                   # [GnFcHW] Subtract mean over group.
+        y2 = y1.square().mean(0)              # [nFcHW]  Calc variance over group.
+        y3 = (y2 + 1e-8).sqrt()               # [nFcHW]  Calc stddev over group.
+        y4 = y3.mean([2, 3, 4])               # [nF]     Take average over channels and pixels.
+        y5 = y4.reshape((-1, F, 1, 1))          # [nF11]   Add missing dimensions.
+        y6 = y5.tile([G, 1, H, W])            # [NFHW]   Replicate over group and pixels.
+        out = paddle.concat([x, y6], 1)        # [NCHW]   Append to input as new channels.
+        self.grad_layer.y0 = y0
+        self.grad_layer.y1 = y1
+        self.grad_layer.y2 = y2
+        self.grad_layer.y3 = y3
+        self.grad_layer.y4 = y4
+        self.grad_layer.y5 = y5
+        self.grad_layer.y6 = y6
+        self.grad_layer.out = out
+        return out
+
+class MinibatchStdLayer_Grad(nn.Layer):
+    def __init__(self, group_size, num_channels=1):
+        super().__init__()
+        self.group_size = group_size
+        self.num_channels = num_channels
+
+    def forward(self, x):
+        x = self.x
+        G = self.G
+        c = self.c
+        F = self.num_channels
+        y0 = self.y0
+        y1 = self.y1
+        y2 = self.y2
+        y3 = self.y3
+        y4 = self.y4
+        y5 = self.y5
+        y6 = self.y6
+        out = self.out
         return x
 
 class DiscriminatorEpilogue(nn.Layer):

@@ -145,6 +145,8 @@ def bias_act_grad(dloss_dclamp_x, temp_tensors, b=None, dim=1, act='linear', alp
 
     # 限制范围
     if clamp >= 0:
+        # 计算bias_act()的梯度时，需要计算paddle.where(gain_x > clamp, ...)，gain_x必须加detach()
+        gain_x = gain_x.detach()
         dclamp_x_dgain_x1 = paddle.where(gain_x > clamp, paddle.zeros(gain_x.shape, dtype=gain_x.dtype),
                                          paddle.ones(gain_x.shape, dtype=gain_x.dtype))
         dclamp_x_dgain_x2 = paddle.where(gain_x < -clamp, paddle.zeros(gain_x.shape, dtype=gain_x.dtype),
@@ -166,10 +168,14 @@ def bias_act_grad(dloss_dclamp_x, temp_tensors, b=None, dim=1, act='linear', alp
     if act == 'linear':
         dloss_dx_add_b = dloss_dact_x
     elif act == 'relu':
+        # 计算bias_act()的梯度时，且激活是relu之类时，需要计算paddle.where(x_add_b > 0.0, ...)，x_add_b必须加detach()
+        x_add_b = x_add_b.detach()
         dact_x_dx_add_b = paddle.where(x_add_b > 0.0, paddle.ones(x_add_b.shape, dtype=x_add_b.dtype),
                                        paddle.zeros(x_add_b.shape, dtype=x_add_b.dtype))
         dloss_dx_add_b = dloss_dact_x * dact_x_dx_add_b
     elif act == 'lrelu':
+        # 计算bias_act()的梯度时，且激活是relu之类时，需要计算paddle.where(x_add_b > 0.0, ...)，x_add_b必须加detach()
+        x_add_b = x_add_b.detach()
         dact_x_dx_add_b = paddle.where(x_add_b > 0.0, paddle.ones(x_add_b.shape, dtype=x_add_b.dtype),
                                        paddle.ones(x_add_b.shape, dtype=x_add_b.dtype)*alpha)
         dloss_dx_add_b = dloss_dact_x * dact_x_dx_add_b
@@ -972,6 +978,19 @@ class Conv2dLayer(nn.Layer):
         trainable       = True,         # Update the weights of this layer during training?
     ):
         super().__init__()
+        self.grad_layer = Conv2dLayer_Grad(
+            in_channels,
+            out_channels,
+            kernel_size,
+            bias,
+            activation,
+            up,
+            down,
+            resample_filter,
+            conv_clamp,
+            channels_last,
+            trainable,
+        )
         self.activation = activation
         self.up = up
         self.down = down
@@ -1005,12 +1024,60 @@ class Conv2dLayer(nn.Layer):
         w = self.weight * self.weight_gain
         b = paddle.cast(self.bias, dtype=x.dtype) if self.bias is not None else None
         flip_weight = (self.up == 1)  # slightly faster
-        x, x_1 = conv2d_resample(x=x, w=paddle.cast(w, dtype=x.dtype), filter=self.resample_filter, up=self.up, down=self.down, padding=self.padding, flip_weight=flip_weight)
+        self.grad_layer.flip_weight = flip_weight
+        self.grad_layer.resample_filter = self.resample_filter
+        self.grad_layer.x = x
+        self.grad_layer.w = w
+        self.grad_layer.b = b
+        self.grad_layer.up = self.up
+        self.grad_layer.down = self.down
+        self.grad_layer.padding = self.padding
+        x2, x_1 = conv2d_resample(x=x, w=paddle.cast(w, dtype=x.dtype), filter=self.resample_filter, up=self.up, down=self.down, padding=self.padding, flip_weight=flip_weight)
+        self.grad_layer.x_1 = x_1
 
         act_gain = self.act_gain * gain
         act_clamp = self.conv_clamp * gain if self.conv_clamp is not None else None
-        x = bias_act(x, b, act=self.activation, gain=act_gain, clamp=act_clamp)
-        return x
+        self.grad_layer.activation = self.activation
+        self.grad_layer.act_gain = act_gain
+        self.grad_layer.act_clamp = act_clamp
+        out, temp_tensors = bias_act(x2, b, act=self.activation, gain=act_gain, clamp=act_clamp)
+        self.grad_layer.gain_x2 = temp_tensors['gain_x']
+        self.grad_layer.act_x2 = temp_tensors['act_x']
+        self.grad_layer.x2_add_b = temp_tensors['x_add_b']
+        return out
+
+
+class Conv2dLayer_Grad(nn.Layer):
+    def __init__(self,
+        in_channels,                    # Number of input channels.
+        out_channels,                   # Number of output channels.
+        kernel_size,                    # Width and height of the convolution kernel.
+        bias            = True,         # Apply additive bias before the activation function?
+        activation      = 'linear',     # Activation function: 'relu', 'lrelu', etc.
+        up              = 1,            # Integer upsampling factor.
+        down            = 1,            # Integer downsampling factor.
+        resample_filter = [1,3,3,1],    # Low-pass filter to apply when resampling activations.
+        conv_clamp      = None,         # Clamp the output to +-X, None = disable clamping.
+        channels_last   = False,        # Expect the input to have memory_format=channels_last?
+        trainable       = True,         # Update the weights of this layer during training?
+    ):
+        super().__init__()
+        self.down = down
+
+    def forward(self, dloss_dout):
+        b = self.b
+        temp_tensors = {}
+        temp_tensors['gain_x'] = self.gain_x2
+        temp_tensors['act_x'] = self.act_x2
+        temp_tensors['x_add_b'] = self.x2_add_b
+        dloss_dx2 = bias_act_grad(dloss_dout, temp_tensors, b, act=self.activation, gain=self.act_gain, clamp=self.act_clamp)
+
+        x = self.x
+        w = self.w
+        flip_weight = self.flip_weight
+        x_1 = self.x_1
+        dloss_dx, dloss_dw = conv2d_resample_grad(dloss_dx2, x_1, x=x, w=paddle.cast(w, dtype=x.dtype), filter=self.resample_filter, up=self.up, down=self.down, padding=self.padding, flip_weight=flip_weight)
+        return dloss_dx
 
 
 class FullyConnectedLayer(nn.Layer):
@@ -1056,9 +1123,9 @@ class FullyConnectedLayer(nn.Layer):
         else:
             r = x.matmul(w.t())
             out, temp_tensors = bias_act(r, b, act=self.activation)
-            self.grad_layer.gain_r = temp_tensors['gain_x'].detach()   # 计算bias_act()的梯度时，需要计算paddle.where(gain_x > clamp, ...)，gain_x必须加detach()
-            self.grad_layer.act_r = temp_tensors['act_x']    # 计算bias_act()的梯度时，且激活是sigmoid时，act_x要和梯度相乘，act_x不能加detach()
-            self.grad_layer.r_add_b = temp_tensors['x_add_b'].detach()   # 计算bias_act()的梯度时，且激活是relu之类时，需要计算paddle.where(x_add_b > 0.0, ...)，x_add_b必须加detach()
+            self.grad_layer.gain_r = temp_tensors['gain_x']
+            self.grad_layer.act_r = temp_tensors['act_x']
+            self.grad_layer.r_add_b = temp_tensors['x_add_b']
         return out
 
 
@@ -1479,9 +1546,9 @@ class SynthesisLayer(nn.Layer):
         self.grad_layer.act_clamp = act_clamp
         self.grad_layer.b = b
         img3, temp_tensors = bias_act(img2, b, act=self.activation, gain=act_gain, clamp=act_clamp)
-        self.grad_layer.gain_x2 = temp_tensors['gain_x'].detach()  # 计算bias_act()的梯度时，需要计算paddle.where(gain_x > clamp, ...)，gain_x必须加detach()
-        self.grad_layer.act_x2 = temp_tensors['act_x']  # 计算bias_act()的梯度时，且激活是sigmoid时，act_x要和梯度相乘，act_x不能加detach()
-        self.grad_layer.x2_add_b = temp_tensors['x_add_b'].detach()  # 计算bias_act()的梯度时，且激活是relu之类时，需要计算paddle.where(x_add_b > 0.0, ...)，x_add_b必须加detach()
+        self.grad_layer.gain_x2 = temp_tensors['gain_x']
+        self.grad_layer.act_x2 = temp_tensors['act_x']
+        self.grad_layer.x2_add_b = temp_tensors['x_add_b']
         return img3
 
 
@@ -1582,9 +1649,9 @@ class ToRGBLayer(nn.Layer):
         b = paddle.cast(self.bias, dtype=x.dtype)
         self.grad_layer.b = b
         out, temp_tensors = bias_act(x2, b, clamp=self.conv_clamp)
-        self.grad_layer.gain_x2 = temp_tensors['gain_x'].detach()  # 计算bias_act()的梯度时，需要计算paddle.where(gain_x > clamp, ...)，gain_x必须加detach()
-        self.grad_layer.act_x2 = temp_tensors['act_x']  # 计算bias_act()的梯度时，且激活是sigmoid时，act_x要和梯度相乘，act_x不能加detach()
-        self.grad_layer.x2_add_b = temp_tensors['x_add_b'].detach()  # 计算bias_act()的梯度时，且激活是relu之类时，需要计算paddle.where(x_add_b > 0.0, ...)，x_add_b必须加detach()
+        self.grad_layer.gain_x2 = temp_tensors['gain_x']
+        self.grad_layer.act_x2 = temp_tensors['act_x']
+        self.grad_layer.x2_add_b = temp_tensors['x_add_b']
         return out
 
 class ToRGBLayer_Grad(nn.Layer):
