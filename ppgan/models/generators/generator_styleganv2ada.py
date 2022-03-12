@@ -864,8 +864,12 @@ def conv2d_resample_grad(dloss_dout, x_1, x, w, filter=None, up=1, down=1, paddi
     if up > 1:
         if groups == 1:
             w = w.transpose((1, 0, 2, 3))
+            w3 = w
         else:
-            raise NotImplementedError("not implemented.")
+            w0 = w
+            w1 = w.reshape((groups, out_channels // groups, in_channels_per_group, kh, kw))
+            w2 = w1.transpose((0, 2, 1, 3, 4))
+            w3 = w2.reshape((groups * in_channels_per_group, out_channels // groups, kh, kw))
         px0 -= kw - 1
         px1 -= kw - up
         py0 -= kh - 1
@@ -875,12 +879,13 @@ def conv2d_resample_grad(dloss_dout, x_1, x, w, filter=None, up=1, down=1, paddi
         if down > 1:
             raise NotImplementedError("not implemented.")
         dy_dx = upfirdn2d_grad(dloss_dout, x_1, filter, padding=[px0 + pxt, px1 + pxt, py0 + pyt, py1 + pyt], gain=up ** 2, flip_filter=flip_filter)
-        dy_dx, dy_dw = _conv2d_wrapper_grad(dy_dx, x=x, w=w, stride=up, padding=[pyt,pxt], groups=groups, transpose=True, flip_weight=(not flip_weight))
+        dy_dx, dy_dw3 = _conv2d_wrapper_grad(dy_dx, x=x, w=w3, stride=up, padding=[pyt,pxt], groups=groups, transpose=True, flip_weight=(not flip_weight))
         if groups == 1:
-            dy_dw = dy_dw.transpose((1, 0, 2, 3))
-            pass
+            dy_dw = dy_dw3.transpose((1, 0, 2, 3))
         else:
-            raise NotImplementedError("not implemented.")
+            dy_dw2 = dy_dw3.reshape(w2.shape)
+            dy_dw1 = dy_dw2.transpose((0, 2, 1, 3, 4))
+            dy_dw = dy_dw1.reshape(w0.shape)
         # print('eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee')
         return dy_dx, dy_dw
 
@@ -1444,6 +1449,7 @@ class SynthesisLayer(nn.Layer):
         self.grad_layer.x = x
         self.grad_layer.weight = self.weight
         self.grad_layer.resample_filter = self.resample_filter
+        self.grad_layer.padding = self.padding
         self.grad_layer.fused_modconv = fused_modconv
         img2, x_1, x_2, x_mul_styles = modulated_conv2d(x=x, weight=self.weight, styles=styles, noise=noise, up=self.up,
             padding=self.padding, resample_filter=self.resample_filter, flip_weight=flip_weight, fused_modconv=fused_modconv)
@@ -1495,7 +1501,6 @@ class SynthesisLayer_Grad(nn.Layer):
 
     def forward(self, dloss_dout):
         styles = self.styles
-        x2 = self.x2
         b = self.b
         gain_x2 = self.gain_x2
         act_x2 = self.act_x2

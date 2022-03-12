@@ -164,85 +164,85 @@ channels_last = False
 fused_modconv = True
 gain = 1
 
-x_shape = [1, 256, 128, 128]
-w_shape = [1, 512]
-in_channels = 256
-out_channels = 256
-w_dim = 512
-resolution = 128
-kernel_size = 3
-up = 1
-use_noise = True
-activation = 'lrelu'
-resample_filter = [1, 3, 3, 1]
-conv_clamp = 256
-channels_last = False
-fused_modconv = True
-gain = 1
+# x_shape = [1, 256, 128, 128]
+# w_shape = [1, 512]
+# in_channels = 256
+# out_channels = 256
+# w_dim = 512
+# resolution = 128
+# kernel_size = 3
+# up = 1
+# use_noise = True
+# activation = 'lrelu'
+# resample_filter = [1, 3, 3, 1]
+# conv_clamp = 256
+# channels_last = False
+# fused_modconv = True
+# gain = 1
 
-x_shape = [1, 256, 128, 128]
-w_shape = [1, 512]
-in_channels = 256
-out_channels = 128
-w_dim = 512
-resolution = 256
-kernel_size = 3
-up = 2
-use_noise = True
-activation = 'lrelu'
-resample_filter = [1, 3, 3, 1]
-conv_clamp = 256
-channels_last = False
-fused_modconv = True
-gain = 1
+# x_shape = [1, 256, 128, 128]
+# w_shape = [1, 512]
+# in_channels = 256
+# out_channels = 128
+# w_dim = 512
+# resolution = 256
+# kernel_size = 3
+# up = 2
+# use_noise = True
+# activation = 'lrelu'
+# resample_filter = [1, 3, 3, 1]
+# conv_clamp = 256
+# channels_last = False
+# fused_modconv = True
+# gain = 1
 
-x_shape = [1, 128, 256, 256]
-w_shape = [1, 512]
-in_channels = 128
-out_channels = 128
-w_dim = 512
-resolution = 256
-kernel_size = 3
-up = 1
-use_noise = True
-activation = 'lrelu'
-resample_filter = [1, 3, 3, 1]
-conv_clamp = 256
-channels_last = False
-fused_modconv = True
-gain = 1
+# x_shape = [1, 128, 256, 256]
+# w_shape = [1, 512]
+# in_channels = 128
+# out_channels = 128
+# w_dim = 512
+# resolution = 256
+# kernel_size = 3
+# up = 1
+# use_noise = True
+# activation = 'lrelu'
+# resample_filter = [1, 3, 3, 1]
+# conv_clamp = 256
+# channels_last = False
+# fused_modconv = True
+# gain = 1
 
-x_shape = [1, 128, 256, 256]
-w_shape = [1, 512]
-in_channels = 128
-out_channels = 64
-w_dim = 512
-resolution = 512
-kernel_size = 3
-up = 2
-use_noise = True
-activation = 'lrelu'
-resample_filter = [1, 3, 3, 1]
-conv_clamp = 256
-channels_last = False
-fused_modconv = True
-gain = 1
+# x_shape = [1, 128, 256, 256]
+# w_shape = [1, 512]
+# in_channels = 128
+# out_channels = 64
+# w_dim = 512
+# resolution = 512
+# kernel_size = 3
+# up = 2
+# use_noise = True
+# activation = 'lrelu'
+# resample_filter = [1, 3, 3, 1]
+# conv_clamp = 256
+# channels_last = False
+# fused_modconv = True
+# gain = 1
 
-x_shape = [1, 64, 512, 512]
-w_shape = [1, 512]
-in_channels = 64
-out_channels = 64
-w_dim = 512
-resolution = 512
-kernel_size = 3
-up = 1
-use_noise = True
-activation = 'lrelu'
-resample_filter = [1, 3, 3, 1]
-conv_clamp = 256
-channels_last = False
-fused_modconv = True
-gain = 1
+# x_shape = [1, 64, 512, 512]
+# w_shape = [1, 512]
+# in_channels = 64
+# out_channels = 64
+# w_dim = 512
+# resolution = 512
+# kernel_size = 3
+# up = 1
+# use_noise = True
+# activation = 'lrelu'
+# resample_filter = [1, 3, 3, 1]
+# conv_clamp = 256
+# channels_last = False
+# fused_modconv = True
+# gain = 1
 
 
 
@@ -273,10 +273,10 @@ for batch_idx in range(8):
     x.stop_gradient = False
     y = model(x, ws, noise_mode='random', fused_modconv=fused_modconv, gain=gain)
 
-    dy_dx = paddle.grad(outputs=[y.sum()], inputs=[x], create_graph=True)[0]
-    dy_dws = paddle.grad(outputs=[y.sum()], inputs=[ws], create_graph=True)[0]
-    # dysum_dy = paddle.ones(y.shape, dtype=paddle.float32)
-    # dy_dx, dy_dws = model.grad_layer(dysum_dy)
+    # dy_dx = paddle.grad(outputs=[y.sum()], inputs=[x], create_graph=True)[0]
+    # dy_dws = paddle.grad(outputs=[y.sum()], inputs=[ws], create_graph=True)[0]
+    dysum_dy = paddle.ones(y.shape, dtype=paddle.float32)
+    dy_dx, dy_dws = model.grad_layer(dysum_dy)
 
     y_paddle = y.numpy()
     ddd = np.sum((y_pytorch - y_paddle) ** 2)
