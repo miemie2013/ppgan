@@ -943,6 +943,20 @@ def upsample2d(x, f, up=2, padding=0, flip_filter=False, gain=1):
     return upfirdn2d(x, f, up=up, padding=p, flip_filter=flip_filter, gain=gain*upx*upy)
 
 
+def upsample2d_grad(dloss_dout, x, f, up=2, padding=0, flip_filter=False, gain=1):
+    upx, upy = _parse_scaling(up)
+    padx0, padx1, pady0, pady1 = _parse_padding(padding)
+    fw, fh = _get_filter_size(f)
+    p = [
+        padx0 + (fw + upx - 1) // 2,
+        padx1 + (fw - upx) // 2,
+        pady0 + (fh + upy - 1) // 2,
+        pady1 + (fh - upy) // 2,
+    ]
+    return upfirdn2d_grad(dloss_dout, x, f, up=up, padding=p, flip_filter=flip_filter, gain=gain*upx*upy)
+
+
+
 class Conv2dLayer(nn.Layer):
     def __init__(self,
         in_channels,                    # Number of input channels.
@@ -1706,7 +1720,21 @@ class StyleGANv2ADA_SynthesisNetwork(nn.Layer):
                 self.num_ws += 1
             self.is_lasts.append(is_last)
             self.architectures.append(architecture)
-        print()
+        self.grad_layer = StyleGANv2ADA_SynthesisNetwork_Grad(
+            w_dim,
+            img_resolution,
+            img_channels,
+            channel_base,
+            channel_max,
+            num_fp16_res,
+        )
+        self.grad_layer.block_resolutions = self.block_resolutions
+        self.grad_layer.channels_dict = self.channels_dict
+        self.grad_layer.is_lasts = self.is_lasts
+        self.grad_layer.architectures = self.architectures
+        self.grad_layer.convs = self.convs
+        self.grad_layer.torgbs = self.torgbs
+        self.grad_layer.num_ws = self.num_ws
 
     def forward(self, ws, **block_kwargs):
         # block_ws = []
@@ -1724,13 +1752,10 @@ class StyleGANv2ADA_SynthesisNetwork(nn.Layer):
         #     x, img = block(x, img, cur_ws, **block_kwargs)
 
         fused_modconv = False
+        self.grad_layer.fused_modconv = fused_modconv
         layer_kwargs = {}
 
-        # x = img = None
-        xs = []
-        imgs = []
-        synthesisLayer_img2s = []
-        synthesisLayer_styless = []
+        x = img = None
         i = 0
         conv_i = 0
         torgb_i = 0
@@ -1739,8 +1764,6 @@ class StyleGANv2ADA_SynthesisNetwork(nn.Layer):
         self.start_i = []
         self.end_i = []
         for block_idx, res in enumerate(self.block_resolutions):
-            temp_x = []
-            temp_img = []
             in_channels = self.channels_dict[res // 2] if res > 4 else 0
             is_last = self.is_lasts[block_idx]
             architecture = self.architectures[block_idx]
@@ -1749,60 +1772,165 @@ class StyleGANv2ADA_SynthesisNetwork(nn.Layer):
                 # x = paddle.cast(self.const, dtype=dtype)
                 x0 = self.const
                 x1 = x0.unsqueeze(0).tile([batch_size, 1, 1, 1])
-                temp_x.append(x0)
-                temp_x.append(x1)
-                img0 = None
-                temp_img.append(img0)
             else:
-                # x = paddle.cast(x, dtype=dtype)
-                img0 = imgs[-1][-1]
-                x0 = xs[-1][-1]
-                temp_x.append(x0)
-                temp_img.append(img0)
+                x0 = x2
 
             self.start_i.append(i)
             # Main layers.
             if in_channels == 0:
-                # x2, img_2, styles = self.convs[conv_i](x1, ws[:, i], fused_modconv=fused_modconv, **layer_kwargs)
                 x2 = self.convs[conv_i](x1, ws[i], fused_modconv=fused_modconv, **layer_kwargs)
                 conv_i += 1
                 i += 1
-                temp_x.append(x2)
             # elif self.architecture == 'resnet':
             #     y = self.skip(x, gain=np.sqrt(0.5))
             #     x = self.conv0(x, ws[:, i + 1], fused_modconv=fused_modconv, **layer_kwargs)
             #     x = self.conv1(x, ws[:, i + 1], fused_modconv=fused_modconv, gain=np.sqrt(0.5), **layer_kwargs)
             #     x = y.add_(x)
             else:
-                # x1, img_2, styles = self.convs[conv_i](x0, ws[:, i], fused_modconv=fused_modconv, **layer_kwargs)
                 x1 = self.convs[conv_i](x0, ws[i], fused_modconv=fused_modconv, **layer_kwargs)
                 i += 1
-                # x2, img_2, styles = self.convs[conv_i + 1](x1, ws[:, i], fused_modconv=fused_modconv, **layer_kwargs)
-                x2 = self.convs[conv_i + 1](x1, ws[i], fused_modconv=fused_modconv, **layer_kwargs)
+                conv_i += 1
+                x2 = self.convs[conv_i](x1, ws[i], fused_modconv=fused_modconv, **layer_kwargs)
                 i += 1
-                conv_i += 2
-                temp_x.append(x1)
-                temp_x.append(x2)
+                conv_i += 1
 
             # ToRGB.
-            if img0 is not None:
-                img1 = upsample2d(img0, getattr(self, f"resample_filter_{block_idx}"))
-            else:
-                img1 = None
-            temp_img.append(img1)
+            if img is not None:
+                resample_filter = getattr(self, f"resample_filter_{block_idx}")
+                setattr(self.grad_layer, f"resample_filter_{block_idx}", resample_filter)
+                setattr(self.grad_layer, f"upsample2d_input_{block_idx}", img)
+                img = upsample2d(img, resample_filter)
             if is_last or architecture == 'skip':
-                # y = self.torgbs[torgb_i](x2, ws[:, i], fused_modconv=fused_modconv)
                 y = self.torgbs[torgb_i](x2, ws[i], fused_modconv=fused_modconv)
                 self.end_i.append(i)
                 torgb_i += 1
-                # y = paddle.cast(y, dtype=paddle.float32)
-                img2 = img1 + y if img1 is not None else y
-                temp_img.append(img2)
-            xs.append(temp_x)
-            imgs.append(temp_img)
-        # return img2, xs, imgs, synthesisLayer_img2s, synthesisLayer_styless
-        return img2
+                img = img + y if img is not None else y
+        self.grad_layer.start_i = self.start_i
+        self.grad_layer.end_i = self.end_i
+        return img
 
+
+
+class StyleGANv2ADA_SynthesisNetwork_Grad(nn.Layer):
+    def __init__(self,
+        w_dim,                      # Intermediate latent (W) dimensionality.
+        img_resolution,             # Output image resolution.
+        img_channels,               # Number of color channels.
+        channel_base    = 32768,    # Overall multiplier for the number of channels.
+        channel_max     = 512,      # Maximum number of channels in any layer.
+        num_fp16_res    = 0,        # 在前N个最高分辨率处使用FP16.
+        **block_kwargs,             # SynthesisBlock的参数.
+    ):
+        super().__init__()
+        self.w_dim = w_dim
+        self.img_resolution = img_resolution
+        self.img_channels = img_channels
+        self.channel_base = channel_base
+        self.channel_max = channel_max
+        self.num_fp16_res = num_fp16_res
+
+    def pre_ws_grad(self, dloss_dws, dloss_dx2, conv_i, i, block_idx):
+        # Main layers.
+        if block_idx == 0:
+            dloss_dx1, dloss_dws_i = self.convs[conv_i].grad_layer(dloss_dx2)
+            dloss_dws[i].append(dloss_dws_i)
+            i -= 1
+            conv_i -= 1
+        # elif self.architecture == 'resnet':
+        #     y = self.skip(x, gain=np.sqrt(0.5))
+        #     x = self.conv0(x, ws[:, i + 1], fused_modconv=fused_modconv, **layer_kwargs)
+        #     x = self.conv1(x, ws[:, i + 1], fused_modconv=fused_modconv, gain=np.sqrt(0.5), **layer_kwargs)
+        #     x = y.add_(x)
+        else:
+            dloss_dx1, dloss_dws_i = self.convs[conv_i].grad_layer(dloss_dx2)
+            dloss_dws[i].append(dloss_dws_i)
+            i -= 1
+            conv_i -= 1
+            dloss_dx0, dloss_dws_i = self.convs[conv_i].grad_layer(dloss_dx1)
+            dloss_dws[i].append(dloss_dws_i)
+            i -= 1
+            conv_i -= 1
+
+        if block_idx == 0:
+            return
+        else:
+            dloss_dx2 = dloss_dx0
+            self.pre_ws_grad(dloss_dws, dloss_dx2, conv_i, i, block_idx - 1)
+
+    def forward(self, dloss_dout):
+        fused_modconv = self.fused_modconv
+        conv_i = len(self.convs) - 1
+        torgb_i = len(self.torgbs) - 1
+        dloss_dimg = dloss_dout
+        # dloss_dws = [[]] * self.num_ws
+        dloss_dws = []
+        for kkk in range(self.num_ws):
+            dloss_dws.append([])
+        for block_idx in range(len(self.block_resolutions) - 1, -1, -1):
+            res = self.block_resolutions[block_idx]
+            in_channels = self.channels_dict[res // 2] if res > 4 else 0
+            is_last = self.is_lasts[block_idx]
+            architecture = self.architectures[block_idx]
+
+            '''
+            最终的img是每次循环的y累加的结果。
+            （正向传播时）每一次循环torgbs层用到的ws和下一次循环第一个convs层用到的ws是一样的！
+            下一次循环用到的x0是上一次循环的x2，所以x0表达式里包含有之前全部的ws...
+            img = y0 + y1 + y2 + ...
+                = t0(c0(const, w0), w1) + y1 + y2 + ...
+                = t0(x2) + y1 + y2 + ...
+                = t0(x2) + t1(c2(c1(x2, w1), w2), w3) + y2 + ...
+            所以，最后的y_n是有全部的w的表达式的。
+            对于每一个y_i，求出y_i对所有w的偏导，再求和即可。
+            '''
+
+
+            i = self.end_i[block_idx]
+            # ToRGB.
+            if is_last or architecture == 'skip':
+                dloss_dy = dloss_dimg
+                dloss_dx2, dloss_dws_i = self.torgbs[torgb_i].grad_layer(dloss_dy)
+                dloss_dws[i].append(dloss_dws_i)
+                i -= 1
+                torgb_i -= 1
+            if in_channels != 0:
+                resample_filter = getattr(self, f"resample_filter_{block_idx}")
+                dloss_dimg = upsample2d_grad(dloss_dimg, getattr(self, f"upsample2d_input_{block_idx}"), resample_filter)
+
+            # Main layers.
+            if in_channels == 0:
+                dloss_dx1, dloss_dws_i = self.convs[conv_i].grad_layer(dloss_dx2)
+                dloss_dws[i].append(dloss_dws_i)
+                # i -= 1
+                conv_i -= 1
+            # elif self.architecture == 'resnet':
+            #     y = self.skip(x, gain=np.sqrt(0.5))
+            #     x = self.conv0(x, ws[:, i + 1], fused_modconv=fused_modconv, **layer_kwargs)
+            #     x = self.conv1(x, ws[:, i + 1], fused_modconv=fused_modconv, gain=np.sqrt(0.5), **layer_kwargs)
+            #     x = y.add_(x)
+            else:
+                dloss_dx1, dloss_dws_i = self.convs[conv_i].grad_layer(dloss_dx2)
+                dloss_dws[i].append(dloss_dws_i)
+                i -= 1
+                conv_i -= 1
+                dloss_dx0, dloss_dws_i = self.convs[conv_i].grad_layer(dloss_dx1)
+                dloss_dws[i].append(dloss_dws_i)
+                # i -= 1
+                conv_i -= 1
+
+            if in_channels == 0:
+                pass
+            else:
+                dloss_dx2 = dloss_dx0
+                self.pre_ws_grad(dloss_dws, dloss_dx2, conv_i, i - 1, block_idx - 1)
+        for kkk in range(self.num_ws):
+            grad = dloss_dws[kkk]
+            if len(grad) == 1:
+                dloss_dws[kkk] = grad[0]
+            else:
+                dloss_dws[kkk] = paddle.stack(grad, 1)
+                dloss_dws[kkk] = paddle.sum(dloss_dws[kkk], 1)
+        return dloss_dws
 
 
 
