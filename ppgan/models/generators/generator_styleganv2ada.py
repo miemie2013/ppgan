@@ -1280,7 +1280,7 @@ def modulated_conv2d_grad(dloss_dout, x_1, x_2, x_mul_styles,
         dcoefs = (w.square().sum(axis=[2, 3, 4]) + 1e-8).rsqrt()  # [NO]
     if demodulate and fused_modconv:
         w = w * dcoefs.reshape((batch_size, -1, 1, 1, 1))  # [NOIkk]
-        w3 = w
+        w2 = w
 
     # Execute by scaling the activations before and after the convolution.
     if not fused_modconv:
@@ -1325,7 +1325,43 @@ def modulated_conv2d_grad(dloss_dout, x_1, x_2, x_mul_styles,
 
     # Execute as one fused op using grouped convolution.
     else:
-        raise NotImplementedError("not implemented.")
+        xr = x_mul_styles
+        dloss_dx_2 = dloss_dout.reshape((1, -1, *x_2.shape[2:]))
+        w3 = w2.reshape((-1, in_channels, kh, kw))
+        dloss_dxr, dloss_dw3 = conv2d_resample_grad(dloss_dx_2, x_1, x=xr, w=paddle.cast(w3, dtype=xr.dtype), filter=resample_filter, up=up, down=down, padding=padding, groups=batch_size, flip_weight=flip_weight)
+        dloss_dx = dloss_dxr.reshape((batch_size, -1, *x.shape[2:]))
+
+        dloss_dw2 = dloss_dw3.reshape(w2.shape)
+
+
+
+        if demodulate and fused_modconv:
+            # w2 = w1 * dcoefs.reshape((batch_size, -1, 1, 1, 1))
+            dloss_dstyles_1 = dloss_dw2 * dcoefs.reshape((batch_size, -1, 1, 1, 1))  # du * v
+            dloss_dstyles_2 = w1 * dloss_dw2  # u * dv
+            # dloss_dstyles_2继续对dcoefs求导
+            dloss_dstyles_2 = paddle.sum(dloss_dstyles_2, axis=[2, 3, 4])
+        if demodulate:
+            # dcoefs = (w.square().sum(axis=[2, 3, 4]) + 1e-8).rsqrt()  # [NO]
+            dloss_dw_square_sum_add_1e8 = -0.5 * dloss_dstyles_2 * dcoefs * dcoefs * dcoefs
+            dloss_dw_square_sum = dloss_dw_square_sum_add_1e8
+            dloss_dw_square = paddle.unsqueeze(dloss_dw_square_sum, axis=[2, 3, 4])
+            dloss_dw_square = paddle.tile(dloss_dw_square, [1, 1, w1.shape[2], w1.shape[3], w1.shape[4]])
+            dloss_dstyles_2 = dloss_dw_square * 2 * w1
+        if demodulate or fused_modconv:
+            # w = weight.unsqueeze(0)  # [NOIkk]
+            # w = w * styles.reshape((batch_size, 1, -1, 1, 1))  # [NOIkk]
+
+            # dloss_dstyles_1继续对w1求导
+            dloss_dstyles_1 = dloss_dstyles_1 * w0
+            dloss_dstyles_1 = paddle.sum(dloss_dstyles_1, axis=[1, 3, 4])
+
+            dloss_dstyles_2 = dloss_dstyles_2 * w0
+            dloss_dstyles_2 = paddle.sum(dloss_dstyles_2, axis=[1, 3, 4])
+            dloss_dstyles = dloss_dstyles_1 + dloss_dstyles_2
+
+        # print('eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee')
+        return dloss_dx, dloss_dstyles
 
 
 class SynthesisLayer(nn.Layer):

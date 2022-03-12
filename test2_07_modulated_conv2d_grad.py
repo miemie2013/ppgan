@@ -352,10 +352,10 @@ for batch_idx in range(8):
         dic['batch_%.3d.resample_filter'%batch_idx] = resample_filter.cpu().detach().numpy()
 
 
-    # loss = y.sum() + dy_dx.sum() + dy_dstyles.sum()
+    loss = y.sum() + dy_dx.sum() + dy_dstyles.sum()
     # loss = y.sum() + dy_dx.sum()
     # loss = y.sum() + dy_dstyles.sum()
-    loss = y.sum()
+    # loss = y.sum()
     loss.backward()
     optimizer.step()
     optimizer.zero_grad(set_to_none=True)
