@@ -121,6 +121,14 @@ for batch_idx in range(8):
     # flip_filter = False
     # gain = 4
 
+    x_shape = [1, 512, 8, 8]
+    f_shape = [4, 4]
+    up = 1
+    down = 2
+    padding = [1, 1, 1, 1]
+    flip_filter = False
+    gain = 1
+
 
 
     x_shape[0] = batch_size

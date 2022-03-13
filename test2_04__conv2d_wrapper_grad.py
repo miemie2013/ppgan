@@ -228,6 +228,14 @@ for batch_idx in range(8):
     transpose = False
     flip_weight = True
 
+    x_shape = [1, 512, 9, 9]
+    w_shape = [512, 512, 3, 3]
+    stride = 2
+    padding = 0
+    groups = 1
+    transpose = False
+    flip_weight = True
+
 
 
     x_shape[0] = batch_size

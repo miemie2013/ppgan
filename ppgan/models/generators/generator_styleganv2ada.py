@@ -414,10 +414,13 @@ def _conv2d_wrapper_grad(dloss_dout, x, w, stride=1, padding=0, groups=1, transp
         #     output_padding = stride - 1
         #     dloss_dx = F.conv2d_transpose(x=dloss_dout, weight=w_flip, stride=stride, padding=padding, output_padding=output_padding, groups=groups)
         output_padding = stride - 1
+        N, out_C, out_H, out_W = dloss_dout.shape
+        assert out_H == out_W
+        if out_H%2 == 0 and stride == 2:  # output_padding很难确定，需要具体分辨率具体分析。。。
+            output_padding = 0
         dloss_dx = F.conv2d_transpose(x=dloss_dout, weight=w_flip, stride=stride, padding=padding, output_padding=output_padding, groups=groups)
 
         # 求dloss_dW
-        N, out_C, out_H, out_W = dloss_dout.shape
         out_C, c, kH, kW = w.shape
         g = groups
         oc = out_C // g
@@ -679,19 +682,16 @@ def upfirdn2d_grad(dloss_dout, x, filter, up=1, down=1, padding=0, flip_filter=F
     if downy == 1:
         dloss_dx = dloss_dout
     elif downy == 2:
-        N, C, H, W = x.shape
-        assert H == W
-        pad_height_bottom = 0
-        pad_width_right = 0
-        if H % 2 == 1:
-            pad_height_bottom = 1
-            pad_width_right = 1
-        stride2_kernel = np.zeros((C, 1, 2, 2), dtype=np.float32)
-        stride2_kernel[:, :, 0, 0] = 1.0
-        stride2_kernel = paddle.to_tensor(stride2_kernel)
-        stride2_kernel.stop_gradient = True
-        dloss_dx = F.conv2d_transpose(x=dloss_dout, weight=stride2_kernel, stride=2, groups=C,
-                                      padding=[[0, 0], [0, 0], [0, pad_height_bottom], [0, pad_width_right]], output_padding=0)
+        N, C, H, W = dloss_dout.shape
+        # Upsample by inserting zeros.
+        # paddle最多支持5维张量，所以分开2次pad。
+        # 根据data_format指定的意义填充(pad_left, pad_right, pad_top, pad_bottom, pad_front, pad_back)
+        dloss_dx = dloss_dout.reshape([N, C, H, 1, W])
+        dloss_dx = paddle.nn.functional.pad(dloss_dx, [0, 0, 0, 1, 0, 0], data_format="NCDHW")
+        dloss_dx = dloss_dx.reshape([N, C, H * 2, W, 1])
+        dloss_dx = paddle.nn.functional.pad(dloss_dx, [0, 1, 0, 0, 0, 0], data_format="NCDHW")
+        dloss_dx = dloss_dx.reshape([N, C, H * 2, W * 2])
+        dloss_dx = dloss_dx[:, :, :-1, :-1]   # down == 2时，切片之前的形状是这个。Discriminator里有down == 2的情况
     else:
         raise NotImplementedError("downy \'{}\' is not implemented.".format(downy))
 
@@ -791,8 +791,9 @@ def conv2d_resample(x, w, filter=None, up=1, down=1, padding=0, groups=1, flip_w
     # Fast path: downsampling only => use strided convolution.
     if down > 1 and up == 1:
         x = upfirdn2d(x, filter, padding=[px0, px1, py0, py1], flip_filter=flip_filter)
+        x_1 = x
         x = _conv2d_wrapper(x=x, w=w, stride=down, groups=groups, flip_weight=flip_weight)
-        return x
+        return x, x_1
 
     # Fast path: upsampling with optional downsampling => use transpose strided convolution.
     if up > 1:
@@ -853,10 +854,9 @@ def conv2d_resample_grad(dloss_dout, x_1, x, w, filter=None, up=1, down=1, paddi
 
     # Fast path: 1x1 convolution with downsampling only => downsample first, then convolve.
     if kw == 1 and kh == 1 and (down > 1 and up == 1):
-        # dy_dx, dy_dw = _conv2d_wrapper_grad(dloss_dout, x=x_1, w=w, groups=groups, flip_weight=flip_weight)
-        # dy_dx = upfirdn2d_grad(dy_dx, x, filter, down=down, padding=[px0, px1, py0, py1], flip_filter=flip_filter)
-        # return dy_dx, dy_dw
-        raise NotImplementedError("not implemented.")
+        dy_dx, dy_dw = _conv2d_wrapper_grad(dloss_dout, x=x_1, w=w, groups=groups, flip_weight=flip_weight)
+        dy_dx = upfirdn2d_grad(dy_dx, x, filter, down=down, padding=[px0, px1, py0, py1], flip_filter=flip_filter)
+        return dy_dx, dy_dw
 
     # Fast path: 1x1 convolution with upsampling only => convolve first, then upsample.
     if kw == 1 and kh == 1 and (up > 1 and down == 1):
@@ -864,7 +864,9 @@ def conv2d_resample_grad(dloss_dout, x_1, x, w, filter=None, up=1, down=1, paddi
 
     # Fast path: downsampling only => use strided convolution.
     if down > 1 and up == 1:
-        raise NotImplementedError("not implemented.")
+        dy_dx, dy_dw = _conv2d_wrapper_grad(dloss_dout, x=x_1, w=w, stride=down, groups=groups, flip_weight=flip_weight)
+        dy_dx = upfirdn2d_grad(dy_dx, x, filter, padding=[px0, px1, py0, py1], flip_filter=flip_filter)
+        return dy_dx, dy_dw
 
     # Fast path: upsampling with optional downsampling => use transpose strided convolution.
     if up > 1:

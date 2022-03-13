@@ -36,9 +36,9 @@ for batch_idx in range(8):
 
     y = model(x, None, None)
 
-    dy_dx = paddle.grad(outputs=[y.sum()], inputs=[x], create_graph=True)[0]
-    # dysum_dy = paddle.ones(y.shape, dtype=paddle.float32)
-    # dy_dx = model.grad_layer(dysum_dy)
+    # dy_dx = paddle.grad(outputs=[y.sum()], inputs=[x], create_graph=True)[0]
+    dysum_dy = paddle.ones(y.shape, dtype=paddle.float32)
+    dy_dx = model.grad_layer(dysum_dy)
 
 
     y_paddle = y.numpy()
