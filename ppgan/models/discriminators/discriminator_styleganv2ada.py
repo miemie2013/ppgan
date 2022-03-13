@@ -134,8 +134,9 @@ class MinibatchStdLayer_Grad(nn.Layer):
         self.group_size = group_size
         self.num_channels = num_channels
 
-    def forward(self, x):
+    def forward(self, dloss_dout):
         x = self.x
+        N, C, H, W = x.shape
         G = self.G
         c = self.c
         F = self.num_channels
@@ -147,7 +148,32 @@ class MinibatchStdLayer_Grad(nn.Layer):
         y5 = self.y5
         y6 = self.y6
         out = self.out
-        return x
+
+        dloss_dx_1 = dloss_dout[:, :C, :, :]
+        dloss_dx_2 = dloss_dout[:, C:, :, :]
+        dloss_dy6 = dloss_dx_2
+
+        dloss_dy5 = dloss_dy6.reshape((y5.shape[0], -1, F, H, W))
+        dloss_dy5 = paddle.sum(dloss_dy5, axis=[1], keepdim=False)
+        dloss_dy5 = paddle.sum(dloss_dy5, axis=[2, 3], keepdim=True)
+
+        dloss_dy4 = dloss_dy5.reshape((-1, F))
+
+        dloss_dy3 = dloss_dy4.reshape((-1, F, 1, 1, 1))
+        dloss_dy3 = dloss_dy3.tile([1, 1, c, H, W]) / c / H / W
+
+        dloss_dy2 = dloss_dy3 * 0.5 / y3
+
+        dloss_dy1 = dloss_dy2.reshape((1, -1, F, c, H, W))
+        dloss_dy1 = dloss_dy1.tile([G, 1, 1, 1, 1, 1]) / G
+        dloss_dy1 = dloss_dy1 * 2 * y1
+
+        dloss_dy0 = dloss_dy1 - dloss_dy1.mean(0)
+
+        dloss_dx = dloss_dy0.reshape(x.shape)
+
+        dloss_dx = dloss_dx + dloss_dx_1
+        return dloss_dx
 
 class DiscriminatorEpilogue(nn.Layer):
     def __init__(self,

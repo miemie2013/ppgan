@@ -15,10 +15,10 @@ for batch_idx in range(8):
     x = torch.randn([4, 512, 4, 4])
     x.requires_grad_(True)
 
-    N, C, H, W = x.shape
-    G = N
-    F = 512
-    c = C // F
+    # N, C, H, W = x.shape
+    # G = N
+    # F = 512
+    # c = C // F
 
     # N, C, H, W = x.shape
     # G = N
@@ -34,6 +34,11 @@ for batch_idx in range(8):
     # G = 1
     # F = 256
     # c = C // F
+
+    N, C, H, W = x.shape
+    G = 2
+    F = 256
+    c = C // F
 
     y = x.reshape(G, -1, F, c, H, W)  # [GnFcHW] Split minibatch N into n groups of size G, and channels C into F groups of size c.
     y = y - y.mean(dim=0)  # [GnFcHW] Subtract mean over group.
