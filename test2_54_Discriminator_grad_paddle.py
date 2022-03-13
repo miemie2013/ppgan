@@ -73,4 +73,8 @@ for batch_idx in range(8):
     # loss = y.sum()
     loss.backward()
     optimizer.step()
+print('================= last dy_dx =================')
+print('dy_dx_pytorch[:, :2, :2, :2]=\n', dy_dx_pytorch[:, :2, :2, :2])
+print()
+print('dy_dx_paddle[:, :2, :2, :2]=\n', dy_dx_paddle[:, :2, :2, :2])
 print()
