@@ -5,7 +5,7 @@ from training.augment import AugmentPipe
 
 
 # 默认配置
-xflip = 0
+xflip = 1
 rotate90 = 0
 xint = 0
 xint_max = 0.125
@@ -83,6 +83,9 @@ model.train()
 # optimizer = torch.optim.SGD(model.parameters(), lr=lr, momentum=0.9)
 # torch.save(model.state_dict(), "55.pth")
 
+debug_percentile = np.array([0.3, 0.7])
+debug_percentile = np.array([0.3])
+debug_percentile = 0.7
 dic = {}
 for batch_idx in range(8):
     # optimizer.zero_grad(set_to_none=True)
@@ -90,7 +93,7 @@ for batch_idx in range(8):
     x = torch.randn(x_shape)
     x.requires_grad_(True)
 
-    y = model(x)
+    y = model(x, debug_percentile)
     dy_dx = torch.autograd.grad(outputs=[y.sum()], inputs=[x], create_graph=True, only_inputs=True)[0]
 
     dic['batch_%.3d.dy_dx'%batch_idx] = dy_dx.cpu().detach().numpy()

@@ -199,7 +199,8 @@ class AugmentPipe(torch.nn.Module):
             i = torch.where(torch.rand([batch_size], device=device) < self.xflip * self.p, i, torch.zeros_like(i))
             if debug_percentile is not None:
                 i = torch.full_like(i, torch.floor(debug_percentile * 2))
-            G_inv = G_inv @ scale2d_inv(1 - 2 * i, 1)
+            matri_ = scale2d_inv(1 - 2 * i, 1)
+            G_inv = G_inv @ matri_
 
         # Apply 90 degree rotations with probability (rotate90 * strength).
         if self.rotate90 > 0:

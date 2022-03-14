@@ -2214,7 +2214,8 @@ class StyleGANv2ADA_AugmentPipe(nn.Layer):
             i = paddle.where(paddle.rand([batch_size], dtype=paddle.float32) < self.xflip * self.p, i, paddle.zeros_like(i))
             if debug_percentile is not None:
                 i = paddle.full_like(i, paddle.floor(debug_percentile * 2))
-            G_inv = G_inv @ scale2d_inv(1 - 2 * i, 1)
+            matri_ = scale2d_inv(1 - 2 * i, 1)
+            G_inv = G_inv @ matri_
 
         # Apply 90 degree rotations with probability (rotate90 * strength).
         if self.rotate90 > 0:

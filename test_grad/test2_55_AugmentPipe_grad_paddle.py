@@ -5,7 +5,7 @@ from ppgan.models.generators.generator_styleganv2ada import StyleGANv2ADA_Augmen
 
 
 # 默认配置
-xflip = 0
+xflip = 1
 rotate90 = 0
 xint = 0
 xint_max = 0.125
@@ -94,7 +94,7 @@ for batch_idx in range(8):
     x.stop_gradient = False
     y = model(x)
 
-    dy_dx = paddle.grad(outputs=[y.sum()], inputs=[x], create_graph=True)[0]
+    dy_dx = paddle.grad(outputs=[y.sum()], inputs=[x], create_graph=False)[0]
     # dysum_dy = paddle.ones(y.shape, dtype=paddle.float32)
     # dy_dx = model.grad_layer(dysum_dy)
 
