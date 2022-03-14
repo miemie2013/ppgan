@@ -2522,7 +2522,32 @@ class StyleGANv2ADA_AugmentPipe_Grad(nn.Layer):
             my0 = self.my0
             mx1 = self.mx1
             my1 = self.my1
+            # images1 = paddle.nn.functional.pad(images, pad=[mx0, mx1, my0, my1], mode='reflect') 挺麻烦的。做多个轴对称。
             dloss_dimages = dloss_dimages1[:, :, my0:-my1, mx0:-mx1]
+
+            left_up = dloss_dimages1[:, :, :my0, :mx0]
+            left_ = dloss_dimages1[:, :, my0:-my1, :mx0]
+            left_down = dloss_dimages1[:, :, -my1:, :mx0]
+
+            right_up = dloss_dimages1[:, :, :my0, -mx1:]
+            right_ = dloss_dimages1[:, :, my0:-my1, -mx1:]
+            right_down = dloss_dimages1[:, :, -my1:, -mx1:]
+
+            up_ = dloss_dimages1[:, :, :my0, mx0:-mx1]
+            down_ = dloss_dimages1[:, :, -my1:, mx0:-mx1]
+
+            dloss_dimages[:, :, 1:1 + my0, 1:1 + mx0] += left_up[:, :, ::-1, ::-1]
+            dloss_dimages[:, :, :, 1:1 + mx0] += left_[:, :, :, ::-1]
+            dloss_dimages[:, :, -1 - my1:-1, 1:1 + mx0] += left_down[:, :, ::-1, ::-1]
+
+            dloss_dimages[:, :, 1:1 + my0, -1 - mx1:-1] += right_up[:, :, ::-1, ::-1]
+            dloss_dimages[:, :, :, -1 - mx1:-1] += right_[:, :, :, ::-1]
+            dloss_dimages[:, :, -1 - my1:-1, -1 - mx1:-1] += right_down[:, :, ::-1, ::-1]
+
+            dloss_dimages[:, :, 1:1 + my0, :] += up_[:, :, ::-1, :]
+            dloss_dimages[:, :, -1 - my1:-1, :] += down_[:, :, ::-1, :]
+        else:
+            dloss_dimages = dloss_dout
 
         # --------------------------------------------
         # Select parameters for color transformations.
