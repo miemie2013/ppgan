@@ -735,6 +735,18 @@ def downsample2d(x, f, down=2, padding=0, flip_filter=False, gain=1):
     ]
     return upfirdn2d(x, f, down=down, padding=p, flip_filter=flip_filter, gain=gain)
 
+def downsample2d_grad(dloss_dout, x, f, down=2, padding=0, flip_filter=False, gain=1):
+    downx, downy = _parse_scaling(down)
+    padx0, padx1, pady0, pady1 = _parse_padding(padding)
+    fw, fh = _get_filter_size(f)
+    p = [
+        padx0 + (fw - downx + 1) // 2,
+        padx1 + (fw - downx) // 2,
+        pady0 + (fh - downy + 1) // 2,
+        pady1 + (fh - downy) // 2,
+    ]
+    return upfirdn2d_grad(dloss_dout, x, f, down=down, padding=p, flip_filter=flip_filter, gain=gain)
+
 
 def conv2d_resample(x, w, filter=None, up=1, down=1, padding=0, groups=1, flip_weight=True, flip_filter=False):
     r""" 2D卷积（带有上采样或者下采样）
@@ -2193,12 +2205,14 @@ class StyleGANv2ADA_AugmentPipe(nn.Layer):
             Hz_fbank = scipy.signal.convolve(Hz_fbank, [Hz_lo2])
             Hz_fbank[i, (Hz_fbank.shape[1] - Hz_hi2.size) // 2 : (Hz_fbank.shape[1] + Hz_hi2.size) // 2] += Hz_hi2
         self.register_buffer('Hz_fbank', paddle.to_tensor(Hz_fbank, dtype=paddle.float32))
+        self.grad_layer = StyleGANv2ADA_AugmentPipe_Grad()
 
     def forward(self, images, debug_percentile=None):
         assert images.ndim == 4
+        self.grad_layer.images = images
         batch_size, num_channels, height, width = images.shape
         if debug_percentile is not None:
-            debug_percentile = paddle.to_tensor(debug_percentile, paddle=paddle.float32)
+            debug_percentile = paddle.to_tensor(debug_percentile, dtype=paddle.float32)
 
         # -------------------------------------
         # Select parameters for pixel blitting.
@@ -2289,7 +2303,9 @@ class StyleGANv2ADA_AugmentPipe(nn.Layer):
         # ----------------------------------
 
         # Execute if the transform is not identity.
+        self.grad_layer.G_inv_is_not_I_3 = False
         if G_inv is not I_3:
+            self.grad_layer.G_inv_is_not_I_3 = True
 
             # Calculate padding.
             cx = (width - 1) / 2
@@ -2311,17 +2327,19 @@ class StyleGANv2ADA_AugmentPipe(nn.Layer):
             mx0, my0, mx1, my1 = margin
 
             # Pad image and adjust origin.
-            images = paddle.nn.functional.pad(images, pad=[mx0, mx1, my0, my1], mode='reflect')
+            images1 = paddle.nn.functional.pad(images, pad=[mx0, mx1, my0, my1], mode='reflect')
+            self.grad_layer.images1 = images1
             G_inv = translate2d((mx0 - mx1) / 2, (my0 - my1) / 2) @ G_inv
 
             # Upsample.
-            images = upsample2d(x=images, f=self.Hz_geom, up=2)
+            images2 = upsample2d(x=images1, f=self.Hz_geom, up=2)
+            self.grad_layer.images2 = images2
             G_inv = scale2d(2, 2) @ G_inv @ scale2d_inv(2, 2)
             G_inv = translate2d(-0.5, -0.5) @ G_inv @ translate2d_inv(-0.5, -0.5)
 
             # Execute transformation.
             shape = [batch_size, num_channels, (height + Hz_pad * 2) * 2, (width + Hz_pad * 2) * 2]
-            G_inv = scale2d(2 / images.shape[3], 2 / images.shape[2]) @ G_inv @ scale2d_inv(2 / shape[3], 2 / shape[2])
+            G_inv = scale2d(2 / images2.shape[3], 2 / images2.shape[2]) @ G_inv @ scale2d_inv(2 / shape[3], 2 / shape[2])
 
             # dic = {}
             # dic['G_inv'] = G_inv.numpy()
@@ -2331,10 +2349,15 @@ class StyleGANv2ADA_AugmentPipe(nn.Layer):
 
             grid = paddle.nn.functional.affine_grid(theta=G_inv[:, :2, :], out_shape=shape, align_corners=False)
             # grid_sample没有实现二阶梯度，需要用另外的等价实现。
-            images = paddle.nn.functional.grid_sample(images, grid=grid, mode='bilinear', padding_mode='zeros', align_corners=False)
+            images3 = paddle.nn.functional.grid_sample(images2, grid=grid, mode='bilinear', padding_mode='zeros', align_corners=False)
+            self.grad_layer.images3 = images3
 
             # Downsample and crop.
-            images = downsample2d(x=images, f=self.Hz_geom, down=2, padding=-Hz_pad*2, flip_filter=True)
+            self.grad_layer.Hz_pad = Hz_pad
+            self.grad_layer.Hz_geom = self.Hz_geom
+            images4 = downsample2d(x=images3, f=self.Hz_geom, down=2, padding=-Hz_pad*2, flip_filter=True)
+            self.grad_layer.images4 = images4
+            images = images4
 
         # --------------------------------------------
         # Select parameters for color transformations.
@@ -2470,6 +2493,226 @@ class StyleGANv2ADA_AugmentPipe(nn.Layer):
         return images
 
 
+class StyleGANv2ADA_AugmentPipe_Grad(nn.Layer):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, dloss_dout):
+        images = self.images
+        batch_size, num_channels, height, width = images.shape
+
+        # -------------------------------------
+        # Select parameters for pixel blitting.
+        # -------------------------------------
+
+        # Initialize inverse homogeneous 2D transform: G_inv @ pixel_out ==> pixel_in
+        I_3 = paddle.eye(3)
+        G_inv = I_3
+
+        # ----------------------------------
+        # Execute geometric transformations.
+        # ----------------------------------
+
+        # Execute if the transform is not identity.
+        if self.G_inv_is_not_I_3:
+            self.grad_layer.G_inv_is_not_I_3 = True
+
+            # Calculate padding.
+            cx = (width - 1) / 2
+            cy = (height - 1) / 2
+            cp = matrix([-cx, -cy, 1], [cx, -cy, 1], [cx, cy, 1], [-cx, cy, 1]) # [idx, xyz]
+            cp = G_inv @ cp.t() # [batch, xyz, idx]
+            Hz_pad = self.Hz_geom.shape[0] // 4
+            # margin = cp[:, :2, :].permute(1, 0, 2).flatten(1) # [xy, batch * idx]
+            margin = cp[:, :2, :]
+            margin = paddle.transpose(margin, perm=[1, 0, 2])
+            margin = paddle.flatten(margin, 1)
+            margin = paddle.concat([-margin, margin])
+            margin = margin.max(1) # [x0, y0, x1, y1]
+            margin = margin + constant([Hz_pad * 2 - cx, Hz_pad * 2 - cy] * 2)
+            margin = paddle.maximum(margin, constant([0, 0] * 2))
+            margin = paddle.minimum(margin, constant([width-1, height-1] * 2))
+            margin = margin.ceil()  # 向上取整
+            margin = paddle.cast(margin, dtype=paddle.int32)
+            mx0, my0, mx1, my1 = margin
+
+            # Pad image and adjust origin.
+            images1 = paddle.nn.functional.pad(images, pad=[mx0, mx1, my0, my1], mode='reflect')
+            G_inv = translate2d((mx0 - mx1) / 2, (my0 - my1) / 2) @ G_inv
+
+            # Upsample.
+            images2 = upsample2d(x=images1, f=self.Hz_geom, up=2)
+            G_inv = scale2d(2, 2) @ G_inv @ scale2d_inv(2, 2)
+            G_inv = translate2d(-0.5, -0.5) @ G_inv @ translate2d_inv(-0.5, -0.5)
+
+            # Execute transformation.
+            shape = [batch_size, num_channels, (height + Hz_pad * 2) * 2, (width + Hz_pad * 2) * 2]
+            G_inv = scale2d(2 / images2.shape[3], 2 / images2.shape[2]) @ G_inv @ scale2d_inv(2 / shape[3], 2 / shape[2])
+
+            # dic = {}
+            # dic['G_inv'] = G_inv.numpy()
+            # dic['images'] = images.numpy()
+            # dic['shape'] = np.array(shape)
+            # np.savez('affine_grid_data', **dic)
+
+            grid = paddle.nn.functional.affine_grid(theta=G_inv[:, :2, :], out_shape=shape, align_corners=False)
+            # grid_sample没有实现二阶梯度，需要用另外的等价实现。
+            images3 = paddle.nn.functional.grid_sample(images2, grid=grid, mode='bilinear', padding_mode='zeros', align_corners=False)
+
+            # Downsample and crop.
+            images4 = downsample2d(x=images3, f=self.Hz_geom, down=2, padding=-Hz_pad*2, flip_filter=True)
+            images = images4
+
+            # =========================================================
+
+            dloss_dimages4 = dloss_dout
+            Hz_pad = self.Hz_pad
+            images4 = self.images4
+            images3 = self.images3
+            images2 = self.images2
+            images1 = self.images1
+            dloss_dimages3 = downsample2d_grad(dloss_dimages4, x=images3, f=self.Hz_geom, down=2, padding=-Hz_pad*2, flip_filter=True)
+            dloss_dimages2 = grid_sample_grad(dloss_dimages3, aaaaaaaaaaa)
+
+        # --------------------------------------------
+        # Select parameters for color transformations.
+        # --------------------------------------------
+
+        # Initialize homogeneous 3D transformation matrix: C @ color_in ==> color_out
+        # I_4 = paddle.eye(4)
+        # C = I_4
+
+        return images
+
+
+class GridSample(nn.Layer):
+    def __init__(self, mode='bilinear', padding_mode='zeros', align_corners=True):
+        super().__init__()
+        self.mode = mode
+        self.padding_mode = padding_mode
+        self.align_corners = align_corners
+        self.grad_layer = GridSample_Grad(
+            mode,
+            padding_mode,
+            align_corners,
+        )
+
+    def forward(self, images, grid):
+        mode = self.mode
+        padding_mode = self.padding_mode
+        align_corners = self.align_corners
+
+        self.grad_layer.images = images
+        self.grad_layer.grid = grid
+
+        N, C, in_H, in_W = images.shape
+        N, out_H, out_W, _ = grid.shape
+
+        grid_x = grid[:, :, :, :1]   # [N, out_H, out_W, 1]
+        grid_y = grid[:, :, :, 1:]   # [N, out_H, out_W, 1]
+
+        '''
+        看了Paddle的源代码Paddle/paddle/fluid/operators/grid_sampler_op.cu的
+        template <typename T>
+        static __forceinline__ __device__ T _unnormalize(T coord, int size,
+                                                         bool align_corners) {
+          if (align_corners) {
+            return ((coord + 1.f) / 2) * (size - 1);
+          } else {
+            return ((coord + 1.f) * size - 1) / 2;
+          }
+        }
+        其中coord是x或y，是-1到1之间的数值；size是ori_W或者ori_H。
+        '''
+        if align_corners:
+            _xt = (grid_x + 1.0) * (float(in_W) - 1.0) / 2.0   # [N, out_H, out_W, 1]
+            _yt = (grid_y + 1.0) * (float(in_H) - 1.0) / 2.0   # [N, out_H, out_W, 1]
+            pad_images = images
+        else:
+            _xt = ((grid_x + 1.0) * float(in_W) - 1.0) / 2.0   # [N, out_H, out_W, 1]
+            _yt = ((grid_y + 1.0) * float(in_H) - 1.0) / 2.0   # [N, out_H, out_W, 1]
+            padding = 2
+            pad_images = F.pad(images, [padding, padding, padding, padding])  # [N, C, pad_H, pad_W]
+            _xt += padding
+            _yt += padding
+        _, _, pad_H, pad_W = pad_images.shape
+        self.grad_layer.pad_images = pad_images
+
+        _y1 = paddle.floor(_yt)   # [N, out_H, out_W, 1]
+        _x1 = paddle.floor(_xt)   # [N, out_H, out_W, 1]
+        _y2 = _y1 + 1.0           # [N, out_H, out_W, 1]
+        _x2 = _x1 + 1.0           # [N, out_H, out_W, 1]
+
+        lh = _yt - _y1   # [N, out_H, out_W, 1]
+        lw = _xt - _x1   # [N, out_H, out_W, 1]
+        hh = 1 - lh      # [N, out_H, out_W, 1]
+        hw = 1 - lw      # [N, out_H, out_W, 1]
+        w1 = hh * hw     # [N, out_H, out_W, 1]
+        w2 = hh * lw     # [N, out_H, out_W, 1]
+        w3 = lh * hw     # [N, out_H, out_W, 1]
+        w4 = lh * lw     # [N, out_H, out_W, 1]
+
+        sample_idx = paddle.arange(start=0, end=N - 1e-3, step=1, dtype=_x1.dtype)
+        sample_idx = paddle.reshape(sample_idx, (N, 1, 1, 1))
+        sample_idx = paddle.tile(sample_idx, [1, out_H, out_W, 1])   # [N, out_H, out_W, 1]
+
+        _y1x1 = paddle.concat([sample_idx, _y1, _x1], -1)   # [N, out_H, out_W, 3]
+        _y1x2 = paddle.concat([sample_idx, _y1, _x2], -1)   # [N, out_H, out_W, 3]
+        _y2x1 = paddle.concat([sample_idx, _y2, _x1], -1)   # [N, out_H, out_W, 3]
+        _y2x2 = paddle.concat([sample_idx, _y2, _x2], -1)   # [N, out_H, out_W, 3]
+
+        _y1x1 = paddle.cast(paddle.reshape(_y1x1, (-1, 3)), dtype=paddle.int32)   # [N*out_H*out_W, 3]
+        _y1x2 = paddle.cast(paddle.reshape(_y1x2, (-1, 3)), dtype=paddle.int32)   # [N*out_H*out_W, 3]
+        _y2x1 = paddle.cast(paddle.reshape(_y2x1, (-1, 3)), dtype=paddle.int32)   # [N*out_H*out_W, 3]
+        _y2x2 = paddle.cast(paddle.reshape(_y2x2, (-1, 3)), dtype=paddle.int32)   # [N*out_H*out_W, 3]
+        _y1x1.stop_gradient = True
+        _y1x2.stop_gradient = True
+        _y2x1.stop_gradient = True
+        _y2x2.stop_gradient = True
+
+        pad_images_t = paddle.transpose(pad_images, perm=[0, 2, 3, 1])   # [N, C, pad_H, pad_W] -> [N, pad_H, pad_W, C]
+        v1 = paddle.gather_nd(pad_images_t, _y1x1)  # [N, pad_H, pad_W, C] -> [N*out_H*out_W, C]
+        v2 = paddle.gather_nd(pad_images_t, _y1x2)  # [N, pad_H, pad_W, C] -> [N*out_H*out_W, C]
+        v3 = paddle.gather_nd(pad_images_t, _y2x1)  # [N, pad_H, pad_W, C] -> [N*out_H*out_W, C]
+        v4 = paddle.gather_nd(pad_images_t, _y2x2)  # [N, pad_H, pad_W, C] -> [N*out_H*out_W, C]
+
+        v1 = paddle.reshape(v1, (N, out_H, out_W, C))
+        v2 = paddle.reshape(v2, (N, out_H, out_W, C))
+        v3 = paddle.reshape(v3, (N, out_H, out_W, C))
+        v4 = paddle.reshape(v4, (N, out_H, out_W, C))
+
+        out = w1 * v1 + w2 * v2 + w3 * v3 + w4 * v4  # [N, out_H, out_W, C]
+        out = paddle.transpose(out, perm=[0, 3, 1, 2])  # [N, C, out_H, out_W]
+        return out
+
+
+
+
+class GridSample_Grad(nn.Layer):
+    def __init__(self, mode='bilinear', padding_mode='zeros', align_corners=True):
+        super().__init__()
+        self.mode = mode
+        self.padding_mode = padding_mode
+        self.align_corners = align_corners
+
+    def forward(self, dloss_dout):
+        mode = self.mode
+        padding_mode = self.padding_mode
+        align_corners = self.align_corners
+
+        images = self.images
+        grid = self.grid
+        pad_images = self.pad_images
+
+        N, C, in_H, in_W = images.shape
+        N, out_H, out_W, _ = grid.shape
+
+        dloss_dout = paddle.transpose(dloss_dout, perm=[0, 2, 3, 1])
+
+        grid_x = grid[:, :, :, :1]   # [N, out_H, out_W, 1]
+        grid_y = grid[:, :, :, 1:]   # [N, out_H, out_W, 1]
+
+        return dloss_dout
 
 
 

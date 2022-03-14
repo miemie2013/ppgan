@@ -83,8 +83,6 @@ model.train()
 # optimizer = torch.optim.SGD(model.parameters(), lr=lr, momentum=0.9)
 # torch.save(model.state_dict(), "55.pth")
 
-debug_percentile = np.array([0.3, 0.7])
-debug_percentile = np.array([0.3])
 debug_percentile = 0.7
 dic = {}
 for batch_idx in range(8):

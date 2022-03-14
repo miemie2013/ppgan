@@ -81,7 +81,7 @@ model.train()
 # optimizer = paddle.optimizer.Momentum(parameters=model.parameters(), learning_rate=lr, momentum=0.9)
 # model.set_state_dict(paddle.load("55.pdparams"))
 
-
+debug_percentile = 0.7
 dic2 = np.load('55.npz')
 for batch_idx in range(8):
     print('======================== batch_%.3d ========================'%batch_idx)
@@ -92,11 +92,12 @@ for batch_idx in range(8):
 
     x = paddle.to_tensor(x)
     x.stop_gradient = False
-    y = model(x)
+    y = model(x, debug_percentile)
 
-    dy_dx = paddle.grad(outputs=[y.sum()], inputs=[x], create_graph=False)[0]
-    # dysum_dy = paddle.ones(y.shape, dtype=paddle.float32)
-    # dy_dx = model.grad_layer(dysum_dy)
+    # dy_dx = paddle.grad(outputs=[y.sum()], inputs=[x], create_graph=True)[0]
+    # dy_dx = paddle.grad(outputs=[y.sum()], inputs=[x], create_graph=False)[0]
+    dysum_dy = paddle.ones(y.shape, dtype=paddle.float32)
+    dy_dx = model.grad_layer(dysum_dy)
 
 
     y_paddle = y.numpy()
