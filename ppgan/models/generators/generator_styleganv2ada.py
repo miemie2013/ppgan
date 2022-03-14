@@ -2627,6 +2627,7 @@ class GridSample(nn.Layer):
         if align_corners:
             _xt = (grid_x + 1.0) * (float(in_W) - 1.0) / 2.0   # [N, out_H, out_W, 1]
             _yt = (grid_y + 1.0) * (float(in_H) - 1.0) / 2.0   # [N, out_H, out_W, 1]
+            padding = 0
             pad_images = images
         else:
             _xt = ((grid_x + 1.0) * float(in_W) - 1.0) / 2.0   # [N, out_H, out_W, 1]
@@ -2636,6 +2637,7 @@ class GridSample(nn.Layer):
             _xt += padding
             _yt += padding
         _, _, pad_H, pad_W = pad_images.shape
+        self.grad_layer.padding = padding
         self.grad_layer.pad_images = pad_images
 
         _y1 = paddle.floor(_yt)   # [N, out_H, out_W, 1]
@@ -2669,6 +2671,10 @@ class GridSample(nn.Layer):
         _y1x2.stop_gradient = True
         _y2x1.stop_gradient = True
         _y2x2.stop_gradient = True
+        self.grad_layer._y1x1 = _y1x1
+        self.grad_layer._y1x2 = _y1x2
+        self.grad_layer._y2x1 = _y2x1
+        self.grad_layer._y2x2 = _y2x2
 
         pad_images_t = paddle.transpose(pad_images, perm=[0, 2, 3, 1])   # [N, C, pad_H, pad_W] -> [N, pad_H, pad_W, C]
         v1 = paddle.gather_nd(pad_images_t, _y1x1)  # [N, pad_H, pad_W, C] -> [N*out_H*out_W, C]
@@ -2681,6 +2687,10 @@ class GridSample(nn.Layer):
         v3 = paddle.reshape(v3, (N, out_H, out_W, C))
         v4 = paddle.reshape(v4, (N, out_H, out_W, C))
 
+        self.grad_layer.w1 = w1
+        self.grad_layer.w2 = w2
+        self.grad_layer.w3 = w3
+        self.grad_layer.w4 = w4
         out = w1 * v1 + w2 * v2 + w3 * v3 + w4 * v4  # [N, out_H, out_W, C]
         out = paddle.transpose(out, perm=[0, 3, 1, 2])  # [N, C, out_H, out_W]
         return out
@@ -2703,14 +2713,31 @@ class GridSample_Grad(nn.Layer):
         images = self.images
         grid = self.grid
         pad_images = self.pad_images
+        padding = self.padding
 
         N, C, in_H, in_W = images.shape
         N, out_H, out_W, _ = grid.shape
 
-        dloss_dout = paddle.transpose(dloss_dout, perm=[0, 2, 3, 1])
+        dloss_dout = paddle.transpose(dloss_dout, perm=[0, 2, 3, 1])  # [N, out_H, out_W, C]
 
-        grid_x = grid[:, :, :, :1]   # [N, out_H, out_W, 1]
-        grid_y = grid[:, :, :, 1:]   # [N, out_H, out_W, 1]
+        w1 = self.w1
+        w2 = self.w2
+        w3 = self.w3
+        w4 = self.w4
+        dloss_dv1 = dloss_dout * w1
+        dloss_dv2 = dloss_dout * w2
+        dloss_dv3 = dloss_dout * w3
+        dloss_dv4 = dloss_dout * w4
+
+        dloss_dv4 = paddle.reshape(dloss_dv4, (N*out_H*out_W, C))
+        dloss_dv3 = paddle.reshape(dloss_dv3, (N*out_H*out_W, C))
+        dloss_dv2 = paddle.reshape(dloss_dv2, (N*out_H*out_W, C))
+        dloss_dv1 = paddle.reshape(dloss_dv1, (N*out_H*out_W, C))
+
+        _y1x1 = self._y1x1
+        _y1x2 = self._y1x2
+        _y2x1 = self._y2x1
+        _y2x2 = self._y2x2
 
         return dloss_dout
 
