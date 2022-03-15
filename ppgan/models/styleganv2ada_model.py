@@ -87,6 +87,8 @@ class StyleGANv2ADAModel(BaseModel):
         self.nets_ema = {}
         self.nets['synthesis'] = build_generator(synthesis)
         self.nets_ema['synthesis'] = build_generator(synthesis)
+        num_ws = self.nets['synthesis'].num_ws
+        mapping['num_ws'] = num_ws
         self.nets['mapping'] = build_generator(mapping)
         self.nets_ema['mapping'] = build_generator(mapping)
         if discriminator:

@@ -28,7 +28,6 @@ model:
     z_dim: &Z_DIM 512
     c_dim: &C_DIM 0
     w_dim: *W_DIM
-    num_ws: 16
     num_layers: 8
   augment_pipe:
     name: StyleGANv2ADA_AugmentPipe

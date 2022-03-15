@@ -17,7 +17,7 @@ model:
   synthesis:
     name: StyleGANv2ADA_SynthesisNetwork
     w_dim: &W_DIM 512
-    img_resolution: &IMAGE_SIZE 512
+    img_resolution: &IMAGE_SIZE 128
     img_channels: &IMG_CHANNELS 3
     channel_base: &CHANNEL_BASE 32768
     channel_max: &CHANNEL_MAX 512
@@ -54,19 +54,19 @@ model:
     conv_clamp: *CONV_CLAMP
     block_kwargs: {}
     mapping_kwargs: {}
-    epilogue_kwargs: {mbstd_group_size: 8}
+    epilogue_kwargs: {mbstd_group_size: None}
 
 dataset:
   train:
     name: StyleGANv2ADADataset
-#    dataroot: ../data/data42681/afhq/train/cat
-    dataroot: ../data/data42681/afhq/train/dog
+    dataroot: ../data/data42681/afhq/train/dog_32
+#    dataroot: ../data/flowers_128
     is_train: True
     resolution: *IMAGE_SIZE
     use_labels: False
     xflip: False
     num_workers: 0
-    batch_size: 1
+    batch_size: 4
     len_phases: 4
     preprocess: None
 
