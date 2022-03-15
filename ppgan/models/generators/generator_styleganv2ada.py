@@ -2208,6 +2208,8 @@ class StyleGANv2ADA_AugmentPipe(nn.Layer):
         self.grad_layer = StyleGANv2ADA_AugmentPipe_Grad()
         self.grid_sample = GridSample(mode='bilinear', padding_mode='zeros', align_corners=False)
         self.grad_layer.grid_sample = self.grid_sample
+        self.grad_layer.cutout = self.cutout
+        self.grad_layer.imgfilter = self.imgfilter
 
     def forward(self, images, debug_percentile=None):
         assert images.ndim == 4
@@ -2345,7 +2347,6 @@ class StyleGANv2ADA_AugmentPipe(nn.Layer):
 
             # Upsample.
             images2 = upsample2d(x=images1, f=self.Hz_geom, up=2)
-            self.grad_layer.images2 = images2
             G_inv = scale2d(2, 2) @ G_inv @ scale2d_inv(2, 2)
             G_inv = translate2d(-0.5, -0.5) @ G_inv @ translate2d_inv(-0.5, -0.5)
 
@@ -2361,7 +2362,6 @@ class StyleGANv2ADA_AugmentPipe(nn.Layer):
             self.grad_layer.Hz_pad = Hz_pad
             self.grad_layer.Hz_geom = self.Hz_geom
             images4 = downsample2d(x=images3, f=self.Hz_geom, down=2, padding=-Hz_pad*2, flip_filter=True)
-            self.grad_layer.images4 = images4
             images = images4
 
         # --------------------------------------------
@@ -2432,7 +2432,6 @@ class StyleGANv2ADA_AugmentPipe(nn.Layer):
         if C is not I_4:
             self.grad_layer.C_is_not_I_4 = True
             images5 = images.reshape([batch_size, num_channels, height * width])
-            self.grad_layer.images5 = images5
             self.grad_layer.C = C
             if num_channels == 3:
                 images6 = C[:, :3, :3] @ images5 + C[:, :3, 3:]
@@ -2444,7 +2443,6 @@ class StyleGANv2ADA_AugmentPipe(nn.Layer):
                 raise ValueError('Image must be RGB (3 channels) or L (1 channel)')
             self.grad_layer.images6 = images6
             images7 = images6.reshape([batch_size, num_channels, height, width])
-            self.grad_layer.images7 = images7
             images = images7
 
         # ----------------------
@@ -2475,14 +2473,18 @@ class StyleGANv2ADA_AugmentPipe(nn.Layer):
             Hz_prime = g @ self.Hz_fbank                                    # [batch, tap]
             Hz_prime = Hz_prime.unsqueeze(1).tile([1, num_channels, 1])     # [batch, channels, tap]
             Hz_prime = Hz_prime.reshape([batch_size * num_channels, 1, -1]) # [batch * channels, 1, tap]
+            self.grad_layer.Hz_prime = Hz_prime
 
             # Apply filter.
             p = self.Hz_fbank.shape[1] // 2
-            images = images.reshape([1, batch_size * num_channels, height, width])
-            images = paddle.nn.functional.pad(images, pad=[p, p, p, p], mode='reflect')
-            images = F.conv2d(images, weight=Hz_prime.unsqueeze(2), groups=batch_size*num_channels)
-            images = F.conv2d(images, weight=Hz_prime.unsqueeze(3), groups=batch_size*num_channels)
-            images = images.reshape([batch_size, num_channels, height, width])
+            self.grad_layer.p = p
+            images8 = images.reshape([1, batch_size * num_channels, height, width])
+            images9 = paddle.nn.functional.pad(images8, pad=[p, p, p, p], mode='reflect')
+            images10 = F.conv2d(images9, weight=Hz_prime.unsqueeze(2), groups=batch_size*num_channels)
+            images11 = F.conv2d(images10, weight=Hz_prime.unsqueeze(3), groups=batch_size*num_channels)
+            images12 = images11.reshape([batch_size, num_channels, height, width])
+            images = images12
+            self.grad_layer.images11 = images11
 
         # ------------------------
         # Image-space corruptions.
@@ -2496,7 +2498,8 @@ class StyleGANv2ADA_AugmentPipe(nn.Layer):
                 # zhishu = torch.erfinv(debug_percentile) * self.noise_std
                 zhishu = paddle.to_tensor(0.3708, dtype=paddle.float32)
                 sigma = paddle.full_like(sigma, zhishu)
-            images = images + paddle.randn([batch_size, num_channels, height, width], dtype=paddle.float32) * sigma
+            images13 = images + paddle.randn([batch_size, num_channels, height, width], dtype=paddle.float32) * sigma
+            images = images13
 
         # Apply cutout with probability (cutout * strength).
         if self.cutout > 0:
@@ -2511,7 +2514,9 @@ class StyleGANv2ADA_AugmentPipe(nn.Layer):
             mask_x = (((coord_x + 0.5) / width - center[:, 0]).abs() >= size[:, 0] / 2)
             mask_y = (((coord_y + 0.5) / height - center[:, 1]).abs() >= size[:, 1] / 2)
             mask = paddle.cast(paddle.logical_or(mask_x, mask_y), dtype=paddle.float32)
-            images = images * mask
+            self.grad_layer.mask = mask
+            images14 = images * mask
+            images = images14
 
         return images
 
@@ -2551,6 +2556,48 @@ class StyleGANv2ADA_AugmentPipe_Grad(nn.Layer):
         images = self.images
         batch_size, num_channels, height, width = images.shape
 
+        # Apply cutout with probability (cutout * strength).
+        if self.cutout > 0:
+            mask = self.mask
+            dloss_dimages14 = dloss_dout
+            dloss_dimages13 = dloss_dimages14 * mask
+        else:
+            dloss_dimages13 = dloss_dout
+
+
+        # ------------------------
+        # Image-space corruptions.
+        # ------------------------
+
+        # Apply additive RGB noise with probability (noise * strength).
+        # if self.noise > 0:
+        #     dloss_dimages12 = dloss_dimages13
+        # else:
+        #     dloss_dimages12 = dloss_dimages13
+        dloss_dimages12 = dloss_dimages13
+
+
+
+        # ----------------------
+        # Image-space filtering.
+        # ----------------------
+
+        if self.imgfilter > 0:
+            Hz_prime = self.Hz_prime
+            p = self.p
+
+            images11 = self.images11
+
+            dloss_dimages11 = dloss_dimages12.reshape(images11.shape)
+            dloss_dimages10 = F.conv2d_transpose(dloss_dimages11, weight=Hz_prime.unsqueeze(3), groups=batch_size*num_channels, output_padding=0)
+            dloss_dimages9 = F.conv2d_transpose(dloss_dimages10, weight=Hz_prime.unsqueeze(2), groups=batch_size*num_channels, output_padding=0)
+
+            # images9 = paddle.nn.functional.pad(images8, pad=[p, p, p, p], mode='reflect') 挺麻烦的。做多个轴对称。
+            dloss_dimages8 = pad_reflect_grad(dloss_dimages9, p, p, p, p)
+            dloss_dimages7 = dloss_dimages8.reshape([batch_size, num_channels, height, width])
+        else:
+            dloss_dimages7 = dloss_dimages12
+
 
         # ------------------------------
         # Execute color transformations.
@@ -2558,13 +2605,9 @@ class StyleGANv2ADA_AugmentPipe_Grad(nn.Layer):
 
         # Execute if the transform is not identity.
         if self.C_is_not_I_4:
-            images5 = self.images5
             images6 = self.images6
-            images7 = self.images7
             C = self.C
 
-
-            dloss_dimages7 = dloss_dout
             dloss_dimages6 = dloss_dimages7.reshape(images6.shape)
 
 
@@ -2592,9 +2635,7 @@ class StyleGANv2ADA_AugmentPipe_Grad(nn.Layer):
         # Execute if the transform is not identity.
         if self.G_inv_is_not_I_3:
             Hz_pad = self.Hz_pad
-            images4 = self.images4
             images3 = self.images3
-            images2 = self.images2
             images1 = self.images1
             dloss_dimages3 = downsample2d_grad(dloss_dimages4, x=images3, f=self.Hz_geom, down=2, padding=-Hz_pad*2, flip_filter=True)
             dloss_dimages2 = self.grid_sample.grad_layer(dloss_dimages3)
@@ -2608,14 +2649,6 @@ class StyleGANv2ADA_AugmentPipe_Grad(nn.Layer):
             dloss_dimages = pad_reflect_grad(dloss_dimages1, mx0, mx1, my0, my1)
         else:
             dloss_dimages = dloss_dimages4
-
-        # --------------------------------------------
-        # Select parameters for color transformations.
-        # --------------------------------------------
-
-        # Initialize homogeneous 3D transformation matrix: C @ color_in ==> color_out
-        # I_4 = paddle.eye(4)
-        # C = I_4
 
         return dloss_dimages
 

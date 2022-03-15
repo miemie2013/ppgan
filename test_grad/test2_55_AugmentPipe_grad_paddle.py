@@ -64,7 +64,7 @@ cutout_size = 0.5
 # noise_std = 0.1
 # cutout_size = 0.5
 
-# 所有
+# 所有，除了noise = 0
 xflip = 1
 rotate90 = 1
 xint = 1
@@ -89,7 +89,7 @@ saturation_std = 1
 imgfilter = 1
 imgfilter_bands = [1, 1, 1, 1]
 imgfilter_std = 1
-noise = 1
+noise = 0
 cutout = 1
 noise_std = 0.1
 cutout_size = 0.5
