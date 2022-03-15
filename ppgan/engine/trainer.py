@@ -163,8 +163,7 @@ class Trainer:
             self.lr_schedulers_D = self.model.setup_lr_schedulers(cfg.lr_scheduler_D)
 
             # build optimizers
-            self.optimizers = self.model.setup_optimizers(self.lr_schedulers_G, self.lr_schedulers_D,
-                                                          cfg.optimizer)
+            self.optimizers = self.model.setup_optimizers(self.lr_schedulers_G, self.lr_schedulers_D, cfg.optimizer)
         else:
             if 'lr_scheduler' in cfg and 'iters_per_epoch' in cfg.lr_scheduler:
                 cfg.lr_scheduler.iters_per_epoch = self.iters_per_epoch

@@ -59,6 +59,9 @@ python tools/main.py -c configs/stylegan_v2ada_512_afhqcat.yaml --load styleganv
 cd ~/w*
 python tools/main.py -c configs/stylegan_v2ada_128_custom.yaml --load styleganv2ada_512_afhqcat.pdparams
 
+cd ~/w*
+python tools/main.py -c configs/stylegan_v2ada_32_custom.yaml --load styleganv2ada_512_afhqcat.pdparams
+
 
 
 恢复训练:
