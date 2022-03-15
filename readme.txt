@@ -18,7 +18,6 @@ class StyleGANv2ADA_SynthesisNetwork(nn.Layer):
             use_fp16 = False
 
 
-F.affine_grid()实现了二阶梯度
 F.grid_sample()没有实现二阶梯度
 paddle.gather_nd()没有实现二阶梯度，所以暂时不能复现self.augment_pipe
 
