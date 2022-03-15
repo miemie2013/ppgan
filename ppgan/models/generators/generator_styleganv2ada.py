@@ -2259,7 +2259,8 @@ class StyleGANv2ADA_AugmentPipe(nn.Layer):
             s = paddle.pow(paddle.zeros_like(zhishu, dtype=zhishu.dtype) + 2.0, zhishu)
             s = paddle.where(paddle.rand([batch_size], dtype=paddle.float32) < self.scale * self.p, s, paddle.ones_like(s))
             if debug_percentile is not None:
-                zhishu = torch.erfinv(debug_percentile * 2 - 1) * self.scale_std
+                # zhishu = torch.erfinv(debug_percentile * 2 - 1) * self.scale_std
+                zhishu = paddle.to_tensor(0.0742, dtype=paddle.float32)
                 temp = paddle.pow(paddle.zeros_like(zhishu, dtype=zhishu.dtype) + 2.0, zhishu)
                 s = paddle.full_like(s, temp)
             G_inv = G_inv @ scale2d_inv(s, s)
@@ -2281,7 +2282,9 @@ class StyleGANv2ADA_AugmentPipe(nn.Layer):
             s = paddle.pow(paddle.zeros_like(zhishu, dtype=zhishu.dtype) + 2.0, zhishu)
             s = paddle.where(paddle.rand([batch_size], dtype=paddle.float32) < self.aniso * self.p, s, paddle.ones_like(s))
             if debug_percentile is not None:
-                s = torch.full_like(s, torch.exp2(torch.erfinv(debug_percentile * 2 - 1) * self.aniso_std))
+                # zhishu = torch.erfinv(debug_percentile * 2 - 1) * self.aniso_std
+                zhishu = paddle.to_tensor(0.0742, dtype=paddle.float32)
+                s = paddle.full_like(s, paddle.pow(paddle.zeros_like(zhishu, dtype=zhishu.dtype) + 2.0, zhishu))
             G_inv = G_inv @ scale2d_inv(s, 1 / s)
 
         # Apply post-rotation with probability p_rot.
@@ -2297,7 +2300,9 @@ class StyleGANv2ADA_AugmentPipe(nn.Layer):
             t = paddle.randn([batch_size, 2], dtype=paddle.float32) * self.xfrac_std
             t = paddle.where(paddle.rand([batch_size, 1], dtype=paddle.float32) < self.xfrac * self.p, t, paddle.zeros_like(t))
             if debug_percentile is not None:
-                t = torch.full_like(t, torch.erfinv(debug_percentile * 2 - 1) * self.xfrac_std)
+                # zhishu = torch.erfinv(debug_percentile * 2 - 1) * self.xfrac_std
+                zhishu = paddle.to_tensor(0.0464, dtype=paddle.float32)
+                t = paddle.full_like(t, zhishu)
             G_inv = G_inv @ translate2d_inv(t[:,0] * width, t[:,1] * height)
 
         # ----------------------------------
@@ -2372,7 +2377,9 @@ class StyleGANv2ADA_AugmentPipe(nn.Layer):
             b = paddle.randn([batch_size], dtype=paddle.float32) * self.brightness_std
             b = paddle.where(paddle.rand([batch_size], dtype=paddle.float32) < self.brightness * self.p, b, paddle.zeros_like(b))
             if debug_percentile is not None:
-                b = paddle.full_like(b, paddle.erfinv(debug_percentile * 2 - 1) * self.brightness_std)
+                # zhishu = torch.erfinv(debug_percentile * 2 - 1) * self.brightness_std
+                zhishu = paddle.to_tensor(0.0742, dtype=paddle.float32)
+                b = paddle.full_like(b, zhishu)
             C = translate3d(b, b, b) @ C
 
         # Apply contrast with probability (contrast * strength).
@@ -2381,7 +2388,9 @@ class StyleGANv2ADA_AugmentPipe(nn.Layer):
             c = paddle.pow(paddle.zeros_like(zhishu, dtype=zhishu.dtype) + 2.0, zhishu)
             c = paddle.where(paddle.rand([batch_size], dtype=paddle.float32) < self.contrast * self.p, c, paddle.ones_like(c))
             if debug_percentile is not None:
-                c = torch.full_like(c, torch.exp2(torch.erfinv(debug_percentile * 2 - 1) * self.contrast_std))
+                # zhishu = torch.erfinv(debug_percentile * 2 - 1) * self.contrast_std
+                zhishu = paddle.to_tensor(0.1854, dtype=paddle.float32)
+                c = paddle.full_like(c, paddle.pow(paddle.zeros_like(zhishu, dtype=zhishu.dtype) + 2.0, zhishu))
             C = scale3d(c, c, c) @ C
 
         # Apply luma flip with probability (lumaflip * strength).
@@ -2408,7 +2417,9 @@ class StyleGANv2ADA_AugmentPipe(nn.Layer):
             s = paddle.pow(paddle.zeros_like(zhishu, dtype=zhishu.dtype) + 2.0, zhishu)
             s = paddle.where(paddle.rand([batch_size, 1, 1], dtype=paddle.float32) < self.saturation * self.p, s, paddle.ones_like(s))
             if debug_percentile is not None:
-                s = torch.full_like(s, torch.exp2(torch.erfinv(debug_percentile * 2 - 1) * self.saturation_std))
+                # zhishu = torch.erfinv(debug_percentile * 2 - 1) * self.saturation_std
+                zhishu = paddle.to_tensor(0.3708, dtype=paddle.float32)
+                s = paddle.full_like(s, paddle.pow(paddle.zeros_like(zhishu, dtype=zhishu.dtype) + 2.0, zhishu))
             v2 = paddle.unsqueeze(v, 1)  # [n, 1]
             C = (paddle.matmul(v2, v2.transpose((1, 0))) + (I_4 - paddle.matmul(v2, v2.transpose((1, 0)))) * s) @ C
 
@@ -2417,16 +2428,24 @@ class StyleGANv2ADA_AugmentPipe(nn.Layer):
         # ------------------------------
 
         # Execute if the transform is not identity.
+        self.grad_layer.C_is_not_I_4 = False
         if C is not I_4:
-            images = images.reshape([batch_size, num_channels, height * width])
+            self.grad_layer.C_is_not_I_4 = True
+            images5 = images.reshape([batch_size, num_channels, height * width])
+            self.grad_layer.images5 = images5
+            self.grad_layer.C = C
             if num_channels == 3:
-                images = C[:, :3, :3] @ images + C[:, :3, 3:]
+                images6 = C[:, :3, :3] @ images5 + C[:, :3, 3:]
             elif num_channels == 1:
-                C = C[:, :3, :].mean(dim=1, keepdims=True)
-                images = images * C[:, :, :3].sum(dim=2, keepdims=True) + C[:, :, 3:]
+                C2 = paddle.mean(C[:, :3, :], axis=1, keepdim=True)
+                self.grad_layer.C2 = C2
+                images6 = images5 * paddle.sum(C2[:, :, :3], axis=2, keepdim=True) + C2[:, :, 3:]
             else:
                 raise ValueError('Image must be RGB (3 channels) or L (1 channel)')
-            images = images.reshape([batch_size, num_channels, height, width])
+            self.grad_layer.images6 = images6
+            images7 = images6.reshape([batch_size, num_channels, height, width])
+            self.grad_layer.images7 = images7
+            images = images7
 
         # ----------------------
         # Image-space filtering.
@@ -2444,23 +2463,25 @@ class StyleGANv2ADA_AugmentPipe(nn.Layer):
                 t_i = paddle.pow(paddle.zeros_like(zhishu, dtype=zhishu.dtype) + 2.0, zhishu)
                 t_i = paddle.where(paddle.rand([batch_size], dtype=paddle.float32) < self.imgfilter * self.p * band_strength, t_i, paddle.ones_like(t_i))
                 if debug_percentile is not None:
-                    t_i = torch.full_like(t_i, torch.exp2(torch.erfinv(debug_percentile * 2 - 1) * self.imgfilter_std)) if band_strength > 0 else paddle.ones_like(t_i)
+                    # zhishu = torch.erfinv(debug_percentile * 2 - 1) * self.imgfilter_std
+                    zhishu = paddle.to_tensor(0.3708, dtype=paddle.float32)
+                    t_i = paddle.full_like(t_i, paddle.pow(paddle.zeros_like(zhishu, dtype=zhishu.dtype) + 2.0, zhishu)) if band_strength > 0 else paddle.ones_like(t_i)
                 t = paddle.ones([batch_size, num_bands], dtype=paddle.float32)          # Temporary gain vector.
                 t[:, i] = t_i                                                           # Replace i'th element.
-                t = t / (expected_power * t.square()).sum(dim=-1, keepdims=True).sqrt() # Normalize power.
+                t = t / paddle.sum(expected_power * t.square(), axis=-1, keepdim=True).sqrt() # Normalize power.
                 g = g * t                                                               # Accumulate into global gain.
 
             # Construct combined amplification filter.
             Hz_prime = g @ self.Hz_fbank                                    # [batch, tap]
-            Hz_prime = Hz_prime.unsqueeze(1).repeat([1, num_channels, 1])   # [batch, channels, tap]
+            Hz_prime = Hz_prime.unsqueeze(1).tile([1, num_channels, 1])     # [batch, channels, tap]
             Hz_prime = Hz_prime.reshape([batch_size * num_channels, 1, -1]) # [batch * channels, 1, tap]
 
             # Apply filter.
             p = self.Hz_fbank.shape[1] // 2
             images = images.reshape([1, batch_size * num_channels, height, width])
             images = paddle.nn.functional.pad(images, pad=[p, p, p, p], mode='reflect')
-            images = conv2d_gradfix.conv2d(input=images, weight=Hz_prime.unsqueeze(2), groups=batch_size*num_channels)
-            images = conv2d_gradfix.conv2d(input=images, weight=Hz_prime.unsqueeze(3), groups=batch_size*num_channels)
+            images = F.conv2d(images, weight=Hz_prime.unsqueeze(2), groups=batch_size*num_channels)
+            images = F.conv2d(images, weight=Hz_prime.unsqueeze(3), groups=batch_size*num_channels)
             images = images.reshape([batch_size, num_channels, height, width])
 
         # ------------------------
@@ -2472,7 +2493,9 @@ class StyleGANv2ADA_AugmentPipe(nn.Layer):
             sigma = paddle.randn([batch_size, 1, 1, 1], dtype=paddle.float32).abs() * self.noise_std
             sigma = paddle.where(paddle.rand([batch_size, 1, 1, 1], dtype=paddle.float32) < self.noise * self.p, sigma, paddle.zeros_like(sigma))
             if debug_percentile is not None:
-                sigma = paddle.full_like(sigma, paddle.erfinv(debug_percentile) * self.noise_std)
+                # zhishu = torch.erfinv(debug_percentile) * self.noise_std
+                zhishu = paddle.to_tensor(0.3708, dtype=paddle.float32)
+                sigma = paddle.full_like(sigma, zhishu)
             images = images + paddle.randn([batch_size, num_channels, height, width], dtype=paddle.float32) * sigma
 
         # Apply cutout with probability (cutout * strength).
@@ -2483,14 +2506,41 @@ class StyleGANv2ADA_AugmentPipe(nn.Layer):
             if debug_percentile is not None:
                 size = paddle.full_like(size, self.cutout_size)
                 center = paddle.full_like(center, debug_percentile)
-            coord_x = paddle.arange(width, device=device).reshape([1, 1, 1, -1])
-            coord_y = paddle.arange(height, device=device).reshape([1, 1, -1, 1])
+            coord_x = paddle.arange(width).reshape([1, 1, 1, -1])
+            coord_y = paddle.arange(height).reshape([1, 1, -1, 1])
             mask_x = (((coord_x + 0.5) / width - center[:, 0]).abs() >= size[:, 0] / 2)
             mask_y = (((coord_y + 0.5) / height - center[:, 1]).abs() >= size[:, 1] / 2)
-            mask = paddle.logical_or(mask_x, mask_y).to(paddle.float32)
+            mask = paddle.cast(paddle.logical_or(mask_x, mask_y), dtype=paddle.float32)
             images = images * mask
 
         return images
+
+
+def pad_reflect_grad(dloss_dout, mx0, mx1, my0, my1):
+    dloss_dx = dloss_dout[:, :, my0:-my1, mx0:-mx1]
+
+    left_up = dloss_dout[:, :, :my0, :mx0]
+    left_ = dloss_dout[:, :, my0:-my1, :mx0]
+    left_down = dloss_dout[:, :, -my1:, :mx0]
+
+    right_up = dloss_dout[:, :, :my0, -mx1:]
+    right_ = dloss_dout[:, :, my0:-my1, -mx1:]
+    right_down = dloss_dout[:, :, -my1:, -mx1:]
+
+    up_ = dloss_dout[:, :, :my0, mx0:-mx1]
+    down_ = dloss_dout[:, :, -my1:, mx0:-mx1]
+
+    dloss_dx[:, :, 1:1 + my0, 1:1 + mx0] += left_up[:, :, ::-1, ::-1]
+    dloss_dx[:, :, :, 1:1 + mx0] += left_[:, :, :, ::-1]
+    dloss_dx[:, :, -1 - my1:-1, 1:1 + mx0] += left_down[:, :, ::-1, ::-1]
+
+    dloss_dx[:, :, 1:1 + my0, -1 - mx1:-1] += right_up[:, :, ::-1, ::-1]
+    dloss_dx[:, :, :, -1 - mx1:-1] += right_[:, :, :, ::-1]
+    dloss_dx[:, :, -1 - my1:-1, -1 - mx1:-1] += right_down[:, :, ::-1, ::-1]
+
+    dloss_dx[:, :, 1:1 + my0, :] += up_[:, :, ::-1, :]
+    dloss_dx[:, :, -1 - my1:-1, :] += down_[:, :, ::-1, :]
+    return dloss_dx
 
 
 class StyleGANv2ADA_AugmentPipe_Grad(nn.Layer):
@@ -2502,13 +2552,45 @@ class StyleGANv2ADA_AugmentPipe_Grad(nn.Layer):
         batch_size, num_channels, height, width = images.shape
 
 
+        # ------------------------------
+        # Execute color transformations.
+        # ------------------------------
+
+        # Execute if the transform is not identity.
+        if self.C_is_not_I_4:
+            images5 = self.images5
+            images6 = self.images6
+            images7 = self.images7
+            C = self.C
+
+
+            dloss_dimages7 = dloss_dout
+            dloss_dimages6 = dloss_dimages7.reshape(images6.shape)
+
+
+            if num_channels == 3:
+                dloss_dimages6 = paddle.unsqueeze(dloss_dimages6, 2)  # [N, A, 1, C]
+                dimages6_dimages5 = C[:, :3, :3]  # [N, A, B]
+                dimages6_dimages5 = paddle.unsqueeze(dimages6_dimages5, 3)  # [N, A, B, 1]
+                dloss_dimages5 = dloss_dimages6 * dimages6_dimages5  # [N, A, B, C]
+                dloss_dimages5 = paddle.sum(dloss_dimages5, axis=1)  # [N, B, C]
+            elif num_channels == 1:
+                C2 = self.C2
+                dloss_dimages5 = dloss_dimages6 * paddle.sum(C2[:, :, :3], axis=2, keepdim=True)
+            else:
+                raise ValueError('Image must be RGB (3 channels) or L (1 channel)')
+
+            dloss_dimages4 = dloss_dimages5.reshape((batch_size, num_channels, height, width))
+        else:
+            dloss_dimages4 = dloss_dout
+
+
         # ----------------------------------
         # Execute geometric transformations.
         # ----------------------------------
 
         # Execute if the transform is not identity.
         if self.G_inv_is_not_I_3:
-            dloss_dimages4 = dloss_dout
             Hz_pad = self.Hz_pad
             images4 = self.images4
             images3 = self.images3
@@ -2523,31 +2605,9 @@ class StyleGANv2ADA_AugmentPipe_Grad(nn.Layer):
             mx1 = self.mx1
             my1 = self.my1
             # images1 = paddle.nn.functional.pad(images, pad=[mx0, mx1, my0, my1], mode='reflect') 挺麻烦的。做多个轴对称。
-            dloss_dimages = dloss_dimages1[:, :, my0:-my1, mx0:-mx1]
-
-            left_up = dloss_dimages1[:, :, :my0, :mx0]
-            left_ = dloss_dimages1[:, :, my0:-my1, :mx0]
-            left_down = dloss_dimages1[:, :, -my1:, :mx0]
-
-            right_up = dloss_dimages1[:, :, :my0, -mx1:]
-            right_ = dloss_dimages1[:, :, my0:-my1, -mx1:]
-            right_down = dloss_dimages1[:, :, -my1:, -mx1:]
-
-            up_ = dloss_dimages1[:, :, :my0, mx0:-mx1]
-            down_ = dloss_dimages1[:, :, -my1:, mx0:-mx1]
-
-            dloss_dimages[:, :, 1:1 + my0, 1:1 + mx0] += left_up[:, :, ::-1, ::-1]
-            dloss_dimages[:, :, :, 1:1 + mx0] += left_[:, :, :, ::-1]
-            dloss_dimages[:, :, -1 - my1:-1, 1:1 + mx0] += left_down[:, :, ::-1, ::-1]
-
-            dloss_dimages[:, :, 1:1 + my0, -1 - mx1:-1] += right_up[:, :, ::-1, ::-1]
-            dloss_dimages[:, :, :, -1 - mx1:-1] += right_[:, :, :, ::-1]
-            dloss_dimages[:, :, -1 - my1:-1, -1 - mx1:-1] += right_down[:, :, ::-1, ::-1]
-
-            dloss_dimages[:, :, 1:1 + my0, :] += up_[:, :, ::-1, :]
-            dloss_dimages[:, :, -1 - my1:-1, :] += down_[:, :, ::-1, :]
+            dloss_dimages = pad_reflect_grad(dloss_dimages1, mx0, mx1, my0, my1)
         else:
-            dloss_dimages = dloss_dout
+            dloss_dimages = dloss_dimages4
 
         # --------------------------------------------
         # Select parameters for color transformations.

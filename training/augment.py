@@ -227,7 +227,9 @@ class AugmentPipe(torch.nn.Module):
             s = torch.exp2(torch.randn([batch_size], device=device) * self.scale_std)
             s = torch.where(torch.rand([batch_size], device=device) < self.scale * self.p, s, torch.ones_like(s))
             if debug_percentile is not None:
-                s = torch.full_like(s, torch.exp2(torch.erfinv(debug_percentile * 2 - 1) * self.scale_std))
+                # zhishu = torch.erfinv(debug_percentile * 2 - 1) * self.scale_std
+                zhishu = torch.as_tensor(0.0742, dtype=torch.float32, device=device)
+                s = torch.full_like(s, torch.exp2(zhishu))
             G_inv = G_inv @ scale2d_inv(s, s)
 
         # Apply pre-rotation with probability p_rot.
@@ -244,7 +246,9 @@ class AugmentPipe(torch.nn.Module):
             s = torch.exp2(torch.randn([batch_size], device=device) * self.aniso_std)
             s = torch.where(torch.rand([batch_size], device=device) < self.aniso * self.p, s, torch.ones_like(s))
             if debug_percentile is not None:
-                s = torch.full_like(s, torch.exp2(torch.erfinv(debug_percentile * 2 - 1) * self.aniso_std))
+                # zhishu = torch.erfinv(debug_percentile * 2 - 1) * self.aniso_std
+                zhishu = torch.as_tensor(0.0742, dtype=torch.float32, device=device)
+                s = torch.full_like(s, torch.exp2(zhishu))
             G_inv = G_inv @ scale2d_inv(s, 1 / s)
 
         # Apply post-rotation with probability p_rot.
@@ -260,7 +264,9 @@ class AugmentPipe(torch.nn.Module):
             t = torch.randn([batch_size, 2], device=device) * self.xfrac_std
             t = torch.where(torch.rand([batch_size, 1], device=device) < self.xfrac * self.p, t, torch.zeros_like(t))
             if debug_percentile is not None:
-                t = torch.full_like(t, torch.erfinv(debug_percentile * 2 - 1) * self.xfrac_std)
+                # zhishu = torch.erfinv(debug_percentile * 2 - 1) * self.xfrac_std
+                zhishu = torch.as_tensor(0.0464, dtype=torch.float32, device=device)
+                t = torch.full_like(t, zhishu)
             G_inv = G_inv @ translate2d_inv(t[:,0] * width, t[:,1] * height)
 
         # ----------------------------------
@@ -314,7 +320,9 @@ class AugmentPipe(torch.nn.Module):
             b = torch.randn([batch_size], device=device) * self.brightness_std
             b = torch.where(torch.rand([batch_size], device=device) < self.brightness * self.p, b, torch.zeros_like(b))
             if debug_percentile is not None:
-                b = torch.full_like(b, torch.erfinv(debug_percentile * 2 - 1) * self.brightness_std)
+                # zhishu = torch.erfinv(debug_percentile * 2 - 1) * self.brightness_std
+                zhishu = torch.as_tensor(0.0742, dtype=torch.float32, device=device)
+                b = torch.full_like(b, zhishu)
             C = translate3d(b, b, b) @ C
 
         # Apply contrast with probability (contrast * strength).
@@ -322,7 +330,9 @@ class AugmentPipe(torch.nn.Module):
             c = torch.exp2(torch.randn([batch_size], device=device) * self.contrast_std)
             c = torch.where(torch.rand([batch_size], device=device) < self.contrast * self.p, c, torch.ones_like(c))
             if debug_percentile is not None:
-                c = torch.full_like(c, torch.exp2(torch.erfinv(debug_percentile * 2 - 1) * self.contrast_std))
+                # zhishu = torch.erfinv(debug_percentile * 2 - 1) * self.contrast_std
+                zhishu = torch.as_tensor(0.1854, dtype=torch.float32, device=device)
+                c = torch.full_like(c, torch.exp2(zhishu))
             C = scale3d(c, c, c) @ C
 
         # Apply luma flip with probability (lumaflip * strength).
@@ -347,7 +357,9 @@ class AugmentPipe(torch.nn.Module):
             s = torch.exp2(torch.randn([batch_size, 1, 1], device=device) * self.saturation_std)
             s = torch.where(torch.rand([batch_size, 1, 1], device=device) < self.saturation * self.p, s, torch.ones_like(s))
             if debug_percentile is not None:
-                s = torch.full_like(s, torch.exp2(torch.erfinv(debug_percentile * 2 - 1) * self.saturation_std))
+                # zhishu = torch.erfinv(debug_percentile * 2 - 1) * self.saturation_std
+                zhishu = torch.as_tensor(0.3708, dtype=torch.float32, device=device)
+                s = torch.full_like(s, torch.exp2(zhishu))
             C = (v.ger(v) + (I_4 - v.ger(v)) * s) @ C
 
         # ------------------------------
@@ -381,7 +393,9 @@ class AugmentPipe(torch.nn.Module):
                 t_i = torch.exp2(torch.randn([batch_size], device=device) * self.imgfilter_std)
                 t_i = torch.where(torch.rand([batch_size], device=device) < self.imgfilter * self.p * band_strength, t_i, torch.ones_like(t_i))
                 if debug_percentile is not None:
-                    t_i = torch.full_like(t_i, torch.exp2(torch.erfinv(debug_percentile * 2 - 1) * self.imgfilter_std)) if band_strength > 0 else torch.ones_like(t_i)
+                    # zhishu = torch.erfinv(debug_percentile * 2 - 1) * self.imgfilter_std
+                    zhishu = torch.as_tensor(0.3708, dtype=torch.float32, device=device)
+                    t_i = torch.full_like(t_i, torch.exp2(zhishu)) if band_strength > 0 else torch.ones_like(t_i)
                 t = torch.ones([batch_size, num_bands], device=device)                  # Temporary gain vector.
                 t[:, i] = t_i                                                           # Replace i'th element.
                 t = t / (expected_power * t.square()).sum(dim=-1, keepdims=True).sqrt() # Normalize power.
@@ -409,7 +423,9 @@ class AugmentPipe(torch.nn.Module):
             sigma = torch.randn([batch_size, 1, 1, 1], device=device).abs() * self.noise_std
             sigma = torch.where(torch.rand([batch_size, 1, 1, 1], device=device) < self.noise * self.p, sigma, torch.zeros_like(sigma))
             if debug_percentile is not None:
-                sigma = torch.full_like(sigma, torch.erfinv(debug_percentile) * self.noise_std)
+                # zhishu = torch.erfinv(debug_percentile) * self.noise_std
+                zhishu = torch.as_tensor(0.3708, dtype=torch.float32, device=device)
+                sigma = torch.full_like(sigma, zhishu)
             images = images + torch.randn([batch_size, num_channels, height, width], device=device) * sigma
 
         # Apply cutout with probability (cutout * strength).
