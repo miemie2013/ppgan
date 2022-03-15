@@ -7,9 +7,13 @@ model:
   D_reg_interval: 16
   # loss
   r1_gamma: 0.5
-  pl_batch_shrink: 2  # default is 2. when train batch_size is 1, set to 1.
+  pl_batch_shrink: 2
   ema_kimg: 20
   ema_rampup: None
+  augment_p: 0.0
+  ada_kimg: 100
+  ada_interval: 4
+  ada_target: 0.6
   synthesis:
     name: StyleGANv2ADA_SynthesisNetwork
     w_dim: &W_DIM 512
