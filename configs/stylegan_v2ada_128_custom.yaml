@@ -60,13 +60,14 @@ dataset:
   train:
     name: StyleGANv2ADADataset
 #    dataroot: ../data/data42681/afhq/train/dog_128
-    dataroot: ../data/flowers_128
+    dataroot: ../data/data130402/dog_128
+#    dataroot: ../data/flowers_128
     is_train: True
     resolution: *IMAGE_SIZE
     use_labels: False
     xflip: False
     num_workers: 0
-    batch_size: 2
+    batch_size: 4
     len_phases: 4
     preprocess: None
 
@@ -77,13 +78,13 @@ dataset:
 
 lr_scheduler_G:
   name: MultiStepDecay
-  learning_rate: 0.0025
+  learning_rate: 0.000625  # 0.000625 if batch_size is 4;
   milestones: [99999000]
   gamma: 0.5
 
 lr_scheduler_D:
   name: MultiStepDecay
-  learning_rate: 0.0025
+  learning_rate: 0.000625  # 0.000625 if batch_size is 4;
   milestones: [99999000]
   gamma: 0.5
 
