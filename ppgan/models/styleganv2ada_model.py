@@ -77,6 +77,11 @@ class StyleGANv2ADAModel(BaseModel):
         pl_weight=2.0,
         ema_kimg=10,
         ema_rampup=None,
+        augment_p=0.0,
+        ada_kimg=500,
+        ada_interval=4,
+        ada_target=None,
+        adjust_p=False,
     ):
         super(StyleGANv2ADAModel, self).__init__()
         self.nets_ema = {}
@@ -89,11 +94,6 @@ class StyleGANv2ADAModel(BaseModel):
         self.c_dim = mapping.c_dim
         self.z_dim = mapping.z_dim
         self.w_dim = mapping.w_dim
-
-        # self.nets['generator'].apply(he_init)
-        # self.nets['style_encoder'].apply(he_init)
-        # self.nets['mapping_network'].apply(he_init)
-        # self.nets['discriminator'].apply(he_init)
 
         self.phases = []
         for name, reg_interval in [('G', G_reg_interval), ('D', D_reg_interval)]:
@@ -120,9 +120,15 @@ class StyleGANv2ADAModel(BaseModel):
         self.pl_weight = pl_weight
 
         self.pl_mean = paddle.zeros([1, ], dtype=paddle.float32)
-
         self.ema_kimg = ema_kimg
         self.ema_rampup = ema_rampup
+
+        self.augment_p = augment_p
+        self.ada_kimg = ada_kimg
+        self.ada_target = ada_target
+        self.ada_interval = ada_interval
+        self.adjust_p = adjust_p
+        self.Loss_signs_real = []
 
 
 
@@ -170,12 +176,25 @@ class StyleGANv2ADAModel(BaseModel):
         img = self.nets['synthesis'](ws)
         return img, ws
 
+    def run_G_grad(self, dloss_dout):
+        dloss_dws = self.nets['synthesis'].grad_layer(dloss_dout)
+        dloss_dws = paddle.stack(dloss_dws, 1)
+        return dloss_dws
+
     def run_D(self, img, c, sync):
         if self.augment_pipe is not None:
             img = self.augment_pipe(img)
 
         logits = self.nets['discriminator'](img, c)
         return logits
+
+    def run_D_grad(self, dloss_dout):
+        dloss_daug_x = self.nets['discriminator'].grad_layer(dloss_dout)
+        if self.augment_pipe is not None:
+            dloss_dx = self.augment_pipe.grad_layer(dloss_daug_x)
+        else:
+            dloss_dx = dloss_daug_x
+        return dloss_dx
 
     # 梯度累加（变相增大批大小）。
     # def accumulate_gradients(self, phase, real_img, real_c, gen_z, gen_c, sync, gain, dic2):
@@ -231,15 +250,12 @@ class StyleGANv2ADAModel(BaseModel):
             # print('ddd=%.6f' % ddd)
             pl_noise = paddle.randn(gen_img.shape) / np.sqrt(gen_img.shape[2] * gen_img.shape[3])
             # pl_noise = paddle.ones(gen_img.shape) / np.sqrt(gen_img.shape[2] * gen_img.shape[3])
-            pl_gradss = paddle.grad(
-                outputs=[(gen_img * pl_noise).sum()],
-                # inputs=[gen_ws],
-                inputs=gen_ws,
-                # inputs=gen_block_ws,
-                create_graph=False,  # 最终loss里包含梯度，需要求梯度的梯度，所以肯定需要建立反向图。
-                retain_graph=True)
-            pl_grads = [paddle.unsqueeze(d, 1) for d in pl_gradss]
-            pl_grads = paddle.concat(pl_grads, 1)
+            gen_img_pl_noise = gen_img * pl_noise
+            dgen_img_pl_noisesum_dgen_img_pl_noise = paddle.ones(gen_img_pl_noise.shape, dtype=paddle.float32)
+            pl_grads = self.run_G_grad(dgen_img_pl_noisesum_dgen_img_pl_noise)
+
+            # pl_grads = [paddle.unsqueeze(d, 1) for d in pl_gradss]
+            # pl_grads = paddle.concat(pl_grads, 1)
             pl_lengths = pl_grads.square().sum(2).mean(1).sqrt()
 
             # pl_mean = self.pl_mean.lerp(pl_lengths.mean(), self.pl_decay)
@@ -283,15 +299,13 @@ class StyleGANv2ADAModel(BaseModel):
 
             loss_Dr1 = 0
             if do_Dr1:
-                r1_grads = paddle.grad(
-                    outputs=[real_logits.sum()],
-                    inputs=[real_img_tmp],
-                    create_graph=True,  # 最终loss里包含梯度，需要求梯度的梯度，所以肯定需要建立反向图。
-                    retain_graph=True)[0]
-
-                # r1_grads = paddle.grad(outputs=real_logits.sum(),
-                #                        inputs=real_img_tmp,
-                #                        create_graph=True)[0]  # 最终loss里包含梯度，需要求梯度的梯度，所以肯定需要建立反向图。
+                # r1_grads = paddle.grad(
+                #     outputs=[real_logits.sum()],
+                #     inputs=[real_img_tmp],
+                #     create_graph=True,  # 最终loss里包含梯度，需要求梯度的梯度，所以肯定需要建立反向图。
+                #     retain_graph=True)[0]
+                dreal_logitssum_dreal_logits = paddle.ones(real_logits.shape, dtype=paddle.float32)
+                r1_grads = self.run_D_grad(dreal_logitssum_dreal_logits)
 
                 r1_penalty = r1_grads.square().sum([1, 2, 3])
                 loss_Dr1 = r1_penalty * (self.r1_gamma / 2)
@@ -415,12 +429,18 @@ class StyleGANv2ADAModel(BaseModel):
         self.batch_idx += 1
 
         # Execute ADA heuristic.
-
-        for loss, prefix in zip(
-            loss_numpys,
-            loss_phase_name):
-            for key, value in loss.items():
-                self.losses[prefix + '_' + key] = value
+        if self.adjust_p and self.augment_pipe is not None and (self.batch_idx % self.ada_interval == 0):
+            # self.ada_interval个迭代中，real_logits.sign()的平均值。
+            Loss_signs_real_mean = np.mean(np.concatenate(self.Loss_signs_real, 0))
+            diff = Loss_signs_real_mean - self.ada_target
+            adjust = np.sign(diff)
+            # print(Loss_signs_real_mean)
+            # print('==========================')
+            adjust = adjust * (batch_size * self.ada_interval) / (self.ada_kimg * 1000)
+            new_p = self.augment_pipe.p + adjust
+            new_p = paddle.clip(new_p, min=0)
+            self.augment_pipe.p.set_value(new_p)
+            self.Loss_signs_real = []
 
         return loss_numpys
 

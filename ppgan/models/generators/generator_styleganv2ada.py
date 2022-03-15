@@ -645,28 +645,26 @@ def upfirdn2d(x, filter, up=1, down=1, padding=0, flip_filter=False, gain=1):
 
     # Downsample by throwing away pixels.
     # 因为:: （paddle.strided_slice()）没有实现二阶梯度，所以用其它等价实现。
-    # x222 = x[:, :, ::downy, ::downx]  # RuntimeError: (NotFound) The Op strided_slice_grad doesn't have any grad op.
-    assert downy == downx
-    if downy == 1:
-        pass
-    elif downy == 2:
-        N, C, H, W = x.shape
-        # print('rrrrrrrrrrrrrrrrrrr')
-        # print(N, C, H, W)
-        assert H == W
-        pad_height_bottom = 0
-        pad_width_right = 0
-        if H % 2 == 1:
-            pad_height_bottom = 1
-            pad_width_right = 1
-        stride2_kernel = np.zeros((C, 1, 2, 2), dtype=np.float32)
-        stride2_kernel[:, :, 0, 0] = 1.0
-        stride2_kernel = paddle.to_tensor(stride2_kernel)
-        stride2_kernel.stop_gradient = True
-        x = F.conv2d(x, stride2_kernel, bias=None, stride=2, groups=C,
-                     padding=[[0, 0], [0, 0], [0, pad_height_bottom], [0, pad_width_right]])
-    else:
-        raise NotImplementedError("downy \'{}\' is not implemented.".format(downy))
+    x = x[:, :, ::downy, ::downx]  # RuntimeError: (NotFound) The Op strided_slice_grad doesn't have any grad op.
+    # assert downy == downx
+    # if downy == 1:
+    #     pass
+    # elif downy == 2:
+    #     N, C, H, W = x.shape
+    #     assert H == W
+    #     pad_height_bottom = 0
+    #     pad_width_right = 0
+    #     if H % 2 == 1:
+    #         pad_height_bottom = 1
+    #         pad_width_right = 1
+    #     stride2_kernel = np.zeros((C, 1, 2, 2), dtype=np.float32)
+    #     stride2_kernel[:, :, 0, 0] = 1.0
+    #     stride2_kernel = paddle.to_tensor(stride2_kernel)
+    #     stride2_kernel.stop_gradient = True
+    #     x = F.conv2d(x, stride2_kernel, bias=None, stride=2, groups=C,
+    #                  padding=[[0, 0], [0, 0], [0, pad_height_bottom], [0, pad_width_right]])
+    # else:
+    #     raise NotImplementedError("downy \'{}\' is not implemented.".format(downy))
     return x
 
 
@@ -2522,11 +2520,21 @@ class StyleGANv2ADA_AugmentPipe(nn.Layer):
 
 
 def pad_reflect_grad(dloss_dout, mx0, mx1, my0, my1):
+    print('rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr')
+    print(mx0)
+    print(mx1)
+    print(my0)
+    print(my1)
+    print()
     dloss_dx = dloss_dout[:, :, my0:-my1, mx0:-mx1]
 
-    left_up = dloss_dout[:, :, :my0, :mx0]
-    left_ = dloss_dout[:, :, my0:-my1, :mx0]
-    left_down = dloss_dout[:, :, -my1:, :mx0]
+    if mx0 > 0:
+        left_up = dloss_dout[:, :, :my0, :mx0]
+        left_ = dloss_dout[:, :, my0:-my1, :mx0]
+        left_down = dloss_dout[:, :, -my1:, :mx0]
+        dloss_dx[:, :, 1:1 + my0, 1:1 + mx0] += left_up[:, :, ::-1, ::-1]
+        dloss_dx[:, :, :, 1:1 + mx0] += left_[:, :, :, ::-1]
+        dloss_dx[:, :, -1 - my1:-1, 1:1 + mx0] += left_down[:, :, ::-1, ::-1]
 
     right_up = dloss_dout[:, :, :my0, -mx1:]
     right_ = dloss_dout[:, :, my0:-my1, -mx1:]
@@ -2535,9 +2543,6 @@ def pad_reflect_grad(dloss_dout, mx0, mx1, my0, my1):
     up_ = dloss_dout[:, :, :my0, mx0:-mx1]
     down_ = dloss_dout[:, :, -my1:, mx0:-mx1]
 
-    dloss_dx[:, :, 1:1 + my0, 1:1 + mx0] += left_up[:, :, ::-1, ::-1]
-    dloss_dx[:, :, :, 1:1 + mx0] += left_[:, :, :, ::-1]
-    dloss_dx[:, :, -1 - my1:-1, 1:1 + mx0] += left_down[:, :, ::-1, ::-1]
 
     dloss_dx[:, :, 1:1 + my0, -1 - mx1:-1] += right_up[:, :, ::-1, ::-1]
     dloss_dx[:, :, :, -1 - mx1:-1] += right_[:, :, :, ::-1]
