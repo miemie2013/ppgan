@@ -492,7 +492,7 @@ class Conv2D_Grad(nn.Layer):
         super().__init__()
         self.cfg = {}
 
-    def forward(self, dloss_dout, out, x,
+    def forward(self, dloss_dout, x,
            weight,
            bias=None,
            stride=1,
@@ -501,13 +501,27 @@ class Conv2D_Grad(nn.Layer):
            groups=1):
         if dilation != 1:
             raise NotImplementedError("dilation \'{}\' is not implemented.".format(dilation))
+        if isinstance(padding, list):
+            if len(padding) == 2:
+                padding_0 = padding[0]
+                padding_1 = padding[1]
+                assert padding_0 == padding_1
+                padding = padding_0
+            elif len(padding) == 4:
+                padding_0 = padding[0]
+                padding_1 = padding[1]
+                padding_2 = padding[2]
+                padding_3 = padding[3]
+                assert padding_0 == padding_1
+                assert padding_0 == padding_2
+                assert padding_0 == padding_3
+                padding = padding_0
 
 
         # 求loss对卷积层的输入的偏导数。
         # https://github.com/miemie2013/Pure_Python_Deep_Learning  提供技术支持。
-        conv_out = out
         N, in_C, H, W = x.shape
-        N, out_C, out_H, out_W = conv_out.shape
+        N, out_C, out_H, out_W = dloss_dout.shape
         w = weight      # [out_C, c, kH, kW]
         out_C, c, kH, kW = w.shape
         oc = out_C // groups
@@ -596,6 +610,7 @@ class Conv2D_Grad(nn.Layer):
         dX = dX[:, :, padding:padding + H, padding:padding + W]
         return dX
 
+# conv2d_grad_layer = Conv2D_Grad()
 
 def _parse_scaling(scaling):
     # scaling 一变二

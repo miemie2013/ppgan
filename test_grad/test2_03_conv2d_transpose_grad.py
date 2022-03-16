@@ -9,12 +9,12 @@ import torch.nn.functional as F
 
 dic = {}
 for batch_idx in range(20):
-    kernel_size = 1
-    stride = 1
-    padding = 0
-    output_padding = 0
-    dilation = 1
-    groups = 1
+    # kernel_size = 1
+    # stride = 1
+    # padding = 0
+    # output_padding = 0
+    # dilation = 1
+    # groups = 1
 
     # kernel_size = 1
     # stride = 2
@@ -37,12 +37,12 @@ for batch_idx in range(20):
     # dilation = 1
     # groups = 1
 
-    # kernel_size = 3
-    # stride = 1
-    # padding = 1
-    # output_padding = 0
-    # dilation = 1
-    # groups = 2
+    kernel_size = 3
+    stride = 1
+    padding = 1
+    output_padding = 0
+    dilation = 1
+    groups = 1
 
     # kernel_size = 3
     # stride = 2
@@ -58,8 +58,10 @@ for batch_idx in range(20):
     # dilation = 1
     # groups = 2
 
-    w = torch.randn([4, 6 // groups, kernel_size, kernel_size])
-    x = torch.randn([2, 4, 512, 512])
+    # w = torch.randn([4, 6 // groups, kernel_size, kernel_size])
+    # x = torch.randn([2, 4, 512, 512])
+    w = torch.randn([128, 128 // groups, kernel_size, kernel_size])
+    x = torch.randn([2, 128, 256, 256])
     # x = torch.randn([2, 4, 2, 2])
     w.requires_grad_(True)
     x.requires_grad_(True)

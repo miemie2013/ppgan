@@ -40,12 +40,12 @@ for batch_idx in range(20):
     # dilation = 1
     # groups = 2
 
-    # kernel_size = 3
-    # stride = 1
-    # padding = 1
-    # output_padding = 0
-    # dilation = 1
-    # groups = 2
+    kernel_size = 3
+    stride = 1
+    padding = 1
+    output_padding = 0
+    dilation = 1
+    groups = 1
 
     # kernel_size = 3
     # stride = 2
@@ -54,12 +54,12 @@ for batch_idx in range(20):
     # dilation = 1
     # groups = 1
 
-    kernel_size = 3
-    stride = 2
-    padding = 1
-    output_padding = 0
-    dilation = 1
-    groups = 2
+    # kernel_size = 3
+    # stride = 2
+    # padding = 1
+    # output_padding = 0
+    # dilation = 1
+    # groups = 2
 
     dy_dx_pytorch = dic2['batch_%.3d.dy_dx'%batch_idx]
     dy_dw_pytorch = dic2['batch_%.3d.dy_dw'%batch_idx]
@@ -82,20 +82,20 @@ for batch_idx in range(20):
     # dy_dx = paddle.grad(outputs=[y.sum()], inputs=[x], create_graph=True)[0]
     # dy_dw = paddle.grad(outputs=[y.sum()], inputs=[w], create_graph=True)[0]
     dysum_dy = paddle.ones(y.shape, dtype=paddle.float32)
-    # dy_dx = grad_layer(dysum_dy, y, x=x, weight=w, bias=bias, stride=stride, padding=padding, dilation=dilation, groups=groups)
-    # output_padding = 111
-    # if kernel_size == 1 and stride == 1 and padding == 0:
-    #     output_padding = 0
-    # elif kernel_size == 1 and stride == 2 and padding == 0:
-    #     output_padding = 1
-    # elif kernel_size == 3 and stride == 1 and padding == 0:
-    #     output_padding = 0
-    # elif kernel_size == 3 and stride == 2 and padding == 0:
-    #     output_padding = 1
-    # elif kernel_size == 3 and stride == 1 and padding == 1:
-    #     output_padding = 0
-    # elif kernel_size == 3 and stride == 2 and padding == 1:
-    #     output_padding = 1
+    # dy_dx = grad_layer(dysum_dy, x=x, weight=w, bias=bias, stride=stride, padding=padding, dilation=dilation, groups=groups)
+    output_padding = 111
+    if kernel_size == 1 and stride == 1 and padding == 0:
+        output_padding = 0
+    elif kernel_size == 1 and stride == 2 and padding == 0:
+        output_padding = 1
+    elif kernel_size == 3 and stride == 1 and padding == 0:
+        output_padding = 0
+    elif kernel_size == 3 and stride == 2 and padding == 0:
+        output_padding = 1
+    elif kernel_size == 3 and stride == 1 and padding == 1:
+        output_padding = 0
+    elif kernel_size == 3 and stride == 2 and padding == 1:
+        output_padding = 1
     output_padding = stride - 1
     dy_dx = F.conv2d_transpose(x=dysum_dy, weight=w, bias=bias, stride=stride, padding=padding, output_padding=output_padding, dilation=dilation, groups=groups)
 
@@ -151,8 +151,8 @@ for batch_idx in range(20):
 
     dy_dw = dloss_dW
 
-    aaaaaa = y.numpy()
-    ddd = np.sum((y_pytorch - aaaaaa) ** 2)
+    y_paddle = y.numpy()
+    ddd = np.sum((y_pytorch - y_paddle) ** 2)
     print('ddd=%.6f' % ddd)
 
     dy_dx_paddle = dy_dx.numpy()

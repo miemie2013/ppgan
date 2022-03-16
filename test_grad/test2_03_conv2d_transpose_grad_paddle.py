@@ -9,12 +9,12 @@ import paddle.nn.functional as F
 dic2 = np.load('03_grad.npz')
 for batch_idx in range(20):
     print('======================== batch_%.3d ========================'%batch_idx)
-    kernel_size = 1
-    stride = 1
-    padding = 0
-    output_padding = 0
-    dilation = 1
-    groups = 1
+    # kernel_size = 1
+    # stride = 1
+    # padding = 0
+    # output_padding = 0
+    # dilation = 1
+    # groups = 1
 
     # kernel_size = 1
     # stride = 2
@@ -37,12 +37,12 @@ for batch_idx in range(20):
     # dilation = 1
     # groups = 1
 
-    # kernel_size = 3
-    # stride = 1
-    # padding = 1
-    # output_padding = 0
-    # dilation = 1
-    # groups = 2
+    kernel_size = 3
+    stride = 1
+    padding = 1
+    output_padding = 0
+    dilation = 1
+    groups = 1
 
     # kernel_size = 3
     # stride = 2
@@ -130,8 +130,8 @@ for batch_idx in range(20):
 
     dy_dw = dloss_dW
 
-    aaaaaa = y.numpy()
-    ddd = np.sum((y_pytorch - aaaaaa) ** 2)
+    y_paddle = y.numpy()
+    ddd = np.sum((y_pytorch - y_paddle) ** 2)
     print('ddd=%.6f' % ddd)
 
     dy_dx_paddle = dy_dx.numpy()
