@@ -6,8 +6,8 @@ from ppgan.models.generators.generator_styleganv2ada import StyleGANv2ADA_Synthe
 
 w_dim = 512
 # img_resolution = 512
-# img_resolution = 128
-img_resolution = 32
+img_resolution = 128
+# img_resolution = 32
 img_channels = 3
 channel_base = 32768
 channel_max = 512
@@ -30,8 +30,6 @@ synthesis_cfg = dict(
     conv_clamp=conv_clamp,
 )
 
-batch_size = 2
-w_shape = [batch_size, w_dim]
 lr = 0.0001
 
 model = StyleGANv2ADA_SynthesisNetwork(**synthesis_cfg)
@@ -77,8 +75,8 @@ for batch_idx in range(8):
     print('ddd=%.6f' % ddd)
 
     # 需要强制设置ppgan/models/generators/generator_styleganv2ada.py里的SynthesisLayer的self.use_noise = False，pytorch的也要设置，才会和pytorch输出一样！！！
-    loss = dy_dws.sum() + y.sum()
-    # loss = y.sum()
+    # loss = dy_dws.sum() + y.sum()
+    loss = y.sum()
     loss.backward()
     optimizer.step()
 print('================= last dy_dws =================')

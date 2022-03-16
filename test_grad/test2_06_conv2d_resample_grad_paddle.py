@@ -293,9 +293,10 @@ for batch_idx in range(8):
     ddd = np.mean((dy_dw_pytorch - dy_dw_paddle) ** 2)
     print('ddd=%.6f' % ddd)
 
-    loss = y.sum() + dy_dx.sum() + dy_dw.sum()
+    # loss = y.sum() + dy_dx.sum() + dy_dw.sum()
     # loss = y.sum() + dy_dx.sum()
     # loss = y.sum() + dy_dw.sum()
+    loss = y.sum()
     loss.backward()
     optimizer.step()
     optimizer.clear_gradients()

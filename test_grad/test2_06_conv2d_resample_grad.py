@@ -280,9 +280,10 @@ for batch_idx in range(8):
         dic['batch_%.3d.f'%batch_idx] = f.cpu().detach().numpy()
 
 
-    loss = y.sum() + dy_dx.sum() + dy_dw.sum()
+    # loss = y.sum() + dy_dx.sum() + dy_dw.sum()
     # loss = y.sum() + dy_dx.sum()
     # loss = y.sum() + dy_dw.sum()
+    loss = y.sum()
     loss.backward()
     optimizer.step()
     optimizer.zero_grad(set_to_none=True)
