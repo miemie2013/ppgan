@@ -45,6 +45,15 @@ cd ~/w*
 cp ../data/data128401/styleganv2ada_512_afhqcat.pdparams styleganv2ada_512_afhqcat.pdparams
 
 
+对齐梯度：
+cd ~/w*
+cd convert_weights
+python test2_stylegan2ada_afhqcat32.py
+
+cd ~/w*
+python tools/main.py -c configs/stylegan_v2ada_32_custom.yaml --load styleganv2ada_32_afhqcat.pdparams
+
+
 
 
 训练模型:

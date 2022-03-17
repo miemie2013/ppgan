@@ -93,7 +93,14 @@ for batch_idx in range(8):
     dic['batch_%.3d.output'%batch_idx] = y.cpu().detach().numpy()
     dic['batch_%.3d.input0'%batch_idx] = x.cpu().detach().numpy()
 
-    loss = dy_dx.sum() + y.sum()
+    r1_penalty = dy_dx.square().sum([1, 2, 3])
+    loss_Dr1 = r1_penalty * (10 / 2)
+    loss_Dr1 = loss_Dr1.mean()
+    loss_Gmain = torch.nn.functional.softplus(-y)
+    loss_Gmain = loss_Gmain.mean()
+
+    loss = loss_Dr1 + loss_Gmain
+    # loss = dy_dx.sum() + y.sum()
     # loss = y.sum()
     loss.backward()
     optimizer.step()

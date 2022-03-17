@@ -93,6 +93,9 @@ class StyleGANv2ADAModel(BaseModel):
         self.nets_ema['mapping'] = build_generator(mapping)
         if discriminator:
             self.nets['discriminator'] = build_discriminator(discriminator)
+        self.nets['synthesis'].train()
+        self.nets['mapping'].train()
+        self.nets['discriminator'].train()
         self.c_dim = mapping.c_dim
         self.z_dim = mapping.z_dim
         self.w_dim = mapping.w_dim
@@ -150,10 +153,6 @@ class StyleGANv2ADAModel(BaseModel):
     def forward(self):
         """Run forward pass; called by both functions <optimize_parameters> and <test>."""
         pass
-
-    def _reset_grad(self, optims):
-        for optim in optims.values():
-            optim.clear_gradients()
 
     def run_G(self, z, c, sync):
         ws = self.nets['mapping'](z, c)
@@ -215,16 +214,16 @@ class StyleGANv2ADAModel(BaseModel):
         if do_Gmain:
             gen_img, _gen_ws = self.run_G(gen_z, gen_c, sync=(sync and not do_Gpl)) # May get synced by Gpl.
             if self.align_grad:
-                ddd = np.mean((dic2[phase + 'gen_img'] - gen_img.numpy()) ** 2)
-                print('do_Gmain ddd=%.6f' % ddd)
+                ddd = np.sum((dic2[phase + 'gen_img'] - gen_img.numpy()) ** 2)
+                print('do_Gmain gen_img=%.6f' % ddd)
                 __gen_ws = paddle.stack(_gen_ws, 1)
-                ddd = np.mean((dic2[phase + '_gen_ws'] - __gen_ws.numpy()) ** 2)
-                print('do_Gmain ddd=%.6f' % ddd)
+                ddd = np.sum((dic2[phase + '_gen_ws'] - __gen_ws.numpy()) ** 2)
+                print('do_Gmain __gen_ws=%.6f' % ddd)
 
             gen_logits = self.run_D(gen_img, gen_c, sync=False)
             if self.align_grad:
                 ddd = np.sum((dic2[phase + 'gen_logits'] - gen_logits.numpy()) ** 2)
-                print('do_Gmain ddd=%.6f' % ddd)
+                print('do_Gmain gen_logits=%.6f' % ddd)
 
             loss_Gmain = paddle.nn.functional.softplus(-gen_logits)  # -log(sigmoid(gen_logits))
             loss_Gmain = loss_Gmain.mean()
@@ -238,9 +237,6 @@ class StyleGANv2ADAModel(BaseModel):
         if do_Gpl:
             batch_size = gen_z.shape[0] // self.pl_batch_shrink
             batch_size = max(batch_size, 1)
-            # with misc.ddp_sync(self.G_flownet, sync):
-            #     flow = self.G_flownet(torch.cat((cloth[:batch_size], aff_pose[:batch_size]), dim=1))
-            # warp_cloth = F.grid_sample(cloth[:batch_size, :3, :, :], flow)
 
             gen_c_ = None
             if gen_c is not None:
@@ -248,11 +244,11 @@ class StyleGANv2ADAModel(BaseModel):
 
             gen_img, gen_ws = self.run_G(gen_z[:batch_size], gen_c_, sync=sync)
             if self.align_grad:
-                ddd = np.mean((dic2[phase + 'gen_img'] - gen_img.numpy()) ** 2)
-                print('do_Gpl ddd=%.6f' % ddd)
+                ddd = np.sum((dic2[phase + 'gen_img'] - gen_img.numpy()) ** 2)
+                print('do_Gpl gen_img=%.6f' % ddd)
                 __gen_ws = paddle.stack(gen_ws, 1)
-                ddd = np.mean((dic2[phase + 'gen_ws'] - __gen_ws.numpy()) ** 2)
-                print('do_Gpl ddd=%.6f' % ddd)
+                ddd = np.sum((dic2[phase + 'gen_ws'] - __gen_ws.numpy()) ** 2)
+                print('do_Gpl __gen_ws=%.6f' % ddd)
             if self.align_grad:
                 pl_noise = paddle.ones(gen_img.shape) / np.sqrt(gen_img.shape[2] * gen_img.shape[3])
             else:
@@ -267,10 +263,10 @@ class StyleGANv2ADAModel(BaseModel):
                 aaaaaaaaa2 = pl_grads.numpy()
                 aaaaaaaaa3 = dic2[phase + 'pl_lengths']
                 aaaaaaaaa4 = pl_lengths.numpy()
-                ddd = np.mean((dic2[phase + 'pl_grads'] - pl_grads.numpy()) ** 2)
-                print('do_Gpl ddd=%.6f' % ddd)
-                ddd = np.mean((dic2[phase + 'pl_lengths'] - pl_lengths.numpy()) ** 2)
-                print('do_Gpl ddd=%.6f' % ddd)
+                ddd = np.sum((dic2[phase + 'pl_grads'] - pl_grads.numpy()) ** 2)
+                print('do_Gpl pl_grads=%.6f' % ddd)
+                ddd = np.sum((dic2[phase + 'pl_lengths'] - pl_lengths.numpy()) ** 2)
+                print('do_Gpl pl_lengths=%.6f' % ddd)
 
             pl_mean = self.pl_mean + self.pl_decay * (pl_lengths.mean() - self.pl_mean)
             self.pl_mean.set_value(pl_mean.detach())
@@ -286,16 +282,17 @@ class StyleGANv2ADAModel(BaseModel):
         loss3 = 0.0
         if do_Dmain:
             gen_img, _gen_ws = self.run_G(gen_z, gen_c, sync=False)
+            gen_img.stop_gradient = True   # 训练判别器时，假图片要停止梯度，不能更新生成器的参数。
             if self.align_grad:
-                ddd = np.mean((dic2[phase + 'gen_img'] - gen_img.numpy()) ** 2)
-                print('do_Dmain ddd=%.6f' % ddd)
+                ddd = np.sum((dic2[phase + 'gen_img'] - gen_img.numpy()) ** 2)
+                print('do_Dmain gen_img=%.6f' % ddd)
                 __gen_ws = paddle.stack(_gen_ws, 1)
-                ddd = np.mean((dic2[phase + '_gen_ws'] - __gen_ws.numpy()) ** 2)
-                print('do_Dmain ddd=%.6f' % ddd)
+                ddd = np.sum((dic2[phase + '_gen_ws'] - __gen_ws.numpy()) ** 2)
+                print('do_Dmain __gen_ws=%.6f' % ddd)
             gen_logits = self.run_D(gen_img, gen_c, sync=False) # Gets synced by loss_Dreal.
             if self.align_grad:
-                ddd = np.mean((dic2[phase + 'gen_logits'] - gen_logits.numpy()) ** 2)
-                print('do_Dmain ddd=%.6f' % ddd)
+                ddd = np.sum((dic2[phase + 'gen_logits'] - gen_logits.numpy()) ** 2)
+                print('do_Dmain gen_logits=%.6f' % ddd)
 
             loss_Dgen = paddle.nn.functional.softplus(gen_logits)  # -log(1 - sigmoid(gen_logits))
             loss_Dgen = loss_Dgen.mean()
@@ -312,15 +309,15 @@ class StyleGANv2ADAModel(BaseModel):
             if self.adjust_p and self.augment_pipe is not None:
                 self.Loss_signs_real.append(real_logits.sign().numpy())
             if self.align_grad:
-                ddd = np.mean((dic2[phase + 'real_logits'] - real_logits.numpy()) ** 2)
-                print('do_Dmain or do_Dr1 ddd=%.6f' % ddd)
+                ddd = np.sum((dic2[phase + 'real_logits'] - real_logits.numpy()) ** 2)
+                print('do_Dmain or do_Dr1 real_logits=%.6f' % ddd)
 
             loss_Dreal = 0
             if do_Dmain:
                 loss_Dreal = paddle.nn.functional.softplus(-real_logits) # -log(sigmoid(real_logits))
                 if self.align_grad:
-                    ddd = np.mean((dic2[phase + 'loss_Dreal'] - loss_Dreal.numpy()) ** 2)
-                    print('do_Dmain or do_Dr1 do_Dmain ddd=%.6f' % ddd)
+                    ddd = np.sum((dic2[phase + 'loss_Dreal'] - loss_Dreal.numpy()) ** 2)
+                    print('do_Dmain or do_Dr1 do_Dmain loss_Dreal=%.6f' % ddd)
                 loss_numpy['loss_Dreal'] = loss_Dreal.numpy().mean()
 
             loss_Dr1 = 0
@@ -328,16 +325,15 @@ class StyleGANv2ADAModel(BaseModel):
                 dreal_logitssum_dreal_logits = paddle.ones(real_logits.shape, dtype=paddle.float32)
                 r1_grads = self.run_D_grad(dreal_logitssum_dreal_logits)
                 if self.align_grad:
-                    ddd = np.mean((dic2[phase + 'r1_grads'] - r1_grads.numpy()) ** 2)
-                    print('do_Dmain or do_Dr1 do_Dr1 ddd=%.6f' % ddd)
+                    ddd = np.sum((dic2[phase + 'r1_grads'] - r1_grads.numpy()) ** 2)
+                    print('do_Dmain or do_Dr1 do_Dr1 r1_grads=%.6f' % ddd)
 
                 r1_penalty = r1_grads.square().sum([1, 2, 3])
                 if self.align_grad:
-                    ddd = np.mean((dic2[phase + 'r1_penalty'] - r1_penalty.numpy()) ** 2)
-                    print('do_Dmain or do_Dr1 do_Dr1 ddd=%.6f' % ddd)
+                    ddd = np.sum((dic2[phase + 'r1_penalty'] - r1_penalty.numpy()) ** 2)
+                    print('do_Dmain or do_Dr1 do_Dr1 r1_penalty=%.6f' % ddd)
                 loss_Dr1 = r1_penalty * (self.r1_gamma / 2)
                 loss_numpy['loss_Dr1'] = loss_Dr1.numpy().mean()
-
             loss4 = (loss_Dreal + loss_Dr1).mean() * float(gain)
             if do_Dmain:
                 loss4 += loss3
@@ -352,11 +348,13 @@ class StyleGANv2ADAModel(BaseModel):
         # 对齐梯度用
         dic2 = None
         if self.align_grad:
+            if self.batch_idx == 0:
+                paddle.save(self.nets['discriminator'].state_dict(), 'D_00.pdparams')
             print('======================== batch%.5d.npz ========================'%self.batch_idx)
-            npz_path = 'tools/batch%.5d.npz'%self.batch_idx
+            npz_path = 'batch%.5d.npz'%self.batch_idx
             isDebug = True if sys.gettrace() else False
             if isDebug:
-                npz_path = 'batch%.5d.npz'%self.batch_idx
+                npz_path = '../batch%.5d.npz'%self.batch_idx
             dic2 = np.load(npz_path)
             aaaaaaaaa = dic2['phase_real_img']
             phase_real_img = paddle.to_tensor(aaaaaaaaa)
@@ -403,13 +401,20 @@ class StyleGANv2ADAModel(BaseModel):
                 continue
 
             # Initialize gradient accumulation.  咩酱：初始化梯度累加（变相增大批大小）。
-            self._reset_grad(optimizers)  # 梯度清0
             if 'G' in phase['name']:
+                optimizers['generator'].clear_gradients()
                 for name, param in self.nets['synthesis'].named_parameters():
                     param.stop_gradient = False
                 for name, param in self.nets['mapping'].named_parameters():
                     param.stop_gradient = False
+                for name, param in self.nets['discriminator'].named_parameters():
+                    param.stop_gradient = True
             elif 'D' in phase['name']:
+                optimizers['discriminator'].clear_gradients()
+                for name, param in self.nets['synthesis'].named_parameters():
+                    param.stop_gradient = True
+                for name, param in self.nets['mapping'].named_parameters():
+                    param.stop_gradient = True
                 for name, param in self.nets['discriminator'].named_parameters():
                     param.stop_gradient = False
 
@@ -433,14 +438,12 @@ class StyleGANv2ADAModel(BaseModel):
             #         misc.nan_to_num(param.grad, nan=0, posinf=1e5, neginf=-1e5, out=param.grad)
             if 'G' in phase['name']:
                 optimizers['generator'].step()  # 更新参数
-                for name, param in self.nets['synthesis'].named_parameters():
-                    param.stop_gradient = True
-                for name, param in self.nets['mapping'].named_parameters():
-                    param.stop_gradient = True
             elif 'D' in phase['name']:
                 optimizers['discriminator'].step()  # 更新参数
-                for name, param in self.nets['discriminator'].named_parameters():
-                    param.stop_gradient = True
+
+        if self.align_grad:
+            if self.batch_idx == 19:
+                paddle.save(self.nets['discriminator'].state_dict(), 'D_19.pdparams')
 
 
         # compute moving average of network parameters。指数滑动平均

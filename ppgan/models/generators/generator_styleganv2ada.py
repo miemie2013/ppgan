@@ -2535,12 +2535,6 @@ class StyleGANv2ADA_AugmentPipe(nn.Layer):
 
 
 def pad_reflect_grad(dloss_dout, mx0, mx1, my0, my1):
-    print('rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr')
-    print(mx0)
-    print(mx1)
-    print(my0)
-    print(my1)
-    print()
     dloss_dx = dloss_dout[:, :, my0:-my1, mx0:-mx1]
 
     if mx0 > 0:

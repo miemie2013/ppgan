@@ -110,7 +110,14 @@ for batch_idx in range(8):
     ddd = np.mean((dy_dx_pytorch - dy_dx_paddle) ** 2)
     print('ddd=%.6f' % ddd)
 
-    loss = dy_dx.sum() + y.sum()
+    r1_penalty = dy_dx.square().sum([1, 2, 3])
+    loss_Dr1 = r1_penalty * (10 / 2)
+    loss_Dr1 = loss_Dr1.mean()
+    loss_Gmain = paddle.nn.functional.softplus(-y)
+    loss_Gmain = loss_Gmain.mean()
+
+    loss = loss_Dr1 + loss_Gmain
+    # loss = dy_dx.sum() + y.sum()
     # loss = y.sum()
     loss.backward()
     optimizer.step()
