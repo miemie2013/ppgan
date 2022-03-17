@@ -171,7 +171,6 @@ class StyleGANv2ADAModel(BaseModel):
             cond = paddle.rand([1, ], dtype='float32') < self.style_mixing_prob
             cutoff = paddle.where(cond, cutoff_, paddle.full_like(cutoff_, num_vector))
             cutoff.stop_gradient = True
-            # ws[:, cutoff:] = self.nets['mapping'](paddle.randn(z.shape), c, skip_w_avg_update=True)[:, cutoff:]
             if cutoff == num_vector:
                 pass
             else:
@@ -189,7 +188,6 @@ class StyleGANv2ADAModel(BaseModel):
     def run_D(self, img, c, sync):
         if self.augment_pipe is not None:
             img = self.augment_pipe(img)
-
         logits = self.nets['discriminator'](img, c)
         return logits
 
@@ -217,9 +215,8 @@ class StyleGANv2ADAModel(BaseModel):
             # if self.align_grad:
             #     ddd = np.sum((dic2[phase + 'gen_img'] - gen_img.numpy()) ** 2)
             #     print('do_Gmain gen_img=%.6f' % ddd)
-            #     __gen_ws = paddle.stack(_gen_ws, 1)
-            #     ddd = np.sum((dic2[phase + '_gen_ws'] - __gen_ws.numpy()) ** 2)
-            #     print('do_Gmain __gen_ws=%.6f' % ddd)
+            #     ddd = np.sum((dic2[phase + '_gen_ws'] - _gen_ws.numpy()) ** 2)
+            #     print('do_Gmain _gen_ws=%.6f' % ddd)
 
             gen_logits = self.run_D(gen_img, gen_c, sync=False)
             # if self.align_grad:
@@ -247,9 +244,8 @@ class StyleGANv2ADAModel(BaseModel):
             # if self.align_grad:
             #     ddd = np.sum((dic2[phase + 'gen_img'] - gen_img.numpy()) ** 2)
             #     print('do_Gpl gen_img=%.6f' % ddd)
-            #     __gen_ws = paddle.stack(gen_ws, 1)
-            #     ddd = np.sum((dic2[phase + 'gen_ws'] - __gen_ws.numpy()) ** 2)
-            #     print('do_Gpl __gen_ws=%.6f' % ddd)
+            #     ddd = np.sum((dic2[phase + 'gen_ws'] - gen_ws.numpy()) ** 2)
+            #     print('do_Gpl gen_ws=%.6f' % ddd)
             pl_noise = paddle.randn(gen_img.shape) / np.sqrt(gen_img.shape[2] * gen_img.shape[3])
             # pl_noise = paddle.ones(gen_img.shape) / np.sqrt(gen_img.shape[2] * gen_img.shape[3])
             dgen_img_dgen_img = paddle.ones(gen_img.shape, dtype=paddle.float32)
@@ -285,9 +281,8 @@ class StyleGANv2ADAModel(BaseModel):
             # if self.align_grad:
             #     ddd = np.sum((dic2[phase + 'gen_img'] - gen_img.numpy()) ** 2)
             #     print('do_Dmain gen_img=%.6f' % ddd)
-            #     __gen_ws = paddle.stack(_gen_ws, 1)
-            #     ddd = np.sum((dic2[phase + '_gen_ws'] - __gen_ws.numpy()) ** 2)
-            #     print('do_Dmain __gen_ws=%.6f' % ddd)
+            #     ddd = np.sum((dic2[phase + '_gen_ws'] - _gen_ws.numpy()) ** 2)
+            #     print('do_Dmain _gen_ws=%.6f' % ddd)
             gen_logits = self.run_D(gen_img, gen_c, sync=False) # Gets synced by loss_Dreal.
             # if self.align_grad:
             #     ddd = np.sum((dic2[phase + 'gen_logits'] - gen_logits.numpy()) ** 2)
