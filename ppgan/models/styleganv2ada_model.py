@@ -166,12 +166,7 @@ class StyleGANv2ADAModel(BaseModel):
     def run_G(self, z, c, sync):
         ws = self.nets['mapping'](z, c)
         if self.style_mixing_prob > 0:
-            # cutoff = torch.empty([], dtype=torch.int64, device=ws.device).random_(1, ws.shape[1])
-            # cutoff = torch.where(torch.rand([], device=ws.device) < self.style_mixing_prob, cutoff, torch.full_like(cutoff, ws.shape[1]))
-            # ws[:, cutoff:] = self.G_mapping(torch.randn_like(z), c, skip_w_avg_update=True)[:, cutoff:]
-
-            # num_vector = ws.shape[1]
-            num_vector = len(ws)
+            num_vector = self.num_ws
             cutoff_ = paddle.randint(low=1, high=num_vector, shape=[1, ], dtype='int64')
             cond = paddle.rand([1, ], dtype='float32') < self.style_mixing_prob
             cutoff = paddle.where(cond, cutoff_, paddle.full_like(cutoff_, num_vector))
@@ -180,11 +175,9 @@ class StyleGANv2ADAModel(BaseModel):
             if cutoff == num_vector:
                 pass
             else:
-                cutoff_numpy = cutoff.numpy()[0]
-                temp = self.nets['mapping'](paddle.randn(z.shape), c, skip_w_avg_update=True)[cutoff_numpy:]
-                temp2 = ws[:cutoff_numpy]
-                # ws = paddle.concat([temp2, temp], 1)
-                ws = temp2 + temp
+                temp = self.nets['mapping'](paddle.randn(z.shape), c, skip_w_avg_update=True)[:, cutoff:]
+                temp2 = ws[:, :cutoff]
+                ws = paddle.concat([temp2, temp], 1)
         img = self.nets['synthesis'](ws)
         return img, ws
 
@@ -523,16 +516,12 @@ class StyleGANv2ADAModel(BaseModel):
         noise_mode = 'const'
         truncation_psi = 1.0
         all_w = self.nets_ema['mapping'](all_z, None)
-        all_w = paddle.stack(all_w, 1)
         w_avg = self.nets_ema['mapping'].w_avg
         all_w = w_avg + (all_w - w_avg) * truncation_psi
         w_dict = {seed: w for seed, w in zip(all_seeds, list(all_w))}
 
         # print('Generating images...')
-        all_w_list = []
-        for j in range(self.num_ws):
-            all_w_list.append(all_w[:, j, :])
-        all_images = self.nets_ema['synthesis'](all_w_list, noise_mode=noise_mode)
+        all_images = self.nets_ema['synthesis'](all_w, noise_mode=noise_mode)
         all_images = (paddle.transpose(all_images, (0, 2, 3, 1)) * 127.5 + 128)
         all_images = paddle.clip(all_images, 0, 255)
         all_images = paddle.cast(all_images, dtype=paddle.uint8)
@@ -545,10 +534,7 @@ class StyleGANv2ADAModel(BaseModel):
                 w = w_dict[row_seed].clone()
                 w[col_styles] = w_dict[col_seed][col_styles]
                 w = paddle.unsqueeze(w, 0)
-                w_list = []
-                for j in range(self.num_ws):
-                    w_list.append(w[:, j, :])
-                image = self.nets_ema['synthesis'](w_list, noise_mode=noise_mode)
+                image = self.nets_ema['synthesis'](w, noise_mode=noise_mode)
                 image = (paddle.transpose(image, (0, 2, 3, 1)) * 127.5 + 128)
                 image = paddle.clip(image, 0, 255)
                 image = paddle.cast(image, dtype=paddle.uint8)

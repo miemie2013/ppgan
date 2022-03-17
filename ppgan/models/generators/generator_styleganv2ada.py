@@ -249,6 +249,11 @@ def _conv2d_wrapper(x, w, stride=1, padding=0, groups=1, transpose=False, flip_w
         out = F.conv2d(x, weight=w, bias=None, stride=stride, padding=padding, dilation=1, groups=groups)
         return out
 
+
+conv2d_grad_kerner_pos_cache = dict()
+conv2d_transpose_grad_kerner_pos_cache = dict()
+
+
 def _conv2d_wrapper_grad(dloss_dout, x, w, stride=1, padding=0, groups=1, transpose=False, flip_weight=True):
     """Wrapper for the underlying `conv2d()` and `conv_transpose2d()` implementations.
     """
@@ -353,6 +358,8 @@ def _conv2d_wrapper_grad(dloss_dout, x, w, stride=1, padding=0, groups=1, transp
 
         if isinstance(padding, int):
             pad_dloss_dy = F.pad(dloss_dout, [padding, padding, padding, padding])  # [N, in_C, pad_H, pad_W]
+            padding_h = padding
+            padding_w = padding
         elif isinstance(padding, list):
             if len(padding) == 2:
                 padding_h = padding[0]
@@ -363,32 +370,33 @@ def _conv2d_wrapper_grad(dloss_dout, x, w, stride=1, padding=0, groups=1, transp
         else:
             raise NotImplementedError("not implemented.")
         N, out_C, pad_H, pad_W = pad_dloss_dy.shape
-        pad_dloss_dy = paddle.transpose(pad_dloss_dy,
-                                        [2, 3, 0, 1])  # [N, out_C, pad_H, pad_W] -> [pad_H, pad_W, N, out_C]
+        pad_dloss_dy = paddle.transpose(pad_dloss_dy, [2, 3, 0, 1])  # [N, out_C, pad_H, pad_W] -> [pad_H, pad_W, N, out_C]
         pad_dloss_dy = paddle.reshape(pad_dloss_dy, (pad_H, pad_W, N, g, oc))  # [pad_H, pad_W, N, g, oc]
-        kerner_center_y, kerner_center_x = paddle.meshgrid([paddle.arange(in_H), paddle.arange(in_W)])
-        kerner_center_y = kerner_center_y * stride + (kH - 1) // 2
-        kerner_center_x = kerner_center_x * stride + (kW - 1) // 2
         assert kH == kW
-        if kH == 3:
-            kerner_center_yx_00 = paddle.stack((kerner_center_y - 1, kerner_center_x - 1), 2).cast(dtype='int32')
-            kerner_center_yx_01 = paddle.stack((kerner_center_y - 1, kerner_center_x), 2).cast(dtype='int32')
-            kerner_center_yx_02 = paddle.stack((kerner_center_y - 1, kerner_center_x + 1), 2).cast(dtype='int32')
-            kerner_center_yx_10 = paddle.stack((kerner_center_y, kerner_center_x - 1), 2).cast(dtype='int32')
-            kerner_center_yx_11 = paddle.stack((kerner_center_y, kerner_center_x), 2).cast(dtype='int32')
-            kerner_center_yx_12 = paddle.stack((kerner_center_y, kerner_center_x + 1), 2).cast(dtype='int32')
-            kerner_center_yx_20 = paddle.stack((kerner_center_y + 1, kerner_center_x - 1), 2).cast(dtype='int32')
-            kerner_center_yx_21 = paddle.stack((kerner_center_y + 1, kerner_center_x), 2).cast(dtype='int32')
-            kerner_center_yx_22 = paddle.stack((kerner_center_y + 1, kerner_center_x + 1), 2).cast(dtype='int32')
-            kerner_pos_yx = paddle.stack((kerner_center_yx_00, kerner_center_yx_01, kerner_center_yx_02,
-                                          kerner_center_yx_10, kerner_center_yx_11, kerner_center_yx_12,
-                                          kerner_center_yx_20, kerner_center_yx_21, kerner_center_yx_22),
-                                         0)  # [kH*kW, in_H, in_W, 2]
-        elif kH == 1:
-            kerner_center_yx_00 = paddle.stack((kerner_center_y, kerner_center_x), 2).cast(dtype='int32')
-            kerner_pos_yx = paddle.unsqueeze(kerner_center_yx_00, 0)  # [kH*kW, in_H, in_W, 2]
-        else:
-            raise NotImplementedError("kH \'{}\' is not implemented.".format(kH))
+        key = (kH, kW, in_H, in_W, stride, padding_h, padding_w, groups)
+        kerner_pos_yx = conv2d_transpose_grad_kerner_pos_cache.get(key, None)
+        if kerner_pos_yx is None:
+            kerner_center_y, kerner_center_x = paddle.meshgrid([paddle.arange(in_H), paddle.arange(in_W)])
+            kerner_center_y = kerner_center_y * stride + (kH - 1) // 2
+            kerner_center_x = kerner_center_x * stride + (kW - 1) // 2
+            if kH == 3:
+                kerner_center_yx_00 = paddle.stack((kerner_center_y - 1, kerner_center_x - 1), 2).cast(dtype='int32')
+                kerner_center_yx_01 = paddle.stack((kerner_center_y - 1, kerner_center_x), 2).cast(dtype='int32')
+                kerner_center_yx_02 = paddle.stack((kerner_center_y - 1, kerner_center_x + 1), 2).cast(dtype='int32')
+                kerner_center_yx_10 = paddle.stack((kerner_center_y, kerner_center_x - 1), 2).cast(dtype='int32')
+                kerner_center_yx_11 = paddle.stack((kerner_center_y, kerner_center_x), 2).cast(dtype='int32')
+                kerner_center_yx_12 = paddle.stack((kerner_center_y, kerner_center_x + 1), 2).cast(dtype='int32')
+                kerner_center_yx_20 = paddle.stack((kerner_center_y + 1, kerner_center_x - 1), 2).cast(dtype='int32')
+                kerner_center_yx_21 = paddle.stack((kerner_center_y + 1, kerner_center_x), 2).cast(dtype='int32')
+                kerner_center_yx_22 = paddle.stack((kerner_center_y + 1, kerner_center_x + 1), 2).cast(dtype='int32')
+                kerner_pos_yx = paddle.stack((kerner_center_yx_00, kerner_center_yx_01, kerner_center_yx_02,
+                                              kerner_center_yx_10, kerner_center_yx_11, kerner_center_yx_12,
+                                              kerner_center_yx_20, kerner_center_yx_21, kerner_center_yx_22), 0)  # [kH*kW, in_H, in_W, 2]
+            elif kH == 1:
+                kerner_center_yx_00 = paddle.stack((kerner_center_y, kerner_center_x), 2).cast(dtype='int32')
+                kerner_pos_yx = paddle.unsqueeze(kerner_center_yx_00, 0)  # [kH*kW, in_H, in_W, 2]
+            else:
+                raise NotImplementedError("kH \'{}\' is not implemented.".format(kH))
         kerner_pos_yx = paddle.reshape(kerner_pos_yx, (-1, 2))  # [kH*kW, in_H, in_W, 2] -> [kH*kW*in_H*in_W, 2]
         kerner_pos_yx.stop_gradient = True
         dloss_dY = paddle.gather_nd(pad_dloss_dy, kerner_pos_yx)  # [pad_H, pad_W, N, g, oc] -> [kH*kW*in_H*in_W, N, g, oc]
@@ -427,6 +435,8 @@ def _conv2d_wrapper_grad(dloss_dout, x, w, stride=1, padding=0, groups=1, transp
         oc = out_C // g
         if isinstance(padding, int):
             pad_x = F.pad(x, [padding, padding, padding, padding])  # [N, in_C, pad_H, pad_W]
+            padding_h = padding
+            padding_w = padding
         elif isinstance(padding, list):
             if len(padding) == 2:
                 padding_h = padding[0]
@@ -439,29 +449,32 @@ def _conv2d_wrapper_grad(dloss_dout, x, w, stride=1, padding=0, groups=1, transp
         N, in_C, pad_H, pad_W = pad_x.shape
         pad_x = paddle.transpose(pad_x, [2, 3, 0, 1])  # [N, in_C, pad_H, pad_W] -> [pad_H, pad_W, N, in_C]
         pad_x = paddle.reshape(pad_x, (pad_H, pad_W, N, g, c))  # [pad_H, pad_W, N, g, c]
-        kerner_center_y, kerner_center_x = paddle.meshgrid([paddle.arange(out_H), paddle.arange(out_W)])
-        kerner_center_y = kerner_center_y * stride + (kH - 1) // 2
-        kerner_center_x = kerner_center_x * stride + (kW - 1) // 2
         assert kH == kW
-        if kH == 3:
-            kerner_center_yx_00 = paddle.stack((kerner_center_y - 1, kerner_center_x - 1), 2).cast(dtype='int32')
-            kerner_center_yx_01 = paddle.stack((kerner_center_y - 1, kerner_center_x), 2).cast(dtype='int32')
-            kerner_center_yx_02 = paddle.stack((kerner_center_y - 1, kerner_center_x + 1), 2).cast(dtype='int32')
-            kerner_center_yx_10 = paddle.stack((kerner_center_y, kerner_center_x - 1), 2).cast(dtype='int32')
-            kerner_center_yx_11 = paddle.stack((kerner_center_y, kerner_center_x), 2).cast(dtype='int32')
-            kerner_center_yx_12 = paddle.stack((kerner_center_y, kerner_center_x + 1), 2).cast(dtype='int32')
-            kerner_center_yx_20 = paddle.stack((kerner_center_y + 1, kerner_center_x - 1), 2).cast(dtype='int32')
-            kerner_center_yx_21 = paddle.stack((kerner_center_y + 1, kerner_center_x), 2).cast(dtype='int32')
-            kerner_center_yx_22 = paddle.stack((kerner_center_y + 1, kerner_center_x + 1), 2).cast(dtype='int32')
-            kerner_pos_yx = paddle.stack((kerner_center_yx_00, kerner_center_yx_01, kerner_center_yx_02,
-                                          kerner_center_yx_10, kerner_center_yx_11, kerner_center_yx_12,
-                                          kerner_center_yx_20, kerner_center_yx_21, kerner_center_yx_22),
-                                         0)  # [kH*kW, out_H, out_W, 2]
-        elif kH == 1:
-            kerner_center_yx_00 = paddle.stack((kerner_center_y, kerner_center_x), 2).cast(dtype='int32')
-            kerner_pos_yx = paddle.unsqueeze(kerner_center_yx_00, 0)  # [kH*kW, out_H, out_W, 2]
-        else:
-            raise NotImplementedError("kH \'{}\' is not implemented.".format(kH))
+        key = (kH, kW, out_H, out_W, stride, padding_h, padding_w, groups)
+        kerner_pos_yx = conv2d_grad_kerner_pos_cache.get(key, None)
+        if kerner_pos_yx is None:
+            kerner_center_y, kerner_center_x = paddle.meshgrid([paddle.arange(out_H), paddle.arange(out_W)])
+            kerner_center_y = kerner_center_y * stride + (kH - 1) // 2
+            kerner_center_x = kerner_center_x * stride + (kW - 1) // 2
+            if kH == 3:
+                kerner_center_yx_00 = paddle.stack((kerner_center_y - 1, kerner_center_x - 1), 2).cast(dtype='int32')
+                kerner_center_yx_01 = paddle.stack((kerner_center_y - 1, kerner_center_x), 2).cast(dtype='int32')
+                kerner_center_yx_02 = paddle.stack((kerner_center_y - 1, kerner_center_x + 1), 2).cast(dtype='int32')
+                kerner_center_yx_10 = paddle.stack((kerner_center_y, kerner_center_x - 1), 2).cast(dtype='int32')
+                kerner_center_yx_11 = paddle.stack((kerner_center_y, kerner_center_x), 2).cast(dtype='int32')
+                kerner_center_yx_12 = paddle.stack((kerner_center_y, kerner_center_x + 1), 2).cast(dtype='int32')
+                kerner_center_yx_20 = paddle.stack((kerner_center_y + 1, kerner_center_x - 1), 2).cast(dtype='int32')
+                kerner_center_yx_21 = paddle.stack((kerner_center_y + 1, kerner_center_x), 2).cast(dtype='int32')
+                kerner_center_yx_22 = paddle.stack((kerner_center_y + 1, kerner_center_x + 1), 2).cast(dtype='int32')
+                kerner_pos_yx = paddle.stack((kerner_center_yx_00, kerner_center_yx_01, kerner_center_yx_02,
+                                              kerner_center_yx_10, kerner_center_yx_11, kerner_center_yx_12,
+                                              kerner_center_yx_20, kerner_center_yx_21, kerner_center_yx_22),
+                                             0)  # [kH*kW, out_H, out_W, 2]
+            elif kH == 1:
+                kerner_center_yx_00 = paddle.stack((kerner_center_y, kerner_center_x), 2).cast(dtype='int32')
+                kerner_pos_yx = paddle.unsqueeze(kerner_center_yx_00, 0)  # [kH*kW, out_H, out_W, 2]
+            else:
+                raise NotImplementedError("kH \'{}\' is not implemented.".format(kH))
         kerner_pos_yx = paddle.reshape(kerner_pos_yx, (-1, 2))  # [kH*kW, out_H, out_W, 2] -> [kH*kW*out_H*out_W, 2]
         kerner_pos_yx.stop_gradient = True
         dY_dW = paddle.gather_nd(pad_x, kerner_pos_yx)  # [pad_H, pad_W, N, g, c] -> [kH*kW*out_H*out_W, N, g, c]
@@ -1275,13 +1288,7 @@ class StyleGANv2ADA_MappingNetwork(nn.Layer):
 
         # Broadcast.
         if self.num_ws is not None:
-            # x = x.unsqueeze(1).tile([1, self.num_ws, 1])
-            new_x = []
-            for j in range(self.num_ws):
-                new_x.append(x.clone())
-                # new_x.append(x.unsqueeze(1).clone())
-            # new_x = paddle.concat(new_x, 1)
-            x = new_x
+            x = x.unsqueeze(1).tile([1, self.num_ws, 1])
 
         # Apply truncation.
         if truncation_psi != 1:
@@ -1832,20 +1839,6 @@ class StyleGANv2ADA_SynthesisNetwork(nn.Layer):
         self.grad_layer.num_ws = self.num_ws
 
     def forward(self, ws, **block_kwargs):
-        # block_ws = []
-        # ws = paddle.cast(ws, dtype='float32')
-        # w_idx = 0
-        # for res in self.block_resolutions:
-        #     block = getattr(self, f'b{res}')
-        #     # block_ws.append(ws.narrow(1, w_idx, block.num_conv + block.num_torgb))
-        #     block_ws.append(ws[:, w_idx:w_idx + block.num_conv + block.num_torgb, :])
-        #     w_idx += block.num_conv
-        #
-        # x = img = None
-        # for res, cur_ws in zip(self.block_resolutions, block_ws):
-        #     block = getattr(self, f'b{res}')
-        #     x, img = block(x, img, cur_ws, **block_kwargs)
-
         fused_modconv = False
         self.grad_layer.fused_modconv = fused_modconv
         layer_kwargs = {}
@@ -1854,8 +1847,7 @@ class StyleGANv2ADA_SynthesisNetwork(nn.Layer):
         i = 0
         conv_i = 0
         torgb_i = 0
-        # batch_size = ws.shape[0]
-        batch_size = ws[0].shape[0]
+        batch_size = ws.shape[0]
         self.start_i = []
         self.end_i = []
         for block_idx, res in enumerate(self.block_resolutions):
@@ -1873,7 +1865,7 @@ class StyleGANv2ADA_SynthesisNetwork(nn.Layer):
             self.start_i.append(i)
             # Main layers.
             if in_channels == 0:
-                x2 = self.convs[conv_i](x1, ws[i], fused_modconv=fused_modconv, **layer_kwargs)
+                x2 = self.convs[conv_i](x1, ws[:, i, :], fused_modconv=fused_modconv, **layer_kwargs)
                 conv_i += 1
                 i += 1
             # elif self.architecture == 'resnet':
@@ -1882,10 +1874,10 @@ class StyleGANv2ADA_SynthesisNetwork(nn.Layer):
             #     x = self.conv1(x, ws[:, i + 1], fused_modconv=fused_modconv, gain=np.sqrt(0.5), **layer_kwargs)
             #     x = y.add_(x)
             else:
-                x1 = self.convs[conv_i](x0, ws[i], fused_modconv=fused_modconv, **layer_kwargs)
+                x1 = self.convs[conv_i](x0, ws[:, i, :], fused_modconv=fused_modconv, **layer_kwargs)
                 i += 1
                 conv_i += 1
-                x2 = self.convs[conv_i](x1, ws[i], fused_modconv=fused_modconv, **layer_kwargs)
+                x2 = self.convs[conv_i](x1, ws[:, i, :], fused_modconv=fused_modconv, **layer_kwargs)
                 i += 1
                 conv_i += 1
 
@@ -1896,7 +1888,7 @@ class StyleGANv2ADA_SynthesisNetwork(nn.Layer):
                 setattr(self.grad_layer, f"upsample2d_input_{block_idx}", img)
                 img = upsample2d(img, resample_filter)
             if is_last or architecture == 'skip':
-                y = self.torgbs[torgb_i](x2, ws[i], fused_modconv=fused_modconv)
+                y = self.torgbs[torgb_i](x2, ws[:, i, :], fused_modconv=fused_modconv)
                 self.end_i.append(i)
                 torgb_i += 1
                 img = img + y if img is not None else y

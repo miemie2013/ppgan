@@ -6,8 +6,8 @@ from ppgan.models.generators.generator_styleganv2ada import StyleGANv2ADA_Synthe
 
 w_dim = 512
 # img_resolution = 512
-img_resolution = 128
-# img_resolution = 32
+# img_resolution = 128
+img_resolution = 32
 img_channels = 3
 channel_base = 32768
 channel_max = 512
@@ -42,16 +42,11 @@ dic2 = np.load('53.npz')
 for batch_idx in range(8):
     print('======================== batch_%.3d ========================'%batch_idx)
     optimizer.clear_gradients()
-    ws_ = dic2['batch_%.3d.input1'%batch_idx]
+    ws = dic2['batch_%.3d.input1'%batch_idx]
     y_pytorch = dic2['batch_%.3d.output'%batch_idx]
     dy_dws_pytorch = dic2['batch_%.3d.dy_dws'%batch_idx]
-
-    ws = []
-    for kkk in range(model.num_ws):
-        aaaaaaaaaaa = ws_[:, kkk, :]
-        aaaaaaaaaaa = paddle.to_tensor(aaaaaaaaaaa)
-        aaaaaaaaaaa.stop_gradient = False
-        ws.append(aaaaaaaaaaa)
+    ws = paddle.to_tensor(ws)
+    ws.stop_gradient = False
     y = model(ws)
 
     # dy_dws_list = paddle.grad(outputs=[y.sum()], inputs=ws, create_graph=True)
@@ -75,8 +70,8 @@ for batch_idx in range(8):
     print('ddd=%.6f' % ddd)
 
     # 需要强制设置ppgan/models/generators/generator_styleganv2ada.py里的SynthesisLayer的self.use_noise = False，pytorch的也要设置，才会和pytorch输出一样！！！
-    # loss = dy_dws.sum() + y.sum()
-    loss = y.sum()
+    loss = dy_dws.sum() + y.sum()
+    # loss = y.sum()
     loss.backward()
     optimizer.step()
 print('================= last dy_dws =================')

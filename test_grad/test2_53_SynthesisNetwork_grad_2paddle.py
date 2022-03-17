@@ -6,8 +6,8 @@ from ppgan.models.generators.generator_styleganv2ada import StyleGANv2ADA_Synthe
 
 w_dim = 512
 # img_resolution = 512
-img_resolution = 128
-# img_resolution = 32
+# img_resolution = 128
+img_resolution = 32
 img_channels = 3
 channel_base = 32768
 channel_max = 512
