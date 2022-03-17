@@ -117,8 +117,9 @@ class StyleGANv2ADAModel(BaseModel):
 
         # loss config.
         self.augment_pipe = build_generator(augment_pipe)
-        # self.augment_pipe = None
         self.style_mixing_prob = style_mixing_prob
+        # self.augment_pipe = None
+        # self.style_mixing_prob = -1.0
         self.r1_gamma = r1_gamma
         self.pl_batch_shrink = pl_batch_shrink
         self.pl_decay = pl_decay
@@ -156,7 +157,6 @@ class StyleGANv2ADAModel(BaseModel):
 
     def run_G(self, z, c, sync):
         ws = self.nets['mapping'](z, c)
-        # self.style_mixing_prob = -1.0
         if self.style_mixing_prob > 0:
             # cutoff = torch.empty([], dtype=torch.int64, device=ws.device).random_(1, ws.shape[1])
             # cutoff = torch.where(torch.rand([], device=ws.device) < self.style_mixing_prob, cutoff, torch.full_like(cutoff, ws.shape[1]))
