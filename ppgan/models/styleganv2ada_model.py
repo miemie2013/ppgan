@@ -134,7 +134,9 @@ class StyleGANv2ADAModel(BaseModel):
         self.ada_interval = ada_interval
         self.adjust_p = False   # 是否调整augment_pipe的p
         if self.augment_pipe is not None and (self.augment_p > 0 or self.ada_target is not None):
-            self.augment_pipe.p.stop_gradient = True
+            self.augment_pipe.train()
+            for param_name, param in self.augment_pipe.named_parameters():
+                param.stop_gradient = True
             self.augment_pipe.p.set_value(paddle.to_tensor(self.augment_p))
             if self.ada_target is not None:
                 self.adjust_p = True
