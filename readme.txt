@@ -22,10 +22,11 @@ F.grid_sample()没有实现二阶梯度
 paddle.gather_nd()没有实现二阶梯度，所以暂时不能复现self.augment_pipe
 
 
-# 解压AFHQ数据集
+# 安装依赖
 cd ~/w*
 pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
 
+# 解压AFHQ数据集
 nvidia-smi
 cd ~
 cd data
@@ -40,7 +41,16 @@ cd data130402
 unzip dog_128.zip
 cd ~/w*
 
+动漫头像数据集：
+nvidia-smi
+cd ~
+cd data
+cd data110820
+unzip faces.zip
+cd ~/w*
 
+
+复制预训练权重：
 cd ~/w*
 cp ../data/data128401/styleganv2ada_512_afhqcat.pdparams styleganv2ada_512_afhqcat.pdparams
 
@@ -102,6 +112,9 @@ python tools/main.py -c configs/stylegan_v2ada_512_afhqcat.yaml
 训练模型（迁移学习）:
 cd ~/w*
 python tools/main.py -c configs/stylegan_v2ada_512_afhqcat.yaml --load styleganv2ada_512_afhqcat.pdparams
+
+cd ~/w*
+python tools/main.py -c configs/stylegan_v2ada_256_custom.yaml --load styleganv2ada_512_afhqcat.pdparams
 
 cd ~/w*
 python tools/main.py -c configs/stylegan_v2ada_128_custom.yaml --load styleganv2ada_512_afhqcat.pdparams
