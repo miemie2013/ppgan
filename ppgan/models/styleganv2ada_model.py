@@ -213,17 +213,17 @@ class StyleGANv2ADAModel(BaseModel):
         # Gmain: Maximize logits for generated images.
         if do_Gmain:
             gen_img, _gen_ws = self.run_G(gen_z, gen_c, sync=(sync and not do_Gpl)) # May get synced by Gpl.
-            if self.align_grad:
-                ddd = np.sum((dic2[phase + 'gen_img'] - gen_img.numpy()) ** 2)
-                print('do_Gmain gen_img=%.6f' % ddd)
-                __gen_ws = paddle.stack(_gen_ws, 1)
-                ddd = np.sum((dic2[phase + '_gen_ws'] - __gen_ws.numpy()) ** 2)
-                print('do_Gmain __gen_ws=%.6f' % ddd)
+            # if self.align_grad:
+            #     ddd = np.sum((dic2[phase + 'gen_img'] - gen_img.numpy()) ** 2)
+            #     print('do_Gmain gen_img=%.6f' % ddd)
+            #     __gen_ws = paddle.stack(_gen_ws, 1)
+            #     ddd = np.sum((dic2[phase + '_gen_ws'] - __gen_ws.numpy()) ** 2)
+            #     print('do_Gmain __gen_ws=%.6f' % ddd)
 
             gen_logits = self.run_D(gen_img, gen_c, sync=False)
-            if self.align_grad:
-                ddd = np.sum((dic2[phase + 'gen_logits'] - gen_logits.numpy()) ** 2)
-                print('do_Gmain gen_logits=%.6f' % ddd)
+            # if self.align_grad:
+            #     ddd = np.sum((dic2[phase + 'gen_logits'] - gen_logits.numpy()) ** 2)
+            #     print('do_Gmain gen_logits=%.6f' % ddd)
 
             loss_Gmain = paddle.nn.functional.softplus(-gen_logits)  # -log(sigmoid(gen_logits))
             loss_Gmain = loss_Gmain.mean()
@@ -243,30 +243,28 @@ class StyleGANv2ADAModel(BaseModel):
                 gen_c_ = gen_c[:batch_size]
 
             gen_img, gen_ws = self.run_G(gen_z[:batch_size], gen_c_, sync=sync)
-            if self.align_grad:
-                ddd = np.sum((dic2[phase + 'gen_img'] - gen_img.numpy()) ** 2)
-                print('do_Gpl gen_img=%.6f' % ddd)
-                __gen_ws = paddle.stack(gen_ws, 1)
-                ddd = np.sum((dic2[phase + 'gen_ws'] - __gen_ws.numpy()) ** 2)
-                print('do_Gpl __gen_ws=%.6f' % ddd)
-            if self.align_grad:
-                pl_noise = paddle.ones(gen_img.shape) / np.sqrt(gen_img.shape[2] * gen_img.shape[3])
-            else:
-                pl_noise = paddle.randn(gen_img.shape) / np.sqrt(gen_img.shape[2] * gen_img.shape[3])
+            # if self.align_grad:
+            #     ddd = np.sum((dic2[phase + 'gen_img'] - gen_img.numpy()) ** 2)
+            #     print('do_Gpl gen_img=%.6f' % ddd)
+            #     __gen_ws = paddle.stack(gen_ws, 1)
+            #     ddd = np.sum((dic2[phase + 'gen_ws'] - __gen_ws.numpy()) ** 2)
+            #     print('do_Gpl __gen_ws=%.6f' % ddd)
+            pl_noise = paddle.randn(gen_img.shape) / np.sqrt(gen_img.shape[2] * gen_img.shape[3])
+            # pl_noise = paddle.ones(gen_img.shape) / np.sqrt(gen_img.shape[2] * gen_img.shape[3])
             dgen_img_dgen_img = paddle.ones(gen_img.shape, dtype=paddle.float32)
             dgen_img_dgen_img = dgen_img_dgen_img * pl_noise
             pl_grads = self.run_G_grad(dgen_img_dgen_img)
 
             pl_lengths = pl_grads.square().sum(2).mean(1).sqrt()
-            if self.align_grad:
-                aaaaaaaaa1 = dic2[phase + 'pl_grads']
-                aaaaaaaaa2 = pl_grads.numpy()
-                aaaaaaaaa3 = dic2[phase + 'pl_lengths']
-                aaaaaaaaa4 = pl_lengths.numpy()
-                ddd = np.sum((dic2[phase + 'pl_grads'] - pl_grads.numpy()) ** 2)
-                print('do_Gpl pl_grads=%.6f' % ddd)
-                ddd = np.sum((dic2[phase + 'pl_lengths'] - pl_lengths.numpy()) ** 2)
-                print('do_Gpl pl_lengths=%.6f' % ddd)
+            # if self.align_grad:
+            #     aaaaaaaaa1 = dic2[phase + 'pl_grads']
+            #     aaaaaaaaa2 = pl_grads.numpy()
+            #     aaaaaaaaa3 = dic2[phase + 'pl_lengths']
+            #     aaaaaaaaa4 = pl_lengths.numpy()
+            #     ddd = np.sum((dic2[phase + 'pl_grads'] - pl_grads.numpy()) ** 2)
+            #     print('do_Gpl pl_grads=%.6f' % ddd)
+            #     ddd = np.sum((dic2[phase + 'pl_lengths'] - pl_lengths.numpy()) ** 2)
+            #     print('do_Gpl pl_lengths=%.6f' % ddd)
 
             pl_mean = self.pl_mean + self.pl_decay * (pl_lengths.mean() - self.pl_mean)
             self.pl_mean.set_value(pl_mean.detach())
@@ -283,16 +281,16 @@ class StyleGANv2ADAModel(BaseModel):
         if do_Dmain:
             gen_img, _gen_ws = self.run_G(gen_z, gen_c, sync=False)
             gen_img.stop_gradient = True   # 训练判别器时，假图片要停止梯度，不能更新生成器的参数。
-            if self.align_grad:
-                ddd = np.sum((dic2[phase + 'gen_img'] - gen_img.numpy()) ** 2)
-                print('do_Dmain gen_img=%.6f' % ddd)
-                __gen_ws = paddle.stack(_gen_ws, 1)
-                ddd = np.sum((dic2[phase + '_gen_ws'] - __gen_ws.numpy()) ** 2)
-                print('do_Dmain __gen_ws=%.6f' % ddd)
+            # if self.align_grad:
+            #     ddd = np.sum((dic2[phase + 'gen_img'] - gen_img.numpy()) ** 2)
+            #     print('do_Dmain gen_img=%.6f' % ddd)
+            #     __gen_ws = paddle.stack(_gen_ws, 1)
+            #     ddd = np.sum((dic2[phase + '_gen_ws'] - __gen_ws.numpy()) ** 2)
+            #     print('do_Dmain __gen_ws=%.6f' % ddd)
             gen_logits = self.run_D(gen_img, gen_c, sync=False) # Gets synced by loss_Dreal.
-            if self.align_grad:
-                ddd = np.sum((dic2[phase + 'gen_logits'] - gen_logits.numpy()) ** 2)
-                print('do_Dmain gen_logits=%.6f' % ddd)
+            # if self.align_grad:
+            #     ddd = np.sum((dic2[phase + 'gen_logits'] - gen_logits.numpy()) ** 2)
+            #     print('do_Dmain gen_logits=%.6f' % ddd)
 
             loss_Dgen = paddle.nn.functional.softplus(gen_logits)  # -log(1 - sigmoid(gen_logits))
             loss_Dgen = loss_Dgen.mean()
@@ -308,30 +306,30 @@ class StyleGANv2ADAModel(BaseModel):
             real_logits = self.run_D(real_img_tmp, real_c, sync=sync)
             if self.adjust_p and self.augment_pipe is not None:
                 self.Loss_signs_real.append(real_logits.sign().numpy())
-            if self.align_grad:
-                ddd = np.sum((dic2[phase + 'real_logits'] - real_logits.numpy()) ** 2)
-                print('do_Dmain or do_Dr1 real_logits=%.6f' % ddd)
+            # if self.align_grad:
+            #     ddd = np.sum((dic2[phase + 'real_logits'] - real_logits.numpy()) ** 2)
+            #     print('do_Dmain or do_Dr1 real_logits=%.6f' % ddd)
 
             loss_Dreal = 0
             if do_Dmain:
                 loss_Dreal = paddle.nn.functional.softplus(-real_logits) # -log(sigmoid(real_logits))
-                if self.align_grad:
-                    ddd = np.sum((dic2[phase + 'loss_Dreal'] - loss_Dreal.numpy()) ** 2)
-                    print('do_Dmain or do_Dr1 do_Dmain loss_Dreal=%.6f' % ddd)
+                # if self.align_grad:
+                #     ddd = np.sum((dic2[phase + 'loss_Dreal'] - loss_Dreal.numpy()) ** 2)
+                #     print('do_Dmain or do_Dr1 do_Dmain loss_Dreal=%.6f' % ddd)
                 loss_numpy['loss_Dreal'] = loss_Dreal.numpy().mean()
 
             loss_Dr1 = 0
             if do_Dr1:
                 dreal_logitssum_dreal_logits = paddle.ones(real_logits.shape, dtype=paddle.float32)
                 r1_grads = self.run_D_grad(dreal_logitssum_dreal_logits)
-                if self.align_grad:
-                    ddd = np.sum((dic2[phase + 'r1_grads'] - r1_grads.numpy()) ** 2)
-                    print('do_Dmain or do_Dr1 do_Dr1 r1_grads=%.6f' % ddd)
+                # if self.align_grad:
+                #     ddd = np.sum((dic2[phase + 'r1_grads'] - r1_grads.numpy()) ** 2)
+                #     print('do_Dmain or do_Dr1 do_Dr1 r1_grads=%.6f' % ddd)
 
                 r1_penalty = r1_grads.square().sum([1, 2, 3])
-                if self.align_grad:
-                    ddd = np.sum((dic2[phase + 'r1_penalty'] - r1_penalty.numpy()) ** 2)
-                    print('do_Dmain or do_Dr1 do_Dr1 r1_penalty=%.6f' % ddd)
+                # if self.align_grad:
+                #     ddd = np.sum((dic2[phase + 'r1_penalty'] - r1_penalty.numpy()) ** 2)
+                #     print('do_Dmain or do_Dr1 do_Dr1 r1_penalty=%.6f' % ddd)
                 loss_Dr1 = r1_penalty * (self.r1_gamma / 2)
                 loss_numpy['loss_Dr1'] = loss_Dr1.numpy().mean()
             loss4 = (loss_Dreal + loss_Dr1).mean() * float(gain)
@@ -347,17 +345,15 @@ class StyleGANv2ADAModel(BaseModel):
 
         # 对齐梯度用
         dic2 = None
-        if self.align_grad:
-            if self.batch_idx == 0:
-                paddle.save(self.nets['discriminator'].state_dict(), 'D_00.pdparams')
-            print('======================== batch%.5d.npz ========================'%self.batch_idx)
-            npz_path = 'batch%.5d.npz'%self.batch_idx
-            isDebug = True if sys.gettrace() else False
-            if isDebug:
-                npz_path = '../batch%.5d.npz'%self.batch_idx
-            dic2 = np.load(npz_path)
-            aaaaaaaaa = dic2['phase_real_img']
-            phase_real_img = paddle.to_tensor(aaaaaaaaa)
+        # if self.align_grad:
+        #     print('======================== batch%.5d.npz ========================'%self.batch_idx)
+        #     npz_path = 'batch%.5d.npz'%self.batch_idx
+        #     isDebug = True if sys.gettrace() else False
+        #     if isDebug:
+        #         npz_path = '../batch%.5d.npz'%self.batch_idx
+        #     dic2 = np.load(npz_path)
+        #     aaaaaaaaa = dic2['phase_real_img']
+        #     phase_real_img = paddle.to_tensor(aaaaaaaaa)
 
 
         phase_real_img = paddle.cast(phase_real_img, dtype=paddle.float32) / 127.5 - 1
@@ -371,8 +367,8 @@ class StyleGANv2ADAModel(BaseModel):
         batch_gpu = batch_size // num_gpus  # 一张显卡上的批大小
         if self.z_dim > 0:
             all_gen_z = paddle.randn([len(phases) * batch_size, self.z_dim])  # 咩酱：训练的4个阶段每个gpu的噪声
-            if self.align_grad:
-                all_gen_z = paddle.to_tensor(dic2['all_gen_z'], dtype=all_gen_z.dtype)
+            # if self.align_grad:
+            #     all_gen_z = paddle.to_tensor(dic2['all_gen_z'], dtype=all_gen_z.dtype)
         else:
             all_gen_z = paddle.randn([len(phases) * batch_size, 1])  # 咩酱：训练的4个阶段每个gpu的噪声
         phases_all_gen_z = paddle.split(all_gen_z, num_or_sections=len(phases))  # 咩酱：训练的4个阶段的噪声
@@ -441,10 +437,6 @@ class StyleGANv2ADAModel(BaseModel):
             elif 'D' in phase['name']:
                 optimizers['discriminator'].step()  # 更新参数
 
-        if self.align_grad:
-            if self.batch_idx == 19:
-                paddle.save(self.nets['discriminator'].state_dict(), 'D_19.pdparams')
-
 
         # compute moving average of network parameters。指数滑动平均
         # self.mapping_ema.requires_grad_(False)
@@ -462,6 +454,15 @@ class StyleGANv2ADAModel(BaseModel):
         soft_update(self.nets['mapping'],
                     self.nets_ema['mapping'],
                     beta=ema_beta)
+
+        # if self.align_grad:
+        #     if self.batch_idx == 19:
+        #         paddle.save(self.nets['synthesis'].state_dict(), 'synthesis_19.pdparams')
+        #         paddle.save(self.nets_ema['synthesis'].state_dict(), 'synthesis_ema_19.pdparams')
+        #         paddle.save(self.nets['mapping'].state_dict(), 'mapping_19.pdparams')
+        #         paddle.save(self.nets_ema['mapping'].state_dict(), 'mapping_ema_19.pdparams')
+        #         paddle.save(self.nets['discriminator'].state_dict(), 'discriminator_19.pdparams')
+
         self.cur_nimg += batch_size
         self.batch_idx += 1
 

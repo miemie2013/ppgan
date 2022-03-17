@@ -109,7 +109,7 @@ class DiscriminatorBlock(nn.Layer):
         assert x.dtype == dtype
         return x, img
 
-class DiscriminatorBlock_Grad(nn.Layer):
+class DiscriminatorBlock_Grad(object):
     def __init__(self,
         in_channels,                        # Number of input channels, 0 = first block.
         tmp_channels,                       # Number of intermediate channels.
@@ -137,7 +137,7 @@ class DiscriminatorBlock_Grad(nn.Layer):
         self.channels_last = (use_fp16 and fp16_channels_last)
         self.num_layers = 0
 
-    def forward(self, dloss_dout, dloss_dimg):
+    def __call__(self, dloss_dout, dloss_dimg):
         # Main layers.
         if self.architecture == 'resnet':
             dloss_dx_1 = dloss_dout
@@ -201,13 +201,13 @@ class MinibatchStdLayer(nn.Layer):
         self.grad_layer.out = out
         return out
 
-class MinibatchStdLayer_Grad(nn.Layer):
+class MinibatchStdLayer_Grad(object):
     def __init__(self, group_size, num_channels=1):
         super().__init__()
         self.group_size = group_size
         self.num_channels = num_channels
 
-    def forward(self, dloss_dout):
+    def __call__(self, dloss_dout):
         x = self.x
         N, C, H, W = x.shape
         G = self.G
@@ -320,7 +320,7 @@ class DiscriminatorEpilogue(nn.Layer):
         return x
 
 
-class DiscriminatorEpilogue_Grad(nn.Layer):
+class DiscriminatorEpilogue_Grad(object):
     def __init__(self,
         in_channels,                    # Number of input channels.
         cmap_dim,                       # Dimensionality of mapped conditioning label, 0 = no label.
@@ -339,7 +339,7 @@ class DiscriminatorEpilogue_Grad(nn.Layer):
         self.img_channels = img_channels
         self.architecture = architecture
 
-    def forward(self, dloss_dout):
+    def __call__(self, dloss_dout):
         # dtype = paddle.float32
 
         # Conditioning.
@@ -438,7 +438,7 @@ class StyleGANv2ADA_Discriminator(nn.Layer):
         return x
 
 
-class StyleGANv2ADA_Discriminator_Grad(nn.Layer):
+class StyleGANv2ADA_Discriminator_Grad(object):
     def __init__(self,
         c_dim,                          # Conditioning label (C) dimensionality.
         img_resolution,                 # Input resolution.
@@ -456,7 +456,7 @@ class StyleGANv2ADA_Discriminator_Grad(nn.Layer):
         super().__init__()
         self.c_dim = c_dim
 
-    def forward(self, dloss_dout):
+    def __call__(self, dloss_dout):
         dloss_dx = self.b4.grad_layer(dloss_dout)
 
         if self.c_dim > 0:

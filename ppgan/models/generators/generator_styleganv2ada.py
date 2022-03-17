@@ -487,12 +487,12 @@ def _conv2d_wrapper_grad(dloss_dout, x, w, stride=1, padding=0, groups=1, transp
 
 
 
-class Conv2D_Grad(nn.Layer):
+class Conv2D_Grad(object):
     def __init__(self):
         super().__init__()
         self.cfg = {}
 
-    def forward(self, dloss_dout, x,
+    def __call__(self, dloss_dout, x,
            weight,
            bias=None,
            stride=1,
@@ -1075,7 +1075,7 @@ class Conv2dLayer(nn.Layer):
         return out
 
 
-class Conv2dLayer_Grad(nn.Layer):
+class Conv2dLayer_Grad(object):
     def __init__(self,
         in_channels,                    # Number of input channels.
         out_channels,                   # Number of output channels.
@@ -1092,7 +1092,7 @@ class Conv2dLayer_Grad(nn.Layer):
         super().__init__()
         self.down = down
 
-    def forward(self, dloss_dout):
+    def __call__(self, dloss_dout):
         b = self.b
         temp_tensors = {}
         temp_tensors['gain_x'] = self.gain_x2
@@ -1157,7 +1157,7 @@ class FullyConnectedLayer(nn.Layer):
         return out
 
 
-class FullyConnectedLayer_Grad(nn.Layer):
+class FullyConnectedLayer_Grad(object):
     def __init__(self,
         in_features,                # Number of input features.
         out_features,               # Number of output features.
@@ -1175,7 +1175,7 @@ class FullyConnectedLayer_Grad(nn.Layer):
         self.bias_init = bias_init
         self.b = None
 
-    def forward(self, dloss_dout):
+    def __call__(self, dloss_dout):
         b = self.b
         w = self.w   # [out_C, in_C]
         w_t = w.t()  # [in_C, out_C]
@@ -1581,7 +1581,7 @@ class SynthesisLayer(nn.Layer):
 
 
 
-class SynthesisLayer_Grad(nn.Layer):
+class SynthesisLayer_Grad(object):
     def __init__(self,
         in_channels,                    # Number of input channels.
         out_channels,                   # Number of output channels.
@@ -1608,7 +1608,7 @@ class SynthesisLayer_Grad(nn.Layer):
         self.conv_clamp = conv_clamp
         self.channels_last = channels_last
 
-    def forward(self, dloss_dout):
+    def __call__(self, dloss_dout):
         styles = self.styles
         b = self.b
         gain_x2 = self.gain_x2
@@ -1682,7 +1682,7 @@ class ToRGBLayer(nn.Layer):
         self.grad_layer.x2_add_b = temp_tensors['x_add_b']
         return out
 
-class ToRGBLayer_Grad(nn.Layer):
+class ToRGBLayer_Grad(object):
     def __init__(self, in_channels, out_channels, w_dim, kernel_size=1, conv_clamp=None, channels_last=False):
         super().__init__()
         self.in_channels = in_channels
@@ -1692,7 +1692,7 @@ class ToRGBLayer_Grad(nn.Layer):
         self.conv_clamp = conv_clamp
         self.channels_last = channels_last
 
-    def forward(self, dloss_dout):
+    def __call__(self, dloss_dout):
         styles = self.styles
         x2 = self.x2
         b = self.b
@@ -1906,7 +1906,7 @@ class StyleGANv2ADA_SynthesisNetwork(nn.Layer):
 
 
 
-class StyleGANv2ADA_SynthesisNetwork_Grad(nn.Layer):
+class StyleGANv2ADA_SynthesisNetwork_Grad(object):
     def __init__(self,
         w_dim,                      # Intermediate latent (W) dimensionality.
         img_resolution,             # Output image resolution.
@@ -1952,7 +1952,7 @@ class StyleGANv2ADA_SynthesisNetwork_Grad(nn.Layer):
             dloss_dx2 = dloss_dx0
             self.pre_ws_grad(dloss_dws, dloss_dx2, conv_i, i, block_idx - 1)
 
-    def forward(self, dloss_dout):
+    def __call__(self, dloss_dout):
         fused_modconv = self.fused_modconv
         conv_i = len(self.convs) - 1
         torgb_i = len(self.torgbs) - 1
@@ -2562,11 +2562,11 @@ def pad_reflect_grad(dloss_dout, mx0, mx1, my0, my1):
     return dloss_dx
 
 
-class StyleGANv2ADA_AugmentPipe_Grad(nn.Layer):
+class StyleGANv2ADA_AugmentPipe_Grad(object):
     def __init__(self):
         super().__init__()
 
-    def forward(self, dloss_dout):
+    def __call__(self, dloss_dout):
         images = self.images
         batch_size, num_channels, height, width = images.shape
 
@@ -2781,14 +2781,14 @@ class GridSample(nn.Layer):
 
 
 
-class GridSample_Grad(nn.Layer):
+class GridSample_Grad(object):
     def __init__(self, mode='bilinear', padding_mode='zeros', align_corners=True):
         super().__init__()
         self.mode = mode
         self.padding_mode = padding_mode
         self.align_corners = align_corners
 
-    def forward(self, dloss_dout):
+    def __call__(self, dloss_dout):
         mode = self.mode
         padding_mode = self.padding_mode
         align_corners = self.align_corners

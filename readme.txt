@@ -46,13 +46,51 @@ cp ../data/data128401/styleganv2ada_512_afhqcat.pdparams styleganv2ada_512_afhqc
 
 
 对齐梯度：
+1.(原版仓库也要设置)设置 ppgan/models/styleganv2ada_model.py 的 StyleGANv2ADAModel 的
+    self.augment_pipe = None
+    self.style_mixing_prob = -1.0
+    self.align_grad = True
+解除上面语句的注释即可。
+以及，对下面所有的以if self.align_grad:开头的代码块解除注释
+if self.align_grad:
+    xxx
+
+2.(原版仓库也要设置) ppgan/models/styleganv2ada_model.py，计算loss_Gpl那里，pl_noise使用全1而不是随机数：
+            pl_noise = paddle.randn(gen_img.shape) / np.sqrt(gen_img.shape[2] * gen_img.shape[3])
+            # pl_noise = paddle.ones(gen_img.shape) / np.sqrt(gen_img.shape[2] * gen_img.shape[3])
+注释掉第一行代码，第二行代码解除注释。
+
+3.(原版仓库也要设置)设置 ppgan/models/generators/generator_styleganv2ada.py 的 SynthesisLayer 的
+    self.use_noise = False
+解除上面语句的注释即可。
+4.(原版仓库也要设置)设置 ppgan/models/generators/generator_styleganv2ada.py 的 StyleGANv2ADA_SynthesisNetwork 的
+    use_fp16 = False
+咩酱已经改好，这里不用修改。
+5.(原版仓库也要设置)设置 ppgan/models/discriminators/discriminator_styleganv2ada.py 的 StyleGANv2ADA_Discriminator 的
+    use_fp16 = False
+咩酱已经改好，这里不用修改。
+
+6.ppgan/models/base_model.py 里，优化器要换成SGD，在方法def setup_optimizers(self, lr_G, lr_D, cfg)里，注释掉
+self.optimizers[opt_name] = build_optimizer(cfg_, lr, parameters)
+下面的语句解除注释：
+if opt_name == 'generator':
+    self.optimizers[opt_name] = paddle.optimizer.Momentum(parameters=parameters, learning_rate=0.001, momentum=0.9)
+elif opt_name == 'discriminator':
+    self.optimizers[opt_name] = paddle.optimizer.Momentum(parameters=parameters, learning_rate=0.002, momentum=0.9)
+
+
+
+
 cd ~/w*
 cd convert_weights
 python test2_stylegan2ada_afhqcat32.py
+python test2_stylegan2ada_afhqcat32_G19D19.py
 
 cd ~/w*
 python tools/main.py -c configs/stylegan_v2ada_32_custom.yaml --load styleganv2ada_32_afhqcat.pdparams
 
+cd ..
+python diff_weights_with_pytorch.py
 
 
 
