@@ -81,7 +81,6 @@ class StyleGANv2ADAModel(BaseModel):
         ada_kimg=500,
         ada_interval=4,
         ada_target=None,
-        adjust_p=False,
     ):
         super(StyleGANv2ADAModel, self).__init__()
         self.nets_ema = {}
@@ -133,7 +132,12 @@ class StyleGANv2ADAModel(BaseModel):
         self.ada_kimg = ada_kimg
         self.ada_target = ada_target
         self.ada_interval = ada_interval
-        self.adjust_p = adjust_p
+        self.adjust_p = False   # 是否调整augment_pipe的p
+        if self.augment_pipe is not None and (self.augment_p > 0 or self.ada_target is not None):
+            self.augment_pipe.p.stop_gradient = True
+            self.augment_pipe.p.set_value(paddle.to_tensor(self.augment_p))
+            if self.ada_target is not None:
+                self.adjust_p = True
         self.Loss_signs_real = []
 
         self.align_grad = False
