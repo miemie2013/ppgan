@@ -124,6 +124,16 @@ python tools/main.py -c configs/stylegan_v2ada_512_afhqcat.yaml --evaluate-only 
 python tools/main.py -c configs/stylegan_v2ada_512_afhqcat.yaml --evaluate-only --load styleganv2ada_512_afhqcat.pdparams
 
 
+模型style-mixing:
+python tools/main.py -c configs/stylegan_v2ada_512_afhqcat.yaml --style-mixing --load styleganv2ada_512_afhqcat.pdparams --row_seeds 85,100,75,458,1500 --col_seeds 55,821,1789,293 --col_styles 0,1,2,3,4,5,6
+
+python tools/main.py -c configs/stylegan_v2ada_512_afhqcat.yaml --style-mixing --load styleganv2ada_512_afhqcat.pdparams --row_seeds 85 --col_seeds 55 --col_styles 0,1,2,3,4,5,6
+
+
+python tools/main.py -c configs/stylegan_v2ada_128_custom.yaml --style-mixing --load output_dir/stylegan_v2ada_128_custom-2022-03-17-11-52/iter_9000_checkpoint.pdparams --row_seeds 85,100,75,458,1500 --col_seeds 55,821,1789,293 --col_styles 0,1,2,3,4,5,6
+
+
+
 ======================== PastaGAN ========================
 
 

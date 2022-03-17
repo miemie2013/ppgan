@@ -22,6 +22,8 @@ from .logger import setup_logger
 def setup(args, cfg):
     if args.evaluate_only:
         cfg.is_train = False
+    elif args.style_mixing:
+        cfg.is_train = False
     else:
         cfg.is_train = True
 

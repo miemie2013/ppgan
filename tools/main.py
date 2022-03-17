@@ -41,6 +41,16 @@ def main(args, cfg):
     if args.evaluate_only:
         trainer.test()
         return
+
+    if args.style_mixing:
+        row_seeds = args.row_seeds.split(',')
+        row_seeds = [int(seed) for seed in row_seeds]
+        col_seeds = args.col_seeds.split(',')
+        col_seeds = [int(seed) for seed in col_seeds]
+        col_styles = args.col_styles.split(',')
+        col_styles = [int(seed) for seed in col_styles]
+        trainer.style_mixing(row_seeds, col_seeds, col_styles)
+        return
     # training, when keyboard interrupt save weights
     try:
         trainer.train()

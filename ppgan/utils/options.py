@@ -44,6 +44,29 @@ def parse_args():
                         action='store_true',
                         default=False,
                         help='skip validation during training')
+    parser.add_argument('--style-mixing',
+                        action='store_true',
+                        default=False,
+                        help='stylegan2ada style-mixing')
+    parser.add_argument(
+        "--row_seeds",
+        default="85,100,75,458,1500",
+        type=str,
+        help="stylegan2ada style-mixing row random seeds",
+    )
+    parser.add_argument(
+        "--col_seeds",
+        default="55,821,1789,293",
+        type=str,
+        help="stylegan2ada style-mixing col random seeds",
+    )
+    parser.add_argument(
+        "--col_styles",
+        default="0,1,2,3,4,5,6",
+        type=str,
+        help="stylegan2ada style-mixing col_styles",
+    )
+
     # config options
     parser.add_argument("-o", 
                         "--opt", 

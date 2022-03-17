@@ -15,6 +15,7 @@
 import os
 import time
 import copy
+import numpy as np
 
 import logging
 import datetime
@@ -335,6 +336,49 @@ class Trainer:
             for metric_name, metric in self.metrics.items():
                 self.logger.info("Metric {}: {:.4f}".format(
                     metric_name, metric.accumulate()))
+
+    def style_mixing(self, row_seeds, col_seeds, col_styles):
+        # set model.is_train = False
+        self.model.setup_train_mode(is_train=False)
+
+        all_seeds = list(set(row_seeds + col_seeds))
+        all_z = np.stack([np.random.RandomState(seed).randn(self.model.z_dim) for seed in all_seeds])
+        all_z = paddle.to_tensor(all_z)
+        all_z = paddle.cast(all_z, dtype=paddle.float32)
+        data = {
+            'z': all_z,
+        }
+        self.model.setup_input(data)
+        self.model.style_mixing(row_seeds, col_seeds, all_seeds, col_styles)
+
+        if self.is_save_img:
+            visual_results = {}
+            current_paths = self.model.get_image_paths()
+            current_visuals = self.model.get_current_visuals()
+
+            if len(current_visuals) > 0 and list(
+                    current_visuals.values())[0].shape == 4:
+                num_samples = list(current_visuals.values())[0].shape[0]
+            else:
+                num_samples = 1
+            i = 0
+            for j in range(num_samples):
+                if j < len(current_paths):
+                    short_path = os.path.basename(current_paths[j])
+                    basename = os.path.splitext(short_path)[0]
+                else:
+                    basename = '{:04d}_{:04d}'.format(i, j)
+                for k, img_tensor in current_visuals.items():
+                    name = '%s_%s' % (basename, k)
+                    if len(img_tensor.shape) == 4:
+                        visual_results.update({name: img_tensor[j]})
+                    else:
+                        visual_results.update({name: img_tensor})
+
+            self.visual('visual_test',
+                        visual_results=visual_results,
+                        step=self.batch_id,
+                        is_save_image=True)
 
     def print_log(self):
         losses = self.model.get_current_losses()

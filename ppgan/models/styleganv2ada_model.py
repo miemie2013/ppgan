@@ -86,8 +86,8 @@ class StyleGANv2ADAModel(BaseModel):
         self.nets_ema = {}
         self.nets['synthesis'] = build_generator(synthesis)
         self.nets_ema['synthesis'] = build_generator(synthesis)
-        num_ws = self.nets['synthesis'].num_ws
-        mapping['num_ws'] = num_ws
+        self.num_ws = self.nets['synthesis'].num_ws
+        mapping['num_ws'] = self.num_ws
         self.nets['mapping'] = build_generator(mapping)
         self.nets_ema['mapping'] = build_generator(mapping)
         if discriminator:
@@ -95,6 +95,8 @@ class StyleGANv2ADAModel(BaseModel):
         self.nets['synthesis'].train()
         self.nets['mapping'].train()
         self.nets['discriminator'].train()
+        self.nets_ema['synthesis'].eval()
+        self.nets_ema['mapping'].eval()
         self.c_dim = mapping.c_dim
         self.z_dim = mapping.z_dim
         self.w_dim = mapping.w_dim
@@ -489,9 +491,6 @@ class StyleGANv2ADAModel(BaseModel):
         return loss_numpys
 
     def test_iter(self, metrics=None):
-        self.nets_ema['synthesis'].eval()
-        self.nets_ema['mapping'].eval()
-
         z = self.input['z']
 
         class_idx = None
@@ -516,5 +515,56 @@ class StyleGANv2ADAModel(BaseModel):
         img_rgb = img.numpy()[0]  # pgan是将RGB格式的图片进行保存的。
 
         self.visual_items['reference'] = img_rgb
-        self.nets_ema['synthesis'].train()
-        self.nets_ema['mapping'].train()
+
+
+    def style_mixing(self, row_seeds, col_seeds, all_seeds, col_styles):
+        all_z = self.input['z']
+        # noise_mode = ['const', 'random', 'none']
+        noise_mode = 'const'
+        truncation_psi = 1.0
+        all_w = self.nets_ema['mapping'](all_z, None)
+        all_w = paddle.stack(all_w, 1)
+        w_avg = self.nets_ema['mapping'].w_avg
+        all_w = w_avg + (all_w - w_avg) * truncation_psi
+        w_dict = {seed: w for seed, w in zip(all_seeds, list(all_w))}
+
+        # print('Generating images...')
+        all_w_list = []
+        for j in range(self.num_ws):
+            all_w_list.append(all_w[:, j, :])
+        all_images = self.nets_ema['synthesis'](all_w_list, noise_mode=noise_mode)
+        all_images = (paddle.transpose(all_images, (0, 2, 3, 1)) * 127.5 + 128)
+        all_images = paddle.clip(all_images, 0, 255)
+        all_images = paddle.cast(all_images, dtype=paddle.uint8)
+        all_images = all_images.numpy()
+        image_dict = {(seed, seed): image for seed, image in zip(all_seeds, list(all_images))}
+
+        # print('Generating style-mixed images...')
+        for row_seed in row_seeds:
+            for col_seed in col_seeds:
+                w = w_dict[row_seed].clone()
+                w[col_styles] = w_dict[col_seed][col_styles]
+                w = paddle.unsqueeze(w, 0)
+                w_list = []
+                for j in range(self.num_ws):
+                    w_list.append(w[:, j, :])
+                image = self.nets_ema['synthesis'](w_list, noise_mode=noise_mode)
+                image = (paddle.transpose(image, (0, 2, 3, 1)) * 127.5 + 128)
+                image = paddle.clip(image, 0, 255)
+                image = paddle.cast(image, dtype=paddle.uint8)
+                image_dict[(row_seed, col_seed)] = image.numpy()[0]
+
+        # print('Saving image grid...')
+        ROW = len(row_seeds)
+        COL = len(col_seeds)
+        res = self.nets_ema['synthesis'].img_resolution
+        grid_img_rgb = np.zeros(((ROW+1)*res, (COL+1)*res, 3), dtype=np.uint8)
+        for j, row_seed in enumerate(row_seeds):
+            for i, col_seed in enumerate(col_seeds):
+                grid_img_rgb[(j+1)*res:(j+2)*res, (i+1)*res:(i+2)*res, :] = image_dict[(row_seed, col_seed)]
+        for j, row_seed in enumerate(row_seeds):
+            grid_img_rgb[(j+1)*res:(j+2)*res, 0:res, :] = image_dict[(row_seed, row_seed)]
+        for i, col_seed in enumerate(col_seeds):
+            grid_img_rgb[0:res, (i+1)*res:(i+2)*res, :] = image_dict[(col_seed, col_seed)]
+
+        self.visual_items['reference'] = grid_img_rgb
