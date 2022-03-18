@@ -397,8 +397,9 @@ def _conv2d_wrapper_grad(dloss_dout, x, w, stride=1, padding=0, groups=1, transp
                 kerner_pos_yx = paddle.unsqueeze(kerner_center_yx_00, 0)  # [kH*kW, in_H, in_W, 2]
             else:
                 raise NotImplementedError("kH \'{}\' is not implemented.".format(kH))
-        kerner_pos_yx = paddle.reshape(kerner_pos_yx, (-1, 2))  # [kH*kW, in_H, in_W, 2] -> [kH*kW*in_H*in_W, 2]
-        kerner_pos_yx.stop_gradient = True
+            kerner_pos_yx = paddle.reshape(kerner_pos_yx, (-1, 2))  # [kH*kW, in_H, in_W, 2] -> [kH*kW*in_H*in_W, 2]
+            kerner_pos_yx.stop_gradient = True
+            conv2d_transpose_grad_kerner_pos_cache[key] = kerner_pos_yx
         dloss_dY = paddle.gather_nd(pad_dloss_dy, kerner_pos_yx)  # [pad_H, pad_W, N, g, oc] -> [kH*kW*in_H*in_W, N, g, oc]
         dloss_dY = paddle.reshape(dloss_dY, (kH, kW, in_H, in_W, N, g, oc))      # [kH, kW, in_H, in_W, N, g, oc]
         dloss_dY = paddle.transpose(dloss_dY, [4, 5, 6, 2, 3, 0, 1])             # [N, g, oc, in_H, in_W, kH, kW]
@@ -475,8 +476,9 @@ def _conv2d_wrapper_grad(dloss_dout, x, w, stride=1, padding=0, groups=1, transp
                 kerner_pos_yx = paddle.unsqueeze(kerner_center_yx_00, 0)  # [kH*kW, out_H, out_W, 2]
             else:
                 raise NotImplementedError("kH \'{}\' is not implemented.".format(kH))
-        kerner_pos_yx = paddle.reshape(kerner_pos_yx, (-1, 2))  # [kH*kW, out_H, out_W, 2] -> [kH*kW*out_H*out_W, 2]
-        kerner_pos_yx.stop_gradient = True
+            kerner_pos_yx = paddle.reshape(kerner_pos_yx, (-1, 2))  # [kH*kW, out_H, out_W, 2] -> [kH*kW*out_H*out_W, 2]
+            kerner_pos_yx.stop_gradient = True
+            conv2d_grad_kerner_pos_cache[key] = kerner_pos_yx
         dY_dW = paddle.gather_nd(pad_x, kerner_pos_yx)  # [pad_H, pad_W, N, g, c] -> [kH*kW*out_H*out_W, N, g, c]
         dY_dW = paddle.reshape(dY_dW, (kH, kW, out_H, out_W, N, g, c))        # [kH, kW, out_H, out_W, N, g, c]
         dY_dW = paddle.transpose(dY_dW, [4, 5, 6, 2, 3, 0, 1])                # [N, g, c, out_H, out_W, kH, kW]
