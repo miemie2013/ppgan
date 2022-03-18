@@ -128,6 +128,9 @@ python tools/main.py -c configs/stylegan_v2ada_32_custom.yaml --load styleganv2a
 cd ~/w*
 python tools/main.py -c configs/stylegan_v2ada_512_afhqcat.yaml --resume output_dir/stylegan_v2ada_512_afhqcat-2022-03-03-11-11/iter_20_checkpoint.pdparams
 
+cd ~/w*
+python tools/main.py -c configs/stylegan_v2ada_256_custom.yaml --resume output_dir/stylegan_v2ada_256_custom-2022-03-18-15-34/iter_27000_checkpoint.pdparams
+
 
 测试模型:
 cd ~/w*
