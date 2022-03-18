@@ -146,6 +146,13 @@ python tools/main.py -c configs/stylegan_v2ada_512_afhqcat.yaml --style-mixing -
 python tools/main.py -c configs/stylegan_v2ada_128_custom.yaml --style-mixing --load output_dir/stylegan_v2ada_128_custom-2022-03-17-11-52/iter_9000_checkpoint.pdparams --row_seeds 85,100,75,458,1500 --col_seeds 55,821,1789,293 --col_styles 0,1,2,3,4,5,6
 
 
+python tools/main.py -c configs/stylegan_v2ada_256_custom.yaml --style-mixing --load iter_26000_checkpoint.pdparams --row_seeds 100,75,458 --col_seeds 55,821 --col_styles 0,1,2,3,4,5,6
+
+
+如果提示显存不足，请减少row_seeds和col_seeds随机种子数量，比如：
+python tools/main.py -c configs/stylegan_v2ada_256_custom.yaml --style-mixing --load iter_26000_checkpoint.pdparams --row_seeds 100,75,458 --col_seeds 55,821 --col_styles 0,1,2,3,4,5,6
+
+
 
 ======================== PastaGAN ========================
 
