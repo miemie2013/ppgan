@@ -11,6 +11,6 @@ pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
 
 ## 使用说明
 
-
+https://aistudio.baidu.com/aistudio/projectdetail/3639193
 
 
