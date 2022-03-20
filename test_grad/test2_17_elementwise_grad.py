@@ -16,7 +16,8 @@ for batch_idx in range(8):
     styles.requires_grad_(True)
     batch_size = 2
 
-    w = styles * 11
+    C = 1.0
+    w = styles * C
     dcoefs = w.sum(dim=[2,])  # [N, out_C]
     out = w * dcoefs.reshape((batch_size, -1, 1))  # [N, out_C, in_C]
     loss = torch.square(out)

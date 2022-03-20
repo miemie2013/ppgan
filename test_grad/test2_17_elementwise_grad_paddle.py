@@ -19,8 +19,9 @@ for batch_idx in range(8):
 
     batch_size = 2
 
-
-    w1 = styles * 11
+    # styles乘以任意数值就能触发这个bug。什么都不乘的话，不触发这个bug。
+    C = 1.0
+    w1 = styles * C
     # dcoefs = w1.sum(axis=[2,])  # [N, out_C]
     # out = w1 * dcoefs.reshape((batch_size, -1, 1))  # [N, out_C, in_C]
     out = w1 * paddle.sum(w1, axis=2, keepdim=True)
@@ -33,7 +34,7 @@ for batch_idx in range(8):
     dloss_dloss = paddle.ones(loss.shape, dtype=paddle.float32)
     dloss_dout = dloss_dloss * 2 * out
     dloss_dw1 = dloss_dout * paddle.sum(w1, axis=2, keepdim=True)
-    dloss_dstyles222 = dloss_dw1 * 11
+    dloss_dstyles222 = dloss_dw1 * C
 
 
     out_paddle = out.numpy()
