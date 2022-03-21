@@ -1,0 +1,128 @@
+
+
+kimgs=25000
+分辨率256，批大小6
+
+
+=================== 情况1 ===================
+
+删掉所有self.grad_layer
+
+self.augment_pipe = None
+
+注释掉梯度惩罚1，损失改为
+loss_Gpl = gen_img.sum()
+
+注释掉梯度惩罚2，损失改为
+loss_Dr1 = real_logits.sum()
+
+结果如下：
+ips: 6.00605 images/s eta: 48 days, 4:10:42
+11211MiB / 32480MiB
+
+
+=================== 情况2 ===================
+
+保留所有self.grad_layer
+
+self.augment_pipe = None
+
+注释掉梯度惩罚1，损失改为
+loss_Gpl = gen_img.sum()
+
+注释掉梯度惩罚2，损失改为
+loss_Dr1 = real_logits.sum()
+
+结果如下：
+ips: 6.10365 images/s eta: 47 days, 9:41:00
+23965MiB / 32480MiB
+
+所以，self.grad_layer保存中间变量是最费显存的！但是不影响训练速度。
+
+
+=================== 情况3 ===================
+
+保留所有self.grad_layer
+
+self.augment_pipe = None   不使用ADA
+
+用自己写的方法计算梯度惩罚1
+
+用自己写的方法计算梯度惩罚2
+
+结果如下：
+ips: 4.18041 images/s eta: 69 days, 5:10:10
+32401MiB / 32480MiB
+
+所以，用自己写的方法计算梯度惩罚，会费多8G显存，降低33%训练速度。使用或不使用ADA对显存、训练速度影响不大。
+
+
+=================== 情况4 ===================
+
+保留所有self.grad_layer
+
+注释掉self.augment_pipe = None   使用ADA
+
+用自己写的方法计算梯度惩罚1
+
+用自己写的方法计算梯度惩罚2
+
+结果如下：
+ips: 4.07599 images/s eta: 70 days, 23:42:06
+31343MiB / 32480MiB
+
+所以，用自己写的方法计算梯度惩罚，会费多8G显存，降低33%训练速度。使用或不使用ADA对显存、训练速度影响不大。
+
+=================== 情况5 ===================
+
+删掉所有self.grad_layer
+
+self.augment_pipe = None
+
+用paddle.grad()计算梯度惩罚1
+
+用paddle.grad()计算梯度惩罚2
+
+结果如下：
+ips: 5.54313 images/s eta: 52 days, 4:45:03
+11251MiB / 32480MiB
+
+和情况1相比，使用paddle.grad()训练速度很快，而且几乎不占用过多显存。
+
+
+（再看一次情况1）
+=================== 情况1 ===================
+
+删掉所有self.grad_layer
+
+self.augment_pipe = None
+
+注释掉梯度惩罚1，损失改为
+loss_Gpl = gen_img.sum()
+
+注释掉梯度惩罚2，损失改为
+loss_Dr1 = real_logits.sum()
+
+结果如下：
+ips: 6.00605 images/s eta: 48 days, 4:10:42
+11211MiB / 32480MiB
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
