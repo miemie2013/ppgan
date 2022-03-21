@@ -49,6 +49,36 @@ class MyTanhGrad(torch.autograd.Function):
 
 
 
+class MyRelu(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, x):
+        y = torch.relu(x)
+        ctx.save_for_backward(x)
+        return y
+
+    @staticmethod
+    def backward(ctx, dy):
+        x, = ctx.saved_tensors
+        # dx = dy * torch.where(x > 0., 1., 0.)
+        dx = MyReluGrad.apply(dy, x)
+        return dx
+
+class MyReluGrad(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, w, x):
+        y = w * torch.where(x > 0., 1., 0.)
+        ctx.save_for_backward(w, x)
+        return y
+
+    @staticmethod
+    def backward(ctx, dy):
+        w, x = ctx.saved_tensors
+        dw = dy * torch.where(x > 0., 1., 0.)
+        dx = None
+        return dw, dx
+
+
+
 
 
 batch_size = 2
@@ -82,7 +112,8 @@ for batch_idx in range(20):
     ws.requires_grad_(True)
 
     styles = model(ws)
-    aaa = MyTanh.apply(styles)
+    # aaa = MyTanh.apply(styles)
+    aaa = MyRelu.apply(styles)
     # aaa = torch.tanh(styles)
     styles2 = torch.sigmoid(aaa)
     dstyles2_dws = torch.autograd.grad(outputs=[styles2.sum()], inputs=[ws], create_graph=True, only_inputs=True)[0]

@@ -32,7 +32,8 @@ for batch_idx in range(20):
     ws.requires_grad_(True)
 
     styles = model(ws)
-    aaa = torch.tanh(styles)
+    # aaa = torch.tanh(styles)
+    aaa = torch.relu(styles)
     styles2 = torch.sigmoid(aaa)
     dstyles2_dws = torch.autograd.grad(outputs=[styles2.sum()], inputs=[ws], create_graph=True, only_inputs=True)[0]
 
