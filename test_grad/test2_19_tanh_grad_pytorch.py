@@ -27,10 +27,23 @@ class MyTanh(torch.autograd.Function):
         return y
 
     @staticmethod
-    def backward(ctx, dy):
+    def backward(ctx, dlossdy):
         y, = ctx.saved_tensors
-        dx = dy * (1 - torch.square(y))
-        return dx
+        dlossdx = dlossdy * (1 - torch.square(y))
+        # dlossdx = MyTanhGrad.apply(dlossdy, y)
+        return dlossdx
+
+class MyTanhGrad(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, dlossdy, y):
+        dlossdx = dlossdy * (1 - torch.square(y))
+        ctx.save_for_backward(y)
+        return dlossdx
+
+    @staticmethod
+    def backward(ctx, dlossdx_dlossdx):
+        y, = ctx.saved_tensors
+        return y, y
 
 
 
@@ -39,7 +52,7 @@ class MyTanh(torch.autograd.Function):
 batch_size = 2
 in_channels = 512
 w_dim = 512
-lr = 0.0001
+lr = 0.1
 # activation = 'linear'
 # activation = 'lrelu'
 # activation = 'relu'

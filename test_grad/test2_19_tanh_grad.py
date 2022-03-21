@@ -7,7 +7,7 @@ from training.networks import FullyConnectedLayer
 batch_size = 2
 in_channels = 512
 w_dim = 512
-lr = 0.0001
+lr = 0.1
 # activation = 'linear'
 # activation = 'lrelu'
 # activation = 'relu'
