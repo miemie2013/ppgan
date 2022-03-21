@@ -92,6 +92,7 @@ for batch_idx in range(8):
     y = model(aug_x, None)
 
     # dy_dx = paddle.grad(outputs=[y.sum()], inputs=[x], create_graph=True)[0]
+    # dy_daug_x = paddle.grad(outputs=[y.sum()], inputs=[aug_x], create_graph=True)[0]
     dysum_dy = paddle.ones(y.shape, dtype=paddle.float32)
     dy_daug_x = model.grad_layer(dysum_dy)
     dy_dx = augment_pipe.grad_layer(dy_daug_x)
