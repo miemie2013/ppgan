@@ -37,28 +37,34 @@ for batch_idx in range(20):
     ws = mge.tensor(ws)
     ws.stop_gradient = False
 
-
-    with GradManager() as gm:
-        gm.attach(ws)
-
-        styles = model(ws)
-        styles2 = F.sigmoid(styles)
-
-        dstyles2dstyles2 = F.ones_like(styles2)
-        gm.backward(styles2, dstyles2dstyles2)  # doesn't need x, already known via attach()
-        dstyles2_dws = ws.grad
+    gm = GradManager().attach([ws])
+    gm2 = GradManager().attach([ws])
 
 
-        aaaaaa = styles.numpy()
-        ddd = np.sum((styles_pytorch - aaaaaa) ** 2)
-        print('ddd=%.6f' % ddd)
+    with gm:
+        with gm2:
+            styles = model(ws)
+            styles2 = F.sigmoid(styles)
 
-        aaaaaa = dstyles2_dws.numpy()
-        ddd = np.sum((dstyles2_dws_pytorch - aaaaaa) ** 2)
-        print('ddd=%.6f' % ddd)
+            # dstyles2dstyles2 = F.ones_like(styles2)
+            # gm.backward(styles2, dstyles2dstyles2)  # doesn't need x, already known via attach()
+            # dstyles2_dws = ws.grad
 
 
-        loss = dstyles2_dws.sum() + styles2.sum()
-        gm.backward(loss)
+            gm2.backward(styles2)
+            dstyles2_dws = ws.grad
+            ws.grad = None
+
+            aaaaaa = styles.numpy()
+            ddd = np.sum((styles_pytorch - aaaaaa) ** 2)
+            print('ddd=%.6f' % ddd)
+
+            aaaaaa = dstyles2_dws.numpy()
+            ddd = np.sum((dstyles2_dws_pytorch - aaaaaa) ** 2)
+            print('ddd=%.6f' % ddd)
+
+
+            loss = dstyles2_dws.sum() + styles2.sum()
+            gm.backward(loss)
     optimizer.step()
 print()
