@@ -7,7 +7,7 @@ from training.networks import FullyConnectedLayer
 batch_size = 2
 in_channels = 512
 w_dim = 512
-lr = 0.0001
+lr = 0.1
 # activation = 'linear'
 # activation = 'lrelu'
 # activation = 'relu'
@@ -40,6 +40,7 @@ for batch_idx in range(20):
     dic['batch_%.3d.input'%batch_idx] = ws.cpu().detach().numpy()
 
     loss = dstyles2_dws.sum() + styles2.sum()
+    # loss = styles2.sum()
     loss.backward()
     optimizer.step()
 np.savez('01_fullyConnectedLayer_grad', **dic)
