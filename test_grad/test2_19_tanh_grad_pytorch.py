@@ -63,19 +63,33 @@ class MyRelu(torch.autograd.Function):
         dx = MyReluGrad.apply(dy, x)
         return dx
 
+# class MyReluGrad(torch.autograd.Function):
+#     @staticmethod
+#     def forward(ctx, w, x):
+#         y = w * torch.where(x > 0., 1., 0.)
+#         ctx.save_for_backward(w, x)
+#         return y
+#
+#     @staticmethod
+#     def backward(ctx, dy):
+#         w, x = ctx.saved_tensors
+#         dw = dy * torch.where(x > 0., 1., 0.)
+#         dx = None
+#         return dw, dx
+
 class MyReluGrad(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, w, x):
-        y = w * torch.where(x > 0., 1., 0.)
-        ctx.save_for_backward(w, x)
-        return y
+    def forward(ctx, dy, x):
+        dx = dy * torch.where(x > 0., 1., 0.)
+        ctx.save_for_backward(dy, x)
+        return dx
 
     @staticmethod
-    def backward(ctx, dy):
-        w, x = ctx.saved_tensors
-        dw = dy * torch.where(x > 0., 1., 0.)
+    def backward(ctx, ddx):
+        dy, x = ctx.saved_tensors
+        ddy = ddx * torch.where(x > 0., 1., 0.)
         dx = None
-        return dw, dx
+        return ddy, dx
 
 
 
