@@ -4,20 +4,6 @@ import numpy as np
 from training.networks import FullyConnectedLayer
 
 
-class Line(torch.autograd.Function):
-    @staticmethod
-    def forward(ctx, w, x, b):
-        ctx.save_for_backward(w, x, b)
-        return w * x + b
-
-    @staticmethod
-    def backward(ctx, grad_out):
-        w, x, b = ctx.saved_tensors
-        grad_w = grad_out * x
-        grad_x = grad_out * w
-        grad_b = grad_out
-        return grad_w, grad_x, grad_b
-
 
 class MyTanh(torch.autograd.Function):
     @staticmethod
@@ -29,23 +15,24 @@ class MyTanh(torch.autograd.Function):
     @staticmethod
     def backward(ctx, dy):
         y, = ctx.saved_tensors
-        # dx = dy * (1 - torch.square(y))
+        # dloss_dx = dloss_dy * (1 - torch.square(y))
         dx = MyTanhGrad.apply(dy, y)
         return dx
 
 class MyTanhGrad(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, x, w):
-        y = x * (1 - torch.square(w))
-        ctx.save_for_backward(x, w)
-        return y
+    def forward(ctx, dy, y):
+        dx = dy * (1 - torch.square(y))
+        ctx.save_for_backward(dy, y)
+        return dx
 
     @staticmethod
-    def backward(ctx, dy):
-        x, w = ctx.saved_tensors
-        dx = dy * (1 - torch.square(w))
-        dw = dy * x * -2 * w
-        return dx, dw
+    def backward(ctx, ddx):
+        dy, y = ctx.saved_tensors
+        ddy = ddx * (1 - torch.square(y))
+        dy_new = ddx * dy * -2 * y
+        # dy_new = None
+        return ddy, dy_new
 
 
 
@@ -62,20 +49,6 @@ class MyRelu(torch.autograd.Function):
         # dx = dy * torch.where(x > 0., 1., 0.)
         dx = MyReluGrad.apply(dy, x)
         return dx
-
-# class MyReluGrad(torch.autograd.Function):
-#     @staticmethod
-#     def forward(ctx, w, x):
-#         y = w * torch.where(x > 0., 1., 0.)
-#         ctx.save_for_backward(w, x)
-#         return y
-#
-#     @staticmethod
-#     def backward(ctx, dy):
-#         w, x = ctx.saved_tensors
-#         dw = dy * torch.where(x > 0., 1., 0.)
-#         dx = None
-#         return dw, dx
 
 class MyReluGrad(torch.autograd.Function):
     @staticmethod
@@ -126,8 +99,8 @@ for batch_idx in range(20):
     ws.requires_grad_(True)
 
     styles = model(ws)
-    # aaa = MyTanh.apply(styles)
-    aaa = MyRelu.apply(styles)
+    aaa = MyTanh.apply(styles)
+    # aaa = MyRelu.apply(styles)
     # aaa = torch.tanh(styles)
     styles2 = torch.sigmoid(aaa)
     dstyles2_dws = torch.autograd.grad(outputs=[styles2.sum()], inputs=[ws], create_graph=True, only_inputs=True)[0]

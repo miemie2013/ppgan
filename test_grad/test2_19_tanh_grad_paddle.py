@@ -6,7 +6,7 @@ from ppgan.models.generators.generator_styleganv2ada import FullyConnectedLayer
 
 
 
-class cus_tanh(paddle.autograd.PyLayer):
+class MyTanh(paddle.autograd.PyLayer):
     @staticmethod
     def forward(ctx, x):
         y = paddle.tanh(x)
@@ -16,9 +16,24 @@ class cus_tanh(paddle.autograd.PyLayer):
     @staticmethod
     def backward(ctx, dy):
         y, = ctx.saved_tensor()
-        grad = dy * (1 - paddle.square(y))
-        return grad
+        # dloss_dx = dloss_dy * (1 - torch.square(y))
+        dx = MyTanhGrad.apply(dy, y)
+        return dx
 
+class MyTanhGrad(paddle.autograd.PyLayer):
+    @staticmethod
+    def forward(ctx, dy, y):
+        dx = dy * (1 - paddle.square(y))
+        ctx.save_for_backward(dy, y)
+        return dx
+
+    @staticmethod
+    def backward(ctx, ddx):
+        dy, y = ctx.saved_tensor()
+        ddy = ddx * (1 - paddle.square(y))
+        dy_new = ddx * dy * -2 * y
+        # dy_new = None
+        return ddy, dy_new
 
 
 batch_size = 2
@@ -41,6 +56,7 @@ optimizer = paddle.optimizer.Momentum(parameters=model.parameters(), learning_ra
 model.set_state_dict(paddle.load("19.pdparams"))
 
 
+print(paddle.__version__)
 dic2 = np.load('19.npz')
 for batch_idx in range(20):
     print('======================== batch_%.3d ========================'%batch_idx)
@@ -53,7 +69,7 @@ for batch_idx in range(20):
     styles = model(ws)
 
     # aaa = paddle.tanh(styles)
-    aaa = cus_tanh.apply(styles)
+    aaa = MyTanh.apply(styles)
     styles2 = F.sigmoid(aaa)
     # dstyles2_dws = paddle.grad(outputs=[styles2.sum()], inputs=[ws], create_graph=True)[0]
 
