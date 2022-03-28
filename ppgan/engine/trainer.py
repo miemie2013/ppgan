@@ -134,18 +134,15 @@ class Trainer:
 
             for name, reg_interval in [('G', G_reg_interval), ('D', D_reg_interval)]:
                 if reg_interval is None:
-                    pass
-                    # opt = dnnlib.util.construct_class_by_name(params=module.parameters(),
-                    #                                           **opt_kwargs)  # subclass of torch.optim.Optimizer
-                    # phases += [dnnlib.EasyDict(name=name + 'both', module=module, opt=opt, interval=1)]
+                    if name == 'G':
+                        cfg.lr_scheduler_G.learning_rate = learning_rate
+                    elif name == 'D':
+                        cfg.lr_scheduler_D.learning_rate = learning_rate
                 else:  # Lazy regularization.
                     mb_ratio = reg_interval / (reg_interval + 1)
                     new_lr = learning_rate * mb_ratio
                     new_beta1 = beta1 ** mb_ratio
                     new_beta2 = beta2 ** mb_ratio
-                # print(new_lr)
-                # print(new_beta1)
-                # print(new_beta2)
                 if name == 'G':
                     cfg.lr_scheduler_G.learning_rate = new_lr
                     cfg.optimizer.generator.beta1 = new_beta1
