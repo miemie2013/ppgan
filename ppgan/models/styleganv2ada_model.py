@@ -4,6 +4,7 @@
 import cv2
 from paddle.fluid.layers.nn import soft_relu
 from .base_model import BaseModel
+from collections import OrderedDict
 
 from paddle import nn
 import paddle
@@ -473,6 +474,13 @@ class StyleGANv2ADAModel(BaseModel):
             self.augment_pipe.p.set_value(new_p)
             self.Loss_signs_real = []
 
+        self.losses = OrderedDict()
+        for loss_dict in loss_numpys:
+            for key, loss_ in loss_dict.items():
+                if key in self.losses.keys():
+                    self.losses[key] += loss_.sum()
+                else:
+                    self.losses[key] = loss_.sum()
         return loss_numpys
 
     def test_iter(self, metrics=None):
