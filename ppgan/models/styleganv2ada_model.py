@@ -40,6 +40,14 @@ def soft_update(source, ema_model, beta=1.0):
         ema_param = ema_model_map[param_name]
         ema_param.set_value(beta * ema_param + (1.0 - beta) * source_param)
 
+    '''
+    下面这些是网络中通过self.register_buffer()登记的变量，不会被优化器更新，比如：
+    self.register_buffer('resample_filter', upfirdn2d_setup_filter(resample_filter))
+    self.register_buffer('w_avg', paddle.zeros([w_dim]))
+    
+    这些变量不会被优化器更新，但是可以通过set_value()之类的赋值操作改变其值。
+    ema模型中这些变量不通过滑动平均的方式更新，而是直接被赋值为source模型中的值source_buffer。
+    '''
     ema_model_buffers_map = dict(ema_model.named_buffers())
     for buffer_name, source_buffer in source.named_buffers():
         ema_buffer = ema_model_buffers_map[buffer_name]
