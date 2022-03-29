@@ -123,5 +123,6 @@ output_dir/
 *.npz
 *.pth
 *.pkl
+ps_usr_print_log
 
 

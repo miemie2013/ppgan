@@ -40,6 +40,11 @@ def soft_update(source, ema_model, beta=1.0):
         ema_param = ema_model_map[param_name]
         ema_param.set_value(beta * ema_param + (1.0 - beta) * source_param)
 
+    ema_model_buffers_map = dict(ema_model.named_buffers())
+    for buffer_name, source_buffer in source.named_buffers():
+        ema_buffer = ema_model_buffers_map[buffer_name]
+        ema_buffer.set_value(source_buffer)
+
 
 def dump_model(model):
     params = {}
