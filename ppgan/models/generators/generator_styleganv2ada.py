@@ -1285,8 +1285,7 @@ class StyleGANv2ADA_MappingNetwork(nn.Layer):
             temp3 = x.detach().mean(axis=0)
             # temp3 = temp3.lerp(self.w_avg, self.w_avg_beta)
             temp3 = temp3 + self.w_avg_beta * (self.w_avg - temp3)
-            # self.w_avg.copy_(temp3)
-            self.w_avg = temp3
+            self.w_avg.set_value(temp3.detach())
 
         # Broadcast.
         if self.num_ws is not None:
