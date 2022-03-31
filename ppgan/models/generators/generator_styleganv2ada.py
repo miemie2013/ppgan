@@ -2211,15 +2211,10 @@ class StyleGANv2ADA_AugmentPipe(nn.Layer):
             Hz_fbank = scipy.signal.convolve(Hz_fbank, [Hz_lo2])
             Hz_fbank[i, (Hz_fbank.shape[1] - Hz_hi2.size) // 2 : (Hz_fbank.shape[1] + Hz_hi2.size) // 2] += Hz_hi2
         self.register_buffer('Hz_fbank', paddle.to_tensor(Hz_fbank, dtype=paddle.float32))
-        self.grad_layer = StyleGANv2ADA_AugmentPipe_Grad()
         self.grid_sample = GridSample(mode='bilinear', padding_mode='zeros', align_corners=False)
-        self.grad_layer.grid_sample = self.grid_sample
-        self.grad_layer.cutout = self.cutout
-        self.grad_layer.imgfilter = self.imgfilter
 
     def forward(self, images, debug_percentile=None):
         assert images.ndim == 4
-        self.grad_layer.images = images
         batch_size, num_channels, height, width = images.shape
         if debug_percentile is not None:
             debug_percentile = paddle.to_tensor(debug_percentile, dtype=paddle.float32)
@@ -2318,9 +2313,7 @@ class StyleGANv2ADA_AugmentPipe(nn.Layer):
         # ----------------------------------
 
         # Execute if the transform is not identity.
-        self.grad_layer.G_inv_is_not_I_3 = False
         if G_inv is not I_3:
-            self.grad_layer.G_inv_is_not_I_3 = True
 
             # Calculate padding.
             cx = (width - 1) / 2
@@ -2341,14 +2334,8 @@ class StyleGANv2ADA_AugmentPipe(nn.Layer):
             margin = paddle.cast(margin, dtype=paddle.int32)
             mx0, my0, mx1, my1 = margin
 
-            self.grad_layer.mx0 = mx0
-            self.grad_layer.my0 = my0
-            self.grad_layer.mx1 = mx1
-            self.grad_layer.my1 = my1
-
             # Pad image and adjust origin.
             images1 = paddle.nn.functional.pad(images, pad=[mx0, mx1, my0, my1], mode='reflect')
-            self.grad_layer.images1 = images1
             G_inv = translate2d((mx0 - mx1) / 2, (my0 - my1) / 2) @ G_inv
 
             # Upsample.
@@ -2362,11 +2349,8 @@ class StyleGANv2ADA_AugmentPipe(nn.Layer):
 
             grid = paddle.nn.functional.affine_grid(theta=G_inv[:, :2, :], out_shape=shape, align_corners=False)
             images3 = self.grid_sample(images2, grid=grid)
-            self.grad_layer.images3 = images3
 
             # Downsample and crop.
-            self.grad_layer.Hz_pad = Hz_pad
-            self.grad_layer.Hz_geom = self.Hz_geom
             images4 = downsample2d(x=images3, f=self.Hz_geom, down=2, padding=-Hz_pad*2, flip_filter=True)
             images = images4
 
@@ -2434,20 +2418,15 @@ class StyleGANv2ADA_AugmentPipe(nn.Layer):
         # ------------------------------
 
         # Execute if the transform is not identity.
-        self.grad_layer.C_is_not_I_4 = False
         if C is not I_4:
-            self.grad_layer.C_is_not_I_4 = True
             images5 = images.reshape([batch_size, num_channels, height * width])
-            self.grad_layer.C = C
             if num_channels == 3:
                 images6 = C[:, :3, :3] @ images5 + C[:, :3, 3:]
             elif num_channels == 1:
                 C2 = paddle.mean(C[:, :3, :], axis=1, keepdim=True)
-                self.grad_layer.C2 = C2
                 images6 = images5 * paddle.sum(C2[:, :, :3], axis=2, keepdim=True) + C2[:, :, 3:]
             else:
                 raise ValueError('Image must be RGB (3 channels) or L (1 channel)')
-            self.grad_layer.images6 = images6
             images7 = images6.reshape([batch_size, num_channels, height, width])
             images = images7
 
@@ -2479,18 +2458,15 @@ class StyleGANv2ADA_AugmentPipe(nn.Layer):
             Hz_prime = g @ self.Hz_fbank                                    # [batch, tap]
             Hz_prime = Hz_prime.unsqueeze(1).tile([1, num_channels, 1])     # [batch, channels, tap]
             Hz_prime = Hz_prime.reshape([batch_size * num_channels, 1, -1]) # [batch * channels, 1, tap]
-            self.grad_layer.Hz_prime = Hz_prime
 
             # Apply filter.
             p = self.Hz_fbank.shape[1] // 2
-            self.grad_layer.p = p
             images8 = images.reshape([1, batch_size * num_channels, height, width])
             images9 = paddle.nn.functional.pad(images8, pad=[p, p, p, p], mode='reflect')
             images10 = F.conv2d(images9, weight=Hz_prime.unsqueeze(2), groups=batch_size*num_channels)
             images11 = F.conv2d(images10, weight=Hz_prime.unsqueeze(3), groups=batch_size*num_channels)
             images12 = images11.reshape([batch_size, num_channels, height, width])
             images = images12
-            self.grad_layer.images11 = images11
 
         # ------------------------
         # Image-space corruptions.
@@ -2520,7 +2496,6 @@ class StyleGANv2ADA_AugmentPipe(nn.Layer):
             mask_x = (((coord_x + 0.5) / width - center[:, 0]).abs() >= size[:, 0] / 2)
             mask_y = (((coord_y + 0.5) / height - center[:, 1]).abs() >= size[:, 1] / 2)
             mask = paddle.cast(paddle.logical_or(mask_x, mask_y), dtype=paddle.float32)
-            self.grad_layer.mask = mask
             images14 = images * mask
             images = images14
 
@@ -2555,122 +2530,12 @@ def pad_reflect_grad(dloss_dout, mx0, mx1, my0, my1):
     return dloss_dx
 
 
-class StyleGANv2ADA_AugmentPipe_Grad(object):
-    def __init__(self):
-        super().__init__()
-
-    def __call__(self, dloss_dout):
-        images = self.images
-        batch_size, num_channels, height, width = images.shape
-
-        # Apply cutout with probability (cutout * strength).
-        if self.cutout > 0:
-            mask = self.mask
-            dloss_dimages14 = dloss_dout
-            dloss_dimages13 = dloss_dimages14 * mask
-        else:
-            dloss_dimages13 = dloss_dout
-
-
-        # ------------------------
-        # Image-space corruptions.
-        # ------------------------
-
-        # Apply additive RGB noise with probability (noise * strength).
-        # if self.noise > 0:
-        #     dloss_dimages12 = dloss_dimages13
-        # else:
-        #     dloss_dimages12 = dloss_dimages13
-        dloss_dimages12 = dloss_dimages13
-
-
-
-        # ----------------------
-        # Image-space filtering.
-        # ----------------------
-
-        if self.imgfilter > 0:
-            Hz_prime = self.Hz_prime
-            p = self.p
-
-            images11 = self.images11
-
-            dloss_dimages11 = dloss_dimages12.reshape(images11.shape)
-            dloss_dimages10 = F.conv2d_transpose(dloss_dimages11, weight=Hz_prime.unsqueeze(3), groups=batch_size*num_channels, output_padding=0)
-            dloss_dimages9 = F.conv2d_transpose(dloss_dimages10, weight=Hz_prime.unsqueeze(2), groups=batch_size*num_channels, output_padding=0)
-
-            # images9 = paddle.nn.functional.pad(images8, pad=[p, p, p, p], mode='reflect') 挺麻烦的。做多个轴对称。
-            dloss_dimages8 = pad_reflect_grad(dloss_dimages9, p, p, p, p)
-            dloss_dimages7 = dloss_dimages8.reshape([batch_size, num_channels, height, width])
-        else:
-            dloss_dimages7 = dloss_dimages12
-
-
-        # ------------------------------
-        # Execute color transformations.
-        # ------------------------------
-
-        # Execute if the transform is not identity.
-        if self.C_is_not_I_4:
-            images6 = self.images6
-            C = self.C
-
-            dloss_dimages6 = dloss_dimages7.reshape(images6.shape)
-
-
-            if num_channels == 3:
-                dloss_dimages6 = paddle.unsqueeze(dloss_dimages6, 2)  # [N, A, 1, C]
-                dimages6_dimages5 = C[:, :3, :3]  # [N, A, B]
-                dimages6_dimages5 = paddle.unsqueeze(dimages6_dimages5, 3)  # [N, A, B, 1]
-                dloss_dimages5 = dloss_dimages6 * dimages6_dimages5  # [N, A, B, C]
-                dloss_dimages5 = paddle.sum(dloss_dimages5, axis=1)  # [N, B, C]
-            elif num_channels == 1:
-                C2 = self.C2
-                dloss_dimages5 = dloss_dimages6 * paddle.sum(C2[:, :, :3], axis=2, keepdim=True)
-            else:
-                raise ValueError('Image must be RGB (3 channels) or L (1 channel)')
-
-            dloss_dimages4 = dloss_dimages5.reshape((batch_size, num_channels, height, width))
-        else:
-            dloss_dimages4 = dloss_dout
-
-
-        # ----------------------------------
-        # Execute geometric transformations.
-        # ----------------------------------
-
-        # Execute if the transform is not identity.
-        if self.G_inv_is_not_I_3:
-            Hz_pad = self.Hz_pad
-            images3 = self.images3
-            images1 = self.images1
-            dloss_dimages3 = downsample2d_grad(dloss_dimages4, x=images3, f=self.Hz_geom, down=2, padding=-Hz_pad*2, flip_filter=True)
-            dloss_dimages2 = self.grid_sample.grad_layer(dloss_dimages3)
-            dloss_dimages1 = upsample2d_grad(dloss_dimages2, x=images1, f=self.Hz_geom, up=2)
-
-            mx0 = self.mx0
-            my0 = self.my0
-            mx1 = self.mx1
-            my1 = self.my1
-            # images1 = paddle.nn.functional.pad(images, pad=[mx0, mx1, my0, my1], mode='reflect') 挺麻烦的。做多个轴对称。
-            dloss_dimages = pad_reflect_grad(dloss_dimages1, mx0, mx1, my0, my1)
-        else:
-            dloss_dimages = dloss_dimages4
-
-        return dloss_dimages
-
-
 class GridSample(nn.Layer):
     def __init__(self, mode='bilinear', padding_mode='zeros', align_corners=True):
         super().__init__()
         self.mode = mode
         self.padding_mode = padding_mode
         self.align_corners = align_corners
-        self.grad_layer = GridSample_Grad(
-            mode,
-            padding_mode,
-            align_corners,
-        )
 
     def gather_nd(self, x, index):
         '''
@@ -2693,8 +2558,6 @@ class GridSample(nn.Layer):
         padding_mode = self.padding_mode
         align_corners = self.align_corners
 
-        self.grad_layer.images = images
-        self.grad_layer.grid = grid
 
         N, C, in_H, in_W = images.shape
         N, out_H, out_W, _ = grid.shape
@@ -2728,8 +2591,6 @@ class GridSample(nn.Layer):
             _xt += padding
             _yt += padding
         _, _, pad_H, pad_W = pad_images.shape
-        self.grad_layer.padding = padding
-        self.grad_layer.pad_images = pad_images
 
         _y1 = paddle.floor(_yt)   # [N, out_H, out_W, 1]
         _x1 = paddle.floor(_xt)   # [N, out_H, out_W, 1]
@@ -2762,94 +2623,27 @@ class GridSample(nn.Layer):
         _y1x2.stop_gradient = True
         _y2x1.stop_gradient = True
         _y2x2.stop_gradient = True
-        self.grad_layer._y1x1 = _y1x1
-        self.grad_layer._y1x2 = _y1x2
-        self.grad_layer._y2x1 = _y2x1
-        self.grad_layer._y2x2 = _y2x2
 
         pad_images_t = paddle.transpose(pad_images, perm=[0, 2, 3, 1])   # [N, C, pad_H, pad_W] -> [N, pad_H, pad_W, C]
-        self.grad_layer.pad_images_t = pad_images_t
-        v1 = paddle.gather_nd(pad_images_t, _y1x1)  # [N, pad_H, pad_W, C] -> [N*out_H*out_W, C]
-        v2 = paddle.gather_nd(pad_images_t, _y1x2)  # [N, pad_H, pad_W, C] -> [N*out_H*out_W, C]
-        v3 = paddle.gather_nd(pad_images_t, _y2x1)  # [N, pad_H, pad_W, C] -> [N*out_H*out_W, C]
-        v4 = paddle.gather_nd(pad_images_t, _y2x2)  # [N, pad_H, pad_W, C] -> [N*out_H*out_W, C]
-        # v1 = self.gather_nd(pad_images_t, _y1x1)  # [N, pad_H, pad_W, C] -> [N*out_H*out_W, C]
-        # v2 = self.gather_nd(pad_images_t, _y1x2)  # [N, pad_H, pad_W, C] -> [N*out_H*out_W, C]
-        # v3 = self.gather_nd(pad_images_t, _y2x1)  # [N, pad_H, pad_W, C] -> [N*out_H*out_W, C]
-        # v4 = self.gather_nd(pad_images_t, _y2x2)  # [N, pad_H, pad_W, C] -> [N*out_H*out_W, C]
+        # v1 = paddle.gather_nd(pad_images_t, _y1x1)  # [N, pad_H, pad_W, C] -> [N*out_H*out_W, C]
+        # v2 = paddle.gather_nd(pad_images_t, _y1x2)  # [N, pad_H, pad_W, C] -> [N*out_H*out_W, C]
+        # v3 = paddle.gather_nd(pad_images_t, _y2x1)  # [N, pad_H, pad_W, C] -> [N*out_H*out_W, C]
+        # v4 = paddle.gather_nd(pad_images_t, _y2x2)  # [N, pad_H, pad_W, C] -> [N*out_H*out_W, C]
+        v1 = self.gather_nd(pad_images_t, _y1x1)  # [N, pad_H, pad_W, C] -> [N*out_H*out_W, C]
+        v2 = self.gather_nd(pad_images_t, _y1x2)  # [N, pad_H, pad_W, C] -> [N*out_H*out_W, C]
+        v3 = self.gather_nd(pad_images_t, _y2x1)  # [N, pad_H, pad_W, C] -> [N*out_H*out_W, C]
+        v4 = self.gather_nd(pad_images_t, _y2x2)  # [N, pad_H, pad_W, C] -> [N*out_H*out_W, C]
 
         v1 = paddle.reshape(v1, (N, out_H, out_W, C))
         v2 = paddle.reshape(v2, (N, out_H, out_W, C))
         v3 = paddle.reshape(v3, (N, out_H, out_W, C))
         v4 = paddle.reshape(v4, (N, out_H, out_W, C))
 
-        self.grad_layer.w1 = w1
-        self.grad_layer.w2 = w2
-        self.grad_layer.w3 = w3
-        self.grad_layer.w4 = w4
         out = w1 * v1 + w2 * v2 + w3 * v3 + w4 * v4  # [N, out_H, out_W, C]
         out = paddle.transpose(out, perm=[0, 3, 1, 2])  # [N, C, out_H, out_W]
         return out
 
 
-
-
-class GridSample_Grad(object):
-    def __init__(self, mode='bilinear', padding_mode='zeros', align_corners=True):
-        super().__init__()
-        self.mode = mode
-        self.padding_mode = padding_mode
-        self.align_corners = align_corners
-
-    def __call__(self, dloss_dout):
-        mode = self.mode
-        padding_mode = self.padding_mode
-        align_corners = self.align_corners
-
-        images = self.images
-        grid = self.grid
-        pad_images = self.pad_images
-        pad_images_t = self.pad_images_t
-        padding = self.padding
-
-        N, C, in_H, in_W = images.shape
-        N, out_H, out_W, _ = grid.shape
-
-        dloss_dout = paddle.transpose(dloss_dout, perm=[0, 2, 3, 1])  # [N, out_H, out_W, C]
-
-        w1 = self.w1
-        w2 = self.w2
-        w3 = self.w3
-        w4 = self.w4
-        dloss_dv1 = dloss_dout * w1
-        dloss_dv2 = dloss_dout * w2
-        dloss_dv3 = dloss_dout * w3
-        dloss_dv4 = dloss_dout * w4
-
-        dloss_dv4 = paddle.reshape(dloss_dv4, (N*out_H*out_W, C))   # [N*out_H*out_W, C]
-        dloss_dv3 = paddle.reshape(dloss_dv3, (N*out_H*out_W, C))   # [N*out_H*out_W, C]
-        dloss_dv2 = paddle.reshape(dloss_dv2, (N*out_H*out_W, C))   # [N*out_H*out_W, C]
-        dloss_dv1 = paddle.reshape(dloss_dv1, (N*out_H*out_W, C))   # [N*out_H*out_W, C]
-
-        _y1x1 = self._y1x1   # [N*out_H*out_W, 3]
-        _y1x2 = self._y1x2   # [N*out_H*out_W, 3]
-        _y2x1 = self._y2x1   # [N*out_H*out_W, 3]
-        _y2x2 = self._y2x2   # [N*out_H*out_W, 3]
-
-        dloss_dpad_images_t = paddle.zeros(pad_images_t.shape, dtype=paddle.float32)   # [N, pad_H, pad_W, C]
-        dloss_dpad_images_t = paddle.scatter_nd_add(dloss_dpad_images_t, _y1x1, dloss_dv1)
-        dloss_dpad_images_t = paddle.scatter_nd_add(dloss_dpad_images_t, _y1x2, dloss_dv2)
-        dloss_dpad_images_t = paddle.scatter_nd_add(dloss_dpad_images_t, _y2x1, dloss_dv3)
-        dloss_dpad_images_t = paddle.scatter_nd_add(dloss_dpad_images_t, _y2x2, dloss_dv4)
-
-
-        dloss_dpad_images = paddle.transpose(dloss_dpad_images_t, perm=[0, 3, 1, 2])   # [N, pad_H, pad_W, C] -> [N, C, pad_H, pad_W]
-
-        if padding > 0:
-            dloss_dimages = dloss_dpad_images[:, :, padding:-padding, padding:-padding]
-        else:
-            dloss_dimages = dloss_dpad_images
-        return dloss_dimages
 
 
 
