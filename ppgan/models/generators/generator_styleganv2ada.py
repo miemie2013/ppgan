@@ -675,26 +675,26 @@ def upfirdn2d(x, filter, up=1, down=1, padding=0, flip_filter=False, gain=1):
 
     # Downsample by throwing away pixels.
     # 因为:: （paddle.strided_slice()）没有实现二阶梯度，所以用其它等价实现。
-    x = x[:, :, ::downy, ::downx]  # RuntimeError: (NotFound) The Op strided_slice_grad doesn't have any grad op.
-    # assert downy == downx
-    # if downy == 1:
-    #     pass
-    # elif downy == 2:
-    #     N, C, H, W = x.shape
-    #     assert H == W
-    #     pad_height_bottom = 0
-    #     pad_width_right = 0
-    #     if H % 2 == 1:
-    #         pad_height_bottom = 1
-    #         pad_width_right = 1
-    #     stride2_kernel = np.zeros((C, 1, 2, 2), dtype=np.float32)
-    #     stride2_kernel[:, :, 0, 0] = 1.0
-    #     stride2_kernel = paddle.to_tensor(stride2_kernel)
-    #     stride2_kernel.stop_gradient = True
-    #     x = F.conv2d(x, stride2_kernel, bias=None, stride=2, groups=C,
-    #                  padding=[[0, 0], [0, 0], [0, pad_height_bottom], [0, pad_width_right]])
-    # else:
-    #     raise NotImplementedError("downy \'{}\' is not implemented.".format(downy))
+    # x = x[:, :, ::downy, ::downx]  # RuntimeError: (NotFound) The Op strided_slice_grad doesn't have any grad op.
+    assert downy == downx
+    if downy == 1:
+        pass
+    elif downy == 2:
+        N, C, H, W = x.shape
+        assert H == W
+        pad_height_bottom = 0
+        pad_width_right = 0
+        if H % 2 == 1:
+            pad_height_bottom = 1
+            pad_width_right = 1
+        stride2_kernel = np.zeros((C, 1, 2, 2), dtype=np.float32)
+        stride2_kernel[:, :, 0, 0] = 1.0
+        stride2_kernel = paddle.to_tensor(stride2_kernel)
+        stride2_kernel.stop_gradient = True
+        x = F.conv2d(x, stride2_kernel, bias=None, stride=2, groups=C,
+                     padding=[[0, 0], [0, 0], [0, pad_height_bottom], [0, pad_width_right]])
+    else:
+        raise NotImplementedError("downy \'{}\' is not implemented.".format(downy))
     return x
 
 
@@ -2672,6 +2672,22 @@ class GridSample(nn.Layer):
             align_corners,
         )
 
+    def gather_nd(self, x, index):
+        '''
+        x:      [N, R, S, T]
+        index:  [M, 3]
+        Return:
+            out:  [M, T]
+        '''
+        N, R, S, T = x.shape
+        index_0 = index[:, 0]   # [M, ]
+        index_1 = index[:, 1]   # [M, ]
+        index_2 = index[:, 2]   # [M, ]
+        index_ = index_0 * R * S + index_1 * S + index_2   # [M, ]
+        x2 = paddle.reshape(x, (N*R*S, T))   # [N*R*S, T]
+        out = paddle.gather(x2, index_)      # [N*R*S, T] -> [M, T]
+        return out
+
     def forward(self, images, grid):
         mode = self.mode
         padding_mode = self.padding_mode
@@ -2757,6 +2773,10 @@ class GridSample(nn.Layer):
         v2 = paddle.gather_nd(pad_images_t, _y1x2)  # [N, pad_H, pad_W, C] -> [N*out_H*out_W, C]
         v3 = paddle.gather_nd(pad_images_t, _y2x1)  # [N, pad_H, pad_W, C] -> [N*out_H*out_W, C]
         v4 = paddle.gather_nd(pad_images_t, _y2x2)  # [N, pad_H, pad_W, C] -> [N*out_H*out_W, C]
+        # v1 = self.gather_nd(pad_images_t, _y1x1)  # [N, pad_H, pad_W, C] -> [N*out_H*out_W, C]
+        # v2 = self.gather_nd(pad_images_t, _y1x2)  # [N, pad_H, pad_W, C] -> [N*out_H*out_W, C]
+        # v3 = self.gather_nd(pad_images_t, _y2x1)  # [N, pad_H, pad_W, C] -> [N*out_H*out_W, C]
+        # v4 = self.gather_nd(pad_images_t, _y2x2)  # [N, pad_H, pad_W, C] -> [N*out_H*out_W, C]
 
         v1 = paddle.reshape(v1, (N, out_H, out_W, C))
         v2 = paddle.reshape(v2, (N, out_H, out_W, C))
