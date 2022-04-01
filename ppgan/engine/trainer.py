@@ -23,7 +23,8 @@ import datetime
 import paddle
 from paddle.distributed import ParallelEnv
 
-from ..datasets.builder import build_dataloader
+from ..datasets.builder import build_dataloader, build_dataset
+from ..metrics.fid import FeatureStats
 from ..models import PastaGANModel, StyleGANv2ADAModel
 from ..models.builder import build_model
 from ..utils.visual import tensor2img, save_image
@@ -333,6 +334,84 @@ class Trainer:
             for metric_name, metric in self.metrics.items():
                 self.logger.info("Metric {}: {:.4f}".format(
                     metric_name, metric.accumulate()))
+
+    @paddle.no_grad()
+    def calc_stylegan2ada_metric(self, inceptionv3_model, batch_size):
+        if not hasattr(self, 'train_dataloader'):
+            self.cfg.dataset.train.batch_size = batch_size
+            self.cfg.dataset.train.batch_size = 64
+            self.test_dataloader = build_dataloader(self.cfg.dataset.train,
+                                                    is_train=False)
+        iter_loader = IterLoader(self.test_dataloader)
+        if self.max_eval_steps is None:
+            self.max_eval_steps = len(self.test_dataloader)
+
+        # set model.is_train = False
+        self.model.setup_train_mode(is_train=False)
+
+        num_items = len(self.test_dataloader)
+        real_stats_kwargs = dict(capture_mean_cov=True,)
+        real_stats = FeatureStats(max_items=num_items, **real_stats_kwargs)
+
+        log_interval = 2
+        for i in range(self.max_eval_steps):
+            if self.max_eval_steps < log_interval or i % log_interval == 0:
+                self.logger.info('Test iter: [%d/%d]' %
+                                 (i * self.world_size,
+                                  self.max_eval_steps * self.world_size))
+
+            data = next(iter_loader)
+            real_image, label, image_gen_c = data
+            real_image = paddle.cast(real_image, dtype=paddle.float32)
+            preds = inceptionv3_model(real_image)
+            real_features = preds[0][0]
+            real_features = paddle.squeeze(real_features, axis=[2, 3])
+            real_stats.append_tensor(real_features, num_gpus=1, rank=0)
+            break
+        mu_real, sigma_real = real_stats.get_mean_cov()
+        # dic = {}
+        # dic['mu_real'] = mu_real
+        # dic['sigma_real'] = sigma_real
+        # np.savez('aaa', **dic)
+        # dic2 = np.load('aaa.npz')
+        # ddd = np.sum((dic2['mu_real'] - mu_real) ** 2)
+        # print('ddd=%.6f' % ddd)
+        # ddd = np.sum((dic2['sigma_real'] - sigma_real) ** 2)
+        # print('ddd=%.6f' % ddd)
+        print()
+
+        num_gen = 100
+        batch_gen = min(batch_size, 4)
+        assert batch_size % batch_gen == 0
+
+        cfg_ = self.cfg.dataset.train.copy()
+        _ = cfg_.pop('batch_size', 1)
+        num_workers = cfg_.pop('num_workers', 0)
+        use_shared_memory = cfg_.pop('use_shared_memory', True)
+        dataset = build_dataset(cfg_)
+
+        fake_stats_kwargs = dict(capture_mean_cov=True,)
+        fake_stats = FeatureStats(max_items=num_gen, **fake_stats_kwargs)
+
+        # Main loop.
+        while not fake_stats.is_full():
+            images = []
+            for _i in range(batch_size // batch_gen):
+                z = paddle.randn([batch_gen, self.model.z_dim], dtype=paddle.float32)
+                c = [dataset.get_label(np.random.randint(len(dataset))) for _i in range(batch_gen)]
+                c = paddle.to_tensor(np.stack(c))
+                images.append(run_generator(z, c))
+            images = paddle.cat(images)
+            if images.shape[1] == 1:
+                images = images.tile([1, 3, 1, 1])
+
+            preds = inceptionv3_model(images)
+            fake_features = preds[0][0]
+            fake_features = paddle.squeeze(fake_features, axis=[2, 3])
+            fake_stats.append_tensor(fake_features, num_gpus=1, rank=0)
+        mu_gen, sigma_gen = fake_stats.get_mean_cov()
+        print()
+
 
     def style_mixing(self, row_seeds, col_seeds, col_styles):
         # set model.is_train = False

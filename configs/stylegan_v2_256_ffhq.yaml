@@ -99,3 +99,4 @@ validate:
       name: FID
       batch_size: 4
       premodel_path: ../InceptionV3.pdparams
+#      premodel_path: InceptionV3.pdparams

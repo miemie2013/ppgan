@@ -5,6 +5,8 @@ upfirdn2d
 _conv2d_wrapper
 
 
+wget https://paddlegan.bj.bcebos.com/InceptionV3.pdparams
+
 ======================== StyleGANv2_ADA ========================
 
 1.因为会报错 ValueError: (InvalidArgument) float16 can only be used when CUDNN or NPU is used
@@ -104,7 +106,7 @@ python diff_weights_with_pytorch.py
 
 
 
-======================== 安装自定义op ========================
+------------------------ 安装自定义op ------------------------
 目前只有develop分支支持二阶导数：
 python -m pip install paddlepaddle-gpu==0.0.0.post101 -f https://www.paddlepaddle.org.cn/whl/linux/gpu/develop.html
 
@@ -125,7 +127,7 @@ python test2_54_Discriminator_grad_paddle.py
 
 
 
-======================== 训练模型 ========================
+------------------------ 训练模型 ------------------------
 cd ~/w*
 python tools/main.py -c configs/stylegan_v2ada_512_afhqcat.yaml
 
@@ -145,7 +147,7 @@ python tools/main.py -c configs/stylegan_v2ada_32_custom.yaml --load styleganv2a
 
 
 
-======================== 恢复训练 ========================
+------------------------ 恢复训练 ------------------------
 cd ~/w*
 python tools/main.py -c configs/stylegan_v2ada_512_afhqcat.yaml --resume output_dir/stylegan_v2ada_512_afhqcat-2022-03-03-11-11/iter_20_checkpoint.pdparams
 
@@ -161,7 +163,7 @@ python tools/main.py -c configs/stylegan_v2ada_512_afhqcat.yaml --evaluate-only 
 python tools/main.py -c configs/stylegan_v2ada_512_afhqcat.yaml --evaluate-only --load styleganv2ada_512_afhqcat.pdparams
 
 
-======================== 模型style-mixing ========================
+------------------------ 模型style-mixing ------------------------
 python tools/main.py -c configs/stylegan_v2ada_512_afhqcat.yaml --style-mixing --load styleganv2ada_512_afhqcat.pdparams --row_seeds 85,100,75,458,1500 --col_seeds 55,821,1789,293 --col_styles 0,1,2,3,4,5,6
 
 python tools/main.py -c configs/stylegan_v2ada_512_afhqcat.yaml --style-mixing --load styleganv2ada_512_afhqcat.pdparams --row_seeds 85 --col_seeds 55 --col_styles 0,1,2,3,4,5,6
@@ -178,6 +180,13 @@ python tools/main.py -c configs/stylegan_v2ada_256_custom.yaml --style-mixing --
 
 如果提示显存不足，请减少row_seeds和col_seeds随机种子数量，比如：
 python tools/main.py -c configs/stylegan_v2ada_256_custom.yaml --style-mixing --load iter_26000_checkpoint.pdparams --row_seeds 100,75,458 --col_seeds 55,821 --col_styles 0,1,2,3,4,5,6
+
+
+
+------------------------ 计算指标 ------------------------
+python tools/calc_metrics.py -c configs/stylegan_v2ada_512_afhqcat.yaml --load styleganv2ada_512_afhqcat.pdparams -b 2 --inceptionv3_path InceptionV3.pdparams
+
+
 
 
 

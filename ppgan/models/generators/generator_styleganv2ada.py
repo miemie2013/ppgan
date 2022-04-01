@@ -2530,7 +2530,7 @@ def pad_reflect_grad(dloss_dout, mx0, mx1, my0, my1):
     return dloss_dx
 
 
-from custom_gather import gather_op
+
 class GridSample(nn.Layer):
     def __init__(self, mode='bilinear', padding_mode='zeros', align_corners=True):
         super().__init__()
@@ -2554,6 +2554,7 @@ class GridSample(nn.Layer):
         # out = paddle.gather(x2, index_)      # [N*R*S, T] -> [M, T]
         index_ = paddle.cast(index_, dtype=paddle.int64)
         index_.stop_gradient = True
+        from custom_gather import gather_op
         out = gather_op(x2, index_)
         return out
 
