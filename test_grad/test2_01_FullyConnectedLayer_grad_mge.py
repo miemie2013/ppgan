@@ -39,6 +39,8 @@ for batch_idx in range(20):
 
     gm = GradManager().attach([ws])
     gm2 = GradManager().attach([ws])
+    gm.attach(model.parameters())
+    gm2.attach(model.parameters())
 
 
     with gm:
@@ -52,6 +54,8 @@ for batch_idx in range(20):
             ws.grad = None
 
             styles_mge = styles.numpy()
+            for m in model.parameters():
+                m.grad = None
             ddd = np.sum((styles_pytorch - styles_mge) ** 2)
             print('ddd=%.6f' % ddd)
 
