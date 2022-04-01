@@ -104,7 +104,28 @@ python diff_weights_with_pytorch.py
 
 
 
-训练模型:
+======================== 安装自定义op ========================
+目前只有develop分支支持二阶导数：
+python -m pip install paddlepaddle-gpu==0.0.0.post101 -f https://www.paddlepaddle.org.cn/whl/linux/gpu/develop.html
+
+cd ~/w*
+pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
+
+
+cd ~/work/custom_ops/gather
+python setup.py install
+
+
+
+cd ~/work/test_grad
+python test2_54_Discriminator_grad_paddle.py
+
+
+
+
+
+
+======================== 训练模型 ========================
 cd ~/w*
 python tools/main.py -c configs/stylegan_v2ada_512_afhqcat.yaml
 
@@ -124,7 +145,7 @@ python tools/main.py -c configs/stylegan_v2ada_32_custom.yaml --load styleganv2a
 
 
 
-恢复训练:
+======================== 恢复训练 ========================
 cd ~/w*
 python tools/main.py -c configs/stylegan_v2ada_512_afhqcat.yaml --resume output_dir/stylegan_v2ada_512_afhqcat-2022-03-03-11-11/iter_20_checkpoint.pdparams
 
@@ -140,7 +161,7 @@ python tools/main.py -c configs/stylegan_v2ada_512_afhqcat.yaml --evaluate-only 
 python tools/main.py -c configs/stylegan_v2ada_512_afhqcat.yaml --evaluate-only --load styleganv2ada_512_afhqcat.pdparams
 
 
-模型style-mixing:
+======================== 模型style-mixing ========================
 python tools/main.py -c configs/stylegan_v2ada_512_afhqcat.yaml --style-mixing --load styleganv2ada_512_afhqcat.pdparams --row_seeds 85,100,75,458,1500 --col_seeds 55,821,1789,293 --col_styles 0,1,2,3,4,5,6
 
 python tools/main.py -c configs/stylegan_v2ada_512_afhqcat.yaml --style-mixing --load styleganv2ada_512_afhqcat.pdparams --row_seeds 85 --col_seeds 55 --col_styles 0,1,2,3,4,5,6

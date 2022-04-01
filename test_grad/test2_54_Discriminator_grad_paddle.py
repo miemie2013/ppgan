@@ -1,3 +1,8 @@
+import os
+import sys
+cur_path = os.path.abspath(os.path.dirname(__file__))
+root_path = os.path.split(cur_path)[0]
+sys.path.append(root_path)
 import paddle
 import numpy as np
 from ppgan.models.discriminators.discriminator_styleganv2ada import StyleGANv2ADA_Discriminator
@@ -91,11 +96,8 @@ for batch_idx in range(8):
     aug_x = augment_pipe(x, debug_percentile)
     y = model(aug_x, None)
 
-    # dy_dx = paddle.grad(outputs=[y.sum()], inputs=[x], create_graph=True)[0]
+    dy_dx = paddle.grad(outputs=[y.sum()], inputs=[x], create_graph=True)[0]
     # dy_daug_x = paddle.grad(outputs=[y.sum()], inputs=[aug_x], create_graph=True)[0]
-    dysum_dy = paddle.ones(y.shape, dtype=paddle.float32)
-    dy_daug_x = model.grad_layer(dysum_dy)
-    dy_dx = augment_pipe.grad_layer(dy_daug_x)
 
 
     y_paddle = y.numpy()
