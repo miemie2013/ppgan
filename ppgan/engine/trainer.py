@@ -336,7 +336,7 @@ class Trainer:
                     metric_name, metric.accumulate()))
 
     @paddle.no_grad()
-    def calc_stylegan2ada_metric(self, inceptionv3_model, batch_size):
+    def calc_stylegan2ada_metric(self, inceptionv3_model, batch_size, num_gen, G_kwargs={}):
         if not hasattr(self, 'train_dataloader'):
             self.cfg.dataset.train.batch_size = batch_size
             self.cfg.dataset.train.batch_size = 64
@@ -356,18 +356,18 @@ class Trainer:
         log_interval = 2
         for i in range(self.max_eval_steps):
             if self.max_eval_steps < log_interval or i % log_interval == 0:
-                self.logger.info('Test iter: [%d/%d]' %
+                self.logger.info('dataset iter: [%d/%d]' %
                                  (i * self.world_size,
                                   self.max_eval_steps * self.world_size))
 
             data = next(iter_loader)
             real_image, label, image_gen_c = data
             real_image = paddle.cast(real_image, dtype=paddle.float32)
+            # 传入inceptionv3_model的图片是BGR格式
             preds = inceptionv3_model(real_image)
             real_features = preds[0][0]
             real_features = paddle.squeeze(real_features, axis=[2, 3])
             real_stats.append_tensor(real_features, num_gpus=1, rank=0)
-            break
         mu_real, sigma_real = real_stats.get_mean_cov()
         # dic = {}
         # dic['mu_real'] = mu_real
@@ -378,9 +378,7 @@ class Trainer:
         # print('ddd=%.6f' % ddd)
         # ddd = np.sum((dic2['sigma_real'] - sigma_real) ** 2)
         # print('ddd=%.6f' % ddd)
-        print()
 
-        num_gen = 100
         batch_gen = min(batch_size, 4)
         assert batch_size % batch_gen == 0
 
@@ -400,16 +398,25 @@ class Trainer:
                 z = paddle.randn([batch_gen, self.model.z_dim], dtype=paddle.float32)
                 c = [dataset.get_label(np.random.randint(len(dataset))) for _i in range(batch_gen)]
                 c = paddle.to_tensor(np.stack(c))
-                images.append(run_generator(z, c))
-            images = paddle.cat(images)
+                img = self.model.gen_images(z=z, c=c, **G_kwargs)
+                img = (img * 127.5 + 128)
+                img = paddle.clip(img, 0, 255)
+                images.append(img)
+            images = paddle.concat(images)
             if images.shape[1] == 1:
                 images = images.tile([1, 3, 1, 1])
-
+            # 传入inceptionv3_model的图片是BGR格式
             preds = inceptionv3_model(images)
             fake_features = preds[0][0]
             fake_features = paddle.squeeze(fake_features, axis=[2, 3])
             fake_stats.append_tensor(fake_features, num_gpus=1, rank=0)
         mu_gen, sigma_gen = fake_stats.get_mean_cov()
+
+        m = np.square(mu_gen - mu_real).sum()
+        import scipy.linalg
+        s, _ = scipy.linalg.sqrtm(np.dot(sigma_gen, sigma_real), disp=False) # pylint: disable=no-member
+        fid = np.real(m + np.trace(sigma_gen + sigma_real - s * 2))
+        fid = float(fid)
         print()
 
 

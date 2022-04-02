@@ -522,6 +522,11 @@ class StyleGANv2ADAModel(BaseModel):
 
         self.visual_items['reference'] = img_rgb
 
+    @paddle.no_grad()
+    def gen_images(self, z, c, truncation_psi=1, truncation_cutoff=None, **synthesis_kwargs):
+        ws = self.nets_ema['mapping'](z, c, truncation_psi=truncation_psi, truncation_cutoff=truncation_cutoff)
+        img = self.nets_ema['synthesis'](ws, **synthesis_kwargs)
+        return img
 
     def style_mixing(self, row_seeds, col_seeds, all_seeds, col_styles):
         all_z = self.input['z']

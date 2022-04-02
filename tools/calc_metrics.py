@@ -48,6 +48,7 @@ def parse_args():
                         default=None,
                         help='put the path to resuming file if needed')
     parser.add_argument("-b", "--batch_size", type=int, default=64, help="batch size")
+    parser.add_argument("-n", "--num_gen", type=int, default=50000, help="num gen")
     parser.add_argument(
         "--inceptionv3_path",
         default="",
@@ -109,7 +110,7 @@ def main(args, cfg):
     inceptionv3_model.eval()
 
     # calc stylegan2ada metric
-    trainer.calc_stylegan2ada_metric(inceptionv3_model, args.batch_size)
+    trainer.calc_stylegan2ada_metric(inceptionv3_model, args.batch_size, args.num_gen)
 
 
 if __name__ == '__main__':
