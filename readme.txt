@@ -189,7 +189,7 @@ wget https://paddlegan.bj.bcebos.com/InceptionV3.pdparams
 
 
 cd ~/w*
-python tools/calc_metrics.py -c configs/stylegan_v2ada_512_afhqcat.yaml --load styleganv2ada_512_afhqcat.pdparams -b 2 --inceptionv3_path InceptionV3.pdparams
+python tools/calc_metrics.py -c configs/stylegan_v2ada_512_afhqcat.yaml --load styleganv2ada_512_afhqcat.pdparams -b 2 -n 50000 --inceptionv3_path InceptionV3.pdparams
 
 
 
