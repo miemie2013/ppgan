@@ -336,10 +336,16 @@ class Trainer:
                     metric_name, metric.accumulate()))
 
     @paddle.no_grad()
-    def calc_stylegan2ada_metric(self, inceptionv3_model, batch_size, num_gen, G_kwargs={}):
+    def calc_stylegan2ada_metric(self, inceptionv3_model, dataset_batch_size, batch_size, num_gen, G_kwargs={}):
+        cfg_ = self.cfg.dataset.train.copy()
+        _ = cfg_.pop('batch_size', 1)
+        num_workers = cfg_.pop('num_workers', 0)
+        use_shared_memory = cfg_.pop('use_shared_memory', True)
+        dataset = build_dataset(cfg_)
+        n_dataset = len(dataset)
+
         if not hasattr(self, 'train_dataloader'):
-            self.cfg.dataset.train.batch_size = batch_size
-            self.cfg.dataset.train.batch_size = 64
+            self.cfg.dataset.train.batch_size = dataset_batch_size
             self.test_dataloader = build_dataloader(self.cfg.dataset.train,
                                                     is_train=False)
         iter_loader = IterLoader(self.test_dataloader)
@@ -353,12 +359,11 @@ class Trainer:
         real_stats_kwargs = dict(capture_mean_cov=True,)
         real_stats = FeatureStats(max_items=num_items, **real_stats_kwargs)
 
-        log_interval = 2
+        log_interval = 1024
         for i in range(self.max_eval_steps):
-            if self.max_eval_steps < log_interval or i % log_interval == 0:
-                self.logger.info('dataset iter: [%d/%d]' %
-                                 (i * self.world_size,
-                                  self.max_eval_steps * self.world_size))
+            n_imgs = i * dataset_batch_size
+            if n_dataset < log_interval or n_imgs % log_interval == 0:
+                self.logger.info('dataset image: [%d/%d]' % (n_imgs, n_dataset))
 
             data = next(iter_loader)
             real_image, label, image_gen_c = data
@@ -382,14 +387,16 @@ class Trainer:
         batch_gen = min(batch_size, 4)
         assert batch_size % batch_gen == 0
 
-        cfg_ = self.cfg.dataset.train.copy()
-        _ = cfg_.pop('batch_size', 1)
-        num_workers = cfg_.pop('num_workers', 0)
-        use_shared_memory = cfg_.pop('use_shared_memory', True)
-        dataset = build_dataset(cfg_)
-
         fake_stats_kwargs = dict(capture_mean_cov=True,)
         fake_stats = FeatureStats(max_items=num_gen, **fake_stats_kwargs)
+
+        from collections import deque
+        time_stat = deque(maxlen=20)
+        start_time = time.time()
+        end_time = time.time()
+        num_imgs = num_gen
+        start = time.time()
+        i = 0
 
         # Main loop.
         while not fake_stats.is_full():
@@ -410,6 +417,22 @@ class Trainer:
             fake_features = preds[0][0]
             fake_features = paddle.squeeze(fake_features, axis=[2, 3])
             fake_stats.append_tensor(fake_features, num_gpus=1, rank=0)
+
+            # 估计剩余时间
+            start_time = end_time
+            end_time = time.time()
+            time_stat.append(end_time - start_time)
+            time_cost = np.mean(time_stat)
+            eta_sec = (num_imgs - i) * time_cost
+            eta = str(datetime.timedelta(seconds=int(eta_sec)))
+            n_imgs = i * batch_size
+            if num_gen < log_interval or n_imgs % log_interval == 0:
+                self.logger.info('generator image: [%d/%d], eta=%s.' % (n_imgs, num_gen, eta))
+
+            i += 1
+        cost = time.time() - start
+        self.logger.info('total time: {0:.6f}s'.format(cost))
+        self.logger.info('Speed: %.6fs per image,  %.1f FPS.' % ((cost / num_imgs), (num_imgs / cost)))
         mu_gen, sigma_gen = fake_stats.get_mean_cov()
 
         m = np.square(mu_gen - mu_real).sum()
@@ -417,7 +440,7 @@ class Trainer:
         s, _ = scipy.linalg.sqrtm(np.dot(sigma_gen, sigma_real), disp=False) # pylint: disable=no-member
         fid = np.real(m + np.trace(sigma_gen + sigma_real - s * 2))
         fid = float(fid)
-        print()
+        self.logger.info('FID: %.6f' % (fid, ))
 
 
     def style_mixing(self, row_seeds, col_seeds, col_styles):
