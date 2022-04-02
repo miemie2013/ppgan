@@ -361,15 +361,3 @@ class FeatureStats:
         cov = self.raw_cov / self.num_items
         cov = cov - np.outer(mean, mean)
         return mean, cov
-
-    def save(self, pkl_file):
-        with open(pkl_file, 'wb') as f:
-            pickle.dump(self.__dict__, f)
-
-    @staticmethod
-    def load(pkl_file):
-        with open(pkl_file, 'rb') as f:
-            s = dnnlib.EasyDict(pickle.load(f))
-        obj = FeatureStats(capture_all=s.capture_all, max_items=s.max_items)
-        obj.__dict__.update(s)
-        return obj

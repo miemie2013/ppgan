@@ -344,6 +344,21 @@ class Trainer:
         dataset = build_dataset(cfg_)
         n_dataset = len(dataset)
 
+        # 像stylegan_v2那样预处理图片传入inceptionv3
+        mean = [127.5, 127.5, 127.5]
+        std = [127.5, 127.5, 127.5]
+        mean = paddle.to_tensor(mean, dtype=paddle.float32)
+        std = paddle.to_tensor(std, dtype=paddle.float32)
+        mean = paddle.reshape(mean, (1, -1, 1, 1))
+        std = paddle.reshape(std, (1, -1, 1, 1))
+        def transform(image_bgr):
+            image_b = image_bgr[:, 0:1, :, :]
+            image_g = image_bgr[:, 1:2, :, :]
+            image_r = image_bgr[:, 2:3, :, :]
+            image_rgb = paddle.concat([image_r, image_g, image_b], axis=1)
+            image_rgb = (image_rgb - mean) / std
+            return image_rgb
+
         if not hasattr(self, 'train_dataloader'):
             self.cfg.dataset.train.batch_size = dataset_batch_size
             self.test_dataloader = build_dataloader(self.cfg.dataset.train,
@@ -363,13 +378,12 @@ class Trainer:
         for i in range(self.max_eval_steps):
             n_imgs = i * dataset_batch_size
             if n_dataset < log_interval or n_imgs % log_interval == 0:
-                self.logger.info('dataset image: [%d/%d]' % (n_imgs, n_dataset))
+                self.logger.info('dataset features: [%d/%d]' % (n_imgs, n_dataset))
 
             data = next(iter_loader)
             real_image, label, image_gen_c = data
-            real_image = paddle.cast(real_image, dtype=paddle.float32)
-            # 传入inceptionv3_model的图片是BGR格式
-            preds = inceptionv3_model(real_image)
+            real_image = paddle.cast(real_image, dtype=paddle.float32)  # BGR格式
+            preds = inceptionv3_model(transform(real_image))
             real_features = preds[0][0]
             real_features = paddle.squeeze(real_features, axis=[2, 3])
             real_stats.append_tensor(real_features, num_gpus=1, rank=0)
@@ -409,11 +423,10 @@ class Trainer:
                 img = (img * 127.5 + 128)
                 img = paddle.clip(img, 0, 255)
                 images.append(img)
-            images = paddle.concat(images)
+            images = paddle.concat(images)  # BGR格式
             if images.shape[1] == 1:
                 images = images.tile([1, 3, 1, 1])
-            # 传入inceptionv3_model的图片是BGR格式
-            preds = inceptionv3_model(images)
+            preds = inceptionv3_model(transform(images))
             fake_features = preds[0][0]
             fake_features = paddle.squeeze(fake_features, axis=[2, 3])
             fake_stats.append_tensor(fake_features, num_gpus=1, rank=0)
@@ -423,11 +436,11 @@ class Trainer:
             end_time = time.time()
             time_stat.append(end_time - start_time)
             time_cost = np.mean(time_stat)
-            eta_sec = (num_imgs - i) * time_cost
+            eta_sec = (num_imgs - i * batch_size) * time_cost
             eta = str(datetime.timedelta(seconds=int(eta_sec)))
             n_imgs = i * batch_size
             if num_gen < log_interval or n_imgs % log_interval == 0:
-                self.logger.info('generator image: [%d/%d], eta=%s.' % (n_imgs, num_gen, eta))
+                self.logger.info('generator features: [%d/%d], eta=%s.' % (n_imgs, num_gen, eta))
 
             i += 1
         cost = time.time() - start
