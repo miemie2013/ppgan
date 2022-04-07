@@ -39,9 +39,9 @@ class FullyConnectedLayer(torch.nn.Module):
 
 
 
-batch_size = 16
-in_channels = 512
-w_dim = 512
+batch_size = 2
+in_channels = 2
+w_dim = 2
 lr = 0.1
 # activation = 'linear'
 # activation = 'lrelu'
@@ -63,7 +63,7 @@ dic = {}
 for batch_idx in range(20):
     optimizer.zero_grad(set_to_none=True)
 
-    ws = torch.randn([batch_size, 512])
+    ws = torch.randn([batch_size, w_dim])
     # ws = np.random.RandomState(100).randn(1, 512)
     # ws = np.tile(ws, [batch_size, 1])
     # ws = torch.Tensor(ws)

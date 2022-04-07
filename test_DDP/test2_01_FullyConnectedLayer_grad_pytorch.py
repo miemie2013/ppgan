@@ -552,7 +552,7 @@ class FullyConnectedLayer(torch.nn.Module):
         return loss
 
 
-batch_size = 16
+batch_size = 2
 steps = 20
 # batch_size = 32
 # steps = 10
@@ -611,8 +611,8 @@ def main(seed, args):
 
 
     global batch_size
-    in_channels = 512
-    w_dim = 512
+    in_channels = 2
+    w_dim = 2
     lr = 0.1
     # activation = 'linear'
     # activation = 'lrelu'
