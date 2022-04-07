@@ -126,4 +126,8 @@ output_dir/
 *.pkl
 ps_usr_print_log
 
+!test_DDP/*.npz
+!test_DDP/*.pth
+!test_DDP/*.pdparams
+
 
