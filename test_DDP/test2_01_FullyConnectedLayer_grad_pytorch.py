@@ -707,17 +707,28 @@ def main(seed, args):
 
 
 if __name__ == "__main__":
+    seed = 0
+    args = None
     dist_backend = "nccl"
     num_machines = 1
     machine_rank = 0
+
+    # 1 ji 1 ka
     num_gpu = 1
-    # num_gpu = 2
-    assert num_gpu <= get_num_devices()
-
-    seed = 0
-    args = None
-
     dist_url = "auto"
+
+    # 1 ji 2 ka
+    num_gpu = 2
+    dist_url = "auto"
+
+    # 2 ji 2 ka
+    num_gpu = 1
+    dist_url = "tcp://192.168.0.104:12312"
+    num_machines = 2
+    machine_rank = 0
+
+
+    assert num_gpu <= get_num_devices()
     launch(
         main,
         num_gpu,
