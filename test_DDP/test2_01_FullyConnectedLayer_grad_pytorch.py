@@ -671,24 +671,17 @@ def main(seed, args):
         ws.requires_grad_(True)
 
         # 多卡训练 且 调用的是模型的forward()方法 时，不需要调用model_ = model.module
-        # if is_distributed:
-        #     model_ = model.module
-        # else:
-        #     model_ = model
-        # styles, styles2, dstyles2_dws, loss = model_(ws)
-
         # forward()方法不要return任何不计算loss的变量！
-        # styles, styles2, dstyles2_dws, loss = model(ws)
-        # ws = ws[:8, :]
-        # ws = ws[8:, :]
+        loss = model(ws)
+
+        # "双卡+每卡批大小1",如果要对齐"单卡+每卡批大小2"的训练过程,
+        # loss需要乘以显卡数量get_world_size()
+        # 因为多卡训练时,每一张卡上的梯度是求平均值而并不是求和
         if is_distributed:
-            loss = model(ws)
-            loss.backward()
+            loss *= get_world_size()
             w_grad = model.module.weight.grad
             b_grad = model.module.bias.grad
         else:
-            loss = model(ws)
-            loss.backward()
             w_grad = model.weight.grad
             b_grad = model.bias.grad
 
@@ -703,6 +696,7 @@ def main(seed, args):
         print(w_grad)
         print(b_grad)
 
+        loss.backward()
         optimizer.step()
 
     # 多卡训练 且 保存模型 时，需要调用model_ = model.module
