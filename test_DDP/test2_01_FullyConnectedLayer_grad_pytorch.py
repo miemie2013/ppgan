@@ -679,9 +679,11 @@ def main(seed, args):
         # 因为多卡训练时,每一张卡上的梯度是求平均值而并不是求和
         if is_distributed:
             loss *= get_world_size()
+            loss.backward()
             w_grad = model.module.weight.grad
             b_grad = model.module.bias.grad
         else:
+            loss.backward()
             w_grad = model.weight.grad
             b_grad = model.bias.grad
 
@@ -695,8 +697,6 @@ def main(seed, args):
 
         print(w_grad)
         print(b_grad)
-
-        loss.backward()
         optimizer.step()
 
     # 多卡训练 且 保存模型 时，需要调用model_ = model.module
