@@ -552,27 +552,34 @@ class FullyConnectedLayer(torch.nn.Module):
         return loss
 
 
+batch_size = 16
+steps = 20
+# batch_size = 32
+# steps = 10
+
 class MyDataset(torch.utils.data.Dataset):
     def __init__(self, npz_path):
         self.dic2 = np.load(npz_path)
 
     def __len__(self):
         # size = len(self.seeds)
-        batch_size = 16
-        steps = 20
         return batch_size * steps
 
     def __getitem__(self, idx):
-        batch_size = 16
         batch_idx = idx // batch_size
         i = idx % batch_size
 
+        # batch_idx = 0
+        # i = 0
         ws = self.dic2['batch_%.3d.input' % batch_idx]
         styles_pytorch = self.dic2['batch_%.3d.output' % batch_idx]
         dstyles2_dws_pytorch = self.dic2['batch_%.3d.dstyles2_dws' % batch_idx]
 
+        # ws = np.random.RandomState(100).randn(1, 512)
+
         datas = {
             'ws': ws[i],
+            # 'ws': ws[0],
             'styles_pytorch': styles_pytorch[i],
             'dstyles2_dws_pytorch': dstyles2_dws_pytorch[i],
         }
@@ -603,8 +610,7 @@ def main(seed, args):
     device = "cuda:{}".format(local_rank)
 
 
-
-    batch_size = 16
+    global batch_size
     in_channels = 512
     w_dim = 512
     lr = 0.1
@@ -628,11 +634,12 @@ def main(seed, args):
     train_dataset = MyDataset('01.npz')
 
     if is_distributed:
-        batch_size = batch_size // dist.get_world_size()
+        batch_gpu = batch_size // dist.get_world_size()
         sampler = torch.utils.data.distributed.DistributedSampler(
             train_dataset, shuffle=False
         )
     else:
+        batch_gpu = batch_size
         sampler = torch.utils.data.SequentialSampler(train_dataset)
 
     dataloader_kwargs = {
@@ -640,11 +647,12 @@ def main(seed, args):
         "pin_memory": True,
         "sampler": sampler,
     }
-    dataloader_kwargs["batch_size"] = batch_size
+    dataloader_kwargs["batch_size"] = batch_gpu
     train_loader = torch.utils.data.DataLoader(train_dataset, **dataloader_kwargs)
 
     if is_distributed:
-        model = DDP(model, device_ids=[local_rank], broadcast_buffers=False, find_unused_parameters=True)
+        # model = DDP(model, device_ids=[local_rank], broadcast_buffers=False, find_unused_parameters=True)
+        model = DDP(model, device_ids=[local_rank], broadcast_buffers=True, find_unused_parameters=True)
 
     logger.info("Training start...")
     for batch_idx, data in enumerate(train_loader):
@@ -671,7 +679,14 @@ def main(seed, args):
 
         # forward()方法不要return任何不计算loss的变量！
         # styles, styles2, dstyles2_dws, loss = model(ws)
-        loss = model(ws)
+        # ws = ws[:8, :]
+        # ws = ws[8:, :]
+        if is_distributed:
+            loss = model(ws)
+            loss.backward()
+        else:
+            loss = model(ws)
+            loss.backward()
 
         # styles_pth = styles.cpu().detach().numpy()
         # ddd = np.sum((styles_pytorch - styles_pth) ** 2)
@@ -681,7 +696,6 @@ def main(seed, args):
         # ddd = np.sum((dstyles2_dws_pytorch - dstyles2_dws_pth) ** 2)
         # print('ddd=%.6f' % ddd)
 
-        loss.backward()
         optimizer.step()
 
     # 多卡训练 且 保存模型 时，需要调用model_ = model.module
@@ -697,7 +711,7 @@ if __name__ == "__main__":
     num_machines = 1
     machine_rank = 0
     num_gpu = 1
-    num_gpu = 2
+    # num_gpu = 2
     assert num_gpu <= get_num_devices()
 
     seed = 0

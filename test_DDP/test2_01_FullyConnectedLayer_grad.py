@@ -64,6 +64,9 @@ for batch_idx in range(20):
     optimizer.zero_grad(set_to_none=True)
 
     ws = torch.randn([batch_size, 512])
+    # ws = np.random.RandomState(100).randn(1, 512)
+    # ws = np.tile(ws, [batch_size, 1])
+    # ws = torch.Tensor(ws)
     ws.requires_grad_(True)
 
     styles = model(ws)
