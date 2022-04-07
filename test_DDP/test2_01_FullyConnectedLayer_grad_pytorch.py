@@ -684,9 +684,13 @@ def main(seed, args):
         if is_distributed:
             loss = model(ws)
             loss.backward()
+            w_grad = model.module.weight.grad
+            b_grad = model.module.bias.grad
         else:
             loss = model(ws)
             loss.backward()
+            w_grad = model.weight.grad
+            b_grad = model.bias.grad
 
         # styles_pth = styles.cpu().detach().numpy()
         # ddd = np.sum((styles_pytorch - styles_pth) ** 2)
@@ -695,6 +699,9 @@ def main(seed, args):
         # dstyles2_dws_pth = dstyles2_dws.cpu().detach().numpy()
         # ddd = np.sum((dstyles2_dws_pytorch - dstyles2_dws_pth) ** 2)
         # print('ddd=%.6f' % ddd)
+
+        print(w_grad)
+        print(b_grad)
 
         optimizer.step()
 
