@@ -40,8 +40,8 @@ class FullyConnectedLayer(paddle.nn.Layer):
 
 
 batch_size = 16
-in_channels = 512
-w_dim = 512
+in_channels = 2
+w_dim = 2
 lr = 0.1
 # activation = 'linear'
 # activation = 'lrelu'

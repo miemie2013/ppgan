@@ -39,7 +39,7 @@ class FullyConnectedLayer(torch.nn.Module):
 
 
 
-batch_size = 2
+batch_size = 16
 in_channels = 2
 w_dim = 2
 lr = 0.1

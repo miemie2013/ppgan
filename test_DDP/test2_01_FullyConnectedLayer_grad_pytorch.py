@@ -552,7 +552,7 @@ class FullyConnectedLayer(torch.nn.Module):
         return loss
 
 
-batch_size = 2
+batch_size = 16
 steps = 20
 # batch_size = 32
 # steps = 10

@@ -41,8 +41,8 @@ class FullyConnectedLayer(paddle.nn.Layer):
         return out
 
 
-in_channels = 512
-w_dim = 512
+in_channels = 2
+w_dim = 2
 
 # activation = 'linear'
 # activation = 'lrelu'
