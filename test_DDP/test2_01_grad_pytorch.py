@@ -570,13 +570,137 @@ class MyDataset(torch.utils.data.Dataset):
         styles_pytorch = self.dic2['batch_%.3d.output' % batch_idx]
         dstyles2_dws_pytorch = self.dic2['batch_%.3d.dstyles2_dws' % batch_idx]
 
-        datas = {
-            'ws': ws[i],
-            'styles_pytorch': styles_pytorch[i],
-            'dstyles2_dws_pytorch': dstyles2_dws_pytorch[i],
-        }
+        # miemieGAN中验证集的写法
+        # datas = {
+        #     'ws': ws[i],
+        #     'styles_pytorch': styles_pytorch[i],
+        #     'dstyles2_dws_pytorch': dstyles2_dws_pytorch[i],
+        # }
+        # miemieGAN中训练集的写法
+        datas = (ws[i], styles_pytorch[i], dstyles2_dws_pytorch[i])
         return datas
 
+import uuid
+
+def worker_init_reset_seed(worker_id):
+    seed = uuid.uuid4().int % 2**32
+    random.seed(seed)
+    torch.set_rng_state(torch.manual_seed(seed).get_state())
+    np.random.seed(seed)
+
+
+import itertools
+from typing import Optional
+from torch.utils.data.sampler import Sampler
+
+class InfiniteSampler(Sampler):
+    """
+    In training, we only care about the "infinite stream" of training data.
+    So this sampler produces an infinite stream of indices and
+    all workers cooperate to correctly shuffle the indices and sample different indices.
+    The samplers in each worker effectively produces `indices[worker_id::num_workers]`
+    where `indices` is an infinite stream of indices consisting of
+    `shuffle(range(size)) + shuffle(range(size)) + ...` (if shuffle is True)
+    or `range(size) + range(size) + ...` (if shuffle is False)
+    """
+
+    def __init__(
+        self,
+        size: int,
+        shuffle: bool = True,
+        seed: Optional[int] = 0,
+        rank=0,
+        world_size=1,
+    ):
+        """
+        Args:
+            size (int): the total number of data of the underlying dataset to sample from
+            shuffle (bool): whether to shuffle the indices or not
+            seed (int): the initial seed of the shuffle. Must be the same
+                across all workers. If None, will use a random seed shared
+                among workers (require synchronization among all workers).
+        """
+        self._size = size
+        assert size > 0
+        self._shuffle = shuffle
+        self._seed = int(seed)
+
+        if dist.is_available() and dist.is_initialized():
+            self._rank = dist.get_rank()
+            self._world_size = dist.get_world_size()
+        else:
+            self._rank = rank
+            self._world_size = world_size
+
+    def __iter__(self):
+        start = self._rank
+        yield from itertools.islice(
+            self._infinite_indices(), start, None, self._world_size
+        )
+
+    def _infinite_indices(self):
+        g = torch.Generator()
+        g.manual_seed(self._seed)
+        while True:
+            if self._shuffle:
+                yield from torch.randperm(self._size, generator=g)
+            else:
+                yield from torch.arange(self._size)
+
+    def __len__(self):
+        return self._size // self._world_size
+
+
+
+class StyleGANv2ADADataPrefetcher:
+    """
+    xxxDataPrefetcher is inspired by code of following file:
+    https://github.com/NVIDIA/apex/blob/master/examples/imagenet/main_amp.py
+    It could speedup your pytorch dataloader. For more information, please check
+    https://github.com/NVIDIA/apex/issues/304#issuecomment-493562789.
+    """
+
+    def __init__(self, loader):
+        self.loader = iter(loader)
+        self.stream = torch.cuda.Stream()
+        self.input_cuda = self._input_cuda_for_image
+        self.record_stream = StyleGANv2ADADataPrefetcher._record_stream_for_image
+        self.preload()
+
+    def preload(self):
+        try:
+            self.ws, self.styles_pytorch, self.dstyles2_dws_pytorch = next(self.loader)
+        except StopIteration:
+            self.ws = None
+            self.styles_pytorch = None
+            self.dstyles2_dws_pytorch = None
+            return
+
+        with torch.cuda.stream(self.stream):
+            self.input_cuda()
+            self.styles_pytorch = self.styles_pytorch.cuda(non_blocking=True)
+            self.dstyles2_dws_pytorch = self.dstyles2_dws_pytorch.cuda(non_blocking=True)
+
+    def next(self):
+        torch.cuda.current_stream().wait_stream(self.stream)
+        ws = self.ws
+        styles_pytorch = self.styles_pytorch
+        dstyles2_dws_pytorch = self.dstyles2_dws_pytorch
+        if ws is not None:
+            self.record_stream(ws)
+        if styles_pytorch is not None:
+            styles_pytorch.record_stream(torch.cuda.current_stream())
+        if dstyles2_dws_pytorch is not None:
+            dstyles2_dws_pytorch.record_stream(torch.cuda.current_stream())
+        self.preload()
+        return ws, styles_pytorch, dstyles2_dws_pytorch
+
+    def _input_cuda_for_image(self):
+        self.ws = self.ws.cuda(non_blocking=True)
+
+    @staticmethod
+    def _record_stream_for_image(input):
+        input.record_stream(torch.cuda.current_stream())
 
 
 def main(seed, args):
@@ -630,40 +754,73 @@ def main(seed, args):
     optimizer = torch.optim.SGD(model.parameters(), lr=lr, momentum=0.9)
     model.load_state_dict(torch.load("01_00.pth", map_location="cpu"))
 
-    # data_loader
-    train_dataset = MyDataset('01.npz', batch_size, steps)
+    # miemieGAN中验证集的写法
+    # train_dataset = MyDataset('01.npz', batch_size, steps)
+    # if is_distributed:
+    #     batch_gpu = batch_size // dist.get_world_size()
+    #     sampler = torch.utils.data.distributed.DistributedSampler(
+    #         train_dataset, shuffle=False
+    #     )
+    # else:
+    #     batch_gpu = batch_size
+    #     sampler = torch.utils.data.SequentialSampler(train_dataset)
+    #
+    # dataloader_kwargs = {
+    #     "num_workers": 0,
+    #     "pin_memory": True,
+    #     "sampler": sampler,
+    # }
+    # dataloader_kwargs["batch_size"] = batch_gpu
+    # train_loader = torch.utils.data.DataLoader(train_dataset, **dataloader_kwargs)
+
+    # miemieGAN中训练集的写法
+    local_rank = get_local_rank()
+    with wait_for_the_master(local_rank):
+        train_dataset = MyDataset('01.npz', batch_size, steps)
 
     if is_distributed:
-        batch_gpu = batch_size // dist.get_world_size()
-        sampler = torch.utils.data.distributed.DistributedSampler(
-            train_dataset, shuffle=False
-        )
-    else:
-        batch_gpu = batch_size
-        sampler = torch.utils.data.SequentialSampler(train_dataset)
+        batch_size = batch_size // dist.get_world_size()
 
-    dataloader_kwargs = {
-        "num_workers": 0,
-        "pin_memory": True,
-        "sampler": sampler,
-    }
-    dataloader_kwargs["batch_size"] = batch_gpu
+    sampler = InfiniteSampler(len(train_dataset), shuffle=False, seed=seed if seed else 0)
+
+    batch_sampler = torch.utils.data.sampler.BatchSampler(
+        sampler=sampler,
+        batch_size=batch_size,
+        drop_last=True,
+    )
+
+    dataloader_kwargs = {"num_workers": 0, "pin_memory": True}
+    dataloader_kwargs["batch_sampler"] = batch_sampler
+
+    # Make sure each process has different random seed, especially for 'fork' method.
+    # Check https://github.com/pytorch/pytorch/issues/63311 for more details.
+    dataloader_kwargs["worker_init_fn"] = worker_init_reset_seed
+
     train_loader = torch.utils.data.DataLoader(train_dataset, **dataloader_kwargs)
+    logger.info("init prefetcher, this might take one minute or less...")
+    prefetcher = StyleGANv2ADADataPrefetcher(train_loader)
+
 
     if is_distributed:
         # model = DDP(model, device_ids=[local_rank], broadcast_buffers=False, find_unused_parameters=True)
         model = DDP(model, device_ids=[local_rank], broadcast_buffers=True, find_unused_parameters=True)
 
     logger.info("Training start...")
-    for batch_idx, data in enumerate(train_loader):
-        for k, v in data.items():
-            data[k] = v.cuda()
+    # miemieGAN中验证集的写法
+    # for batch_idx, data in enumerate(train_loader):
+    # miemieGAN中训练集的写法
+    for batch_idx in range(20):
+        # miemieGAN中验证集的写法
+        # for k, v in data.items():
+        #     data[k] = v.cuda()
+        # ws = data['ws']
+        # styles_pytorch = data['styles_pytorch']
+        # dstyles2_dws_pytorch = data['dstyles2_dws_pytorch']
+        # styles_pytorch = styles_pytorch.cpu().detach().numpy()
+        # dstyles2_dws_pytorch = dstyles2_dws_pytorch.cpu().detach().numpy()
 
-        ws = data['ws']
-        styles_pytorch = data['styles_pytorch']
-        dstyles2_dws_pytorch = data['dstyles2_dws_pytorch']
-        styles_pytorch = styles_pytorch.cpu().detach().numpy()
-        dstyles2_dws_pytorch = dstyles2_dws_pytorch.cpu().detach().numpy()
+        # miemieGAN中训练集的写法
+        ws, styles_pytorch, dstyles2_dws_pytorch = prefetcher.next()
 
 
         print('======================== batch_%.3d ========================' % batch_idx)
