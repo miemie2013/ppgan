@@ -614,6 +614,14 @@ def main(seed, args):
     in_channels = 2
     w_dim = 2
     lr = 0.1
+
+    # "双卡+每卡批大小b//2",如果要对齐"单卡+每卡批大小b"的训练过程,
+    # loss或学习率lr需要乘以显卡数量get_world_size()
+    # 因为多卡训练时,每一张卡上的梯度是求平均值而并不是求和
+    if is_distributed:
+        lr *= get_world_size()
+
+
     # activation = 'linear'
     # activation = 'lrelu'
     # activation = 'relu'
@@ -674,26 +682,16 @@ def main(seed, args):
         # forward()方法不要return任何不计算loss的变量！
         loss = model(ws)
 
-        # "双卡+每卡批大小1",如果要对齐"单卡+每卡批大小2"的训练过程,
-        # loss需要乘以显卡数量get_world_size()
+        # "双卡+每卡批大小b//2",如果要对齐"单卡+每卡批大小b"的训练过程,
+        # loss或学习率lr需要乘以显卡数量get_world_size()
         # 因为多卡训练时,每一张卡上的梯度是求平均值而并不是求和
+        loss.backward()
         if is_distributed:
-            loss *= get_world_size()
-            loss.backward()
             w_grad = model.module.weight.grad
             b_grad = model.module.bias.grad
         else:
-            loss.backward()
             w_grad = model.weight.grad
             b_grad = model.bias.grad
-
-        # styles_pth = styles.cpu().detach().numpy()
-        # ddd = np.sum((styles_pytorch - styles_pth) ** 2)
-        # print('ddd=%.6f' % ddd)
-
-        # dstyles2_dws_pth = dstyles2_dws.cpu().detach().numpy()
-        # ddd = np.sum((dstyles2_dws_pytorch - dstyles2_dws_pth) ** 2)
-        # print('ddd=%.6f' % ddd)
 
         print(w_grad)
         print(b_grad)
@@ -723,10 +721,10 @@ if __name__ == "__main__":
     dist_url = "auto"
 
     # 2 ji 2 ka
-    num_gpu = 1
-    dist_url = "tcp://192.168.0.104:12312"
-    num_machines = 2
-    machine_rank = 0
+    # num_gpu = 1
+    # dist_url = "tcp://192.168.0.104:12312"
+    # num_machines = 2
+    # machine_rank = 0
 
 
     assert num_gpu <= get_num_devices()
