@@ -552,34 +552,26 @@ class FullyConnectedLayer(torch.nn.Module):
         return loss
 
 
-batch_size = 16
-steps = 20
-# batch_size = 32
-# steps = 10
-
 class MyDataset(torch.utils.data.Dataset):
-    def __init__(self, npz_path):
+    def __init__(self, npz_path, batch_size, steps):
         self.dic2 = np.load(npz_path)
+        self.batch_size = batch_size
+        self.steps = steps
 
     def __len__(self):
         # size = len(self.seeds)
-        return batch_size * steps
+        return self.batch_size * self.steps
 
     def __getitem__(self, idx):
-        batch_idx = idx // batch_size
-        i = idx % batch_size
+        batch_idx = idx // self.batch_size
+        i = idx % self.batch_size
 
-        # batch_idx = 0
-        # i = 0
         ws = self.dic2['batch_%.3d.input' % batch_idx]
         styles_pytorch = self.dic2['batch_%.3d.output' % batch_idx]
         dstyles2_dws_pytorch = self.dic2['batch_%.3d.dstyles2_dws' % batch_idx]
 
-        # ws = np.random.RandomState(100).randn(1, 512)
-
         datas = {
             'ws': ws[i],
-            # 'ws': ws[0],
             'styles_pytorch': styles_pytorch[i],
             'dstyles2_dws_pytorch': dstyles2_dws_pytorch[i],
         }
@@ -609,8 +601,8 @@ def main(seed, args):
     local_rank = get_local_rank()
     device = "cuda:{}".format(local_rank)
 
-
-    global batch_size
+    batch_size = 16
+    steps = 20
     in_channels = 2
     w_dim = 2
     lr = 0.1
@@ -639,7 +631,7 @@ def main(seed, args):
     model.load_state_dict(torch.load("01_00.pth", map_location="cpu"))
 
     # data_loader
-    train_dataset = MyDataset('01.npz')
+    train_dataset = MyDataset('01.npz', batch_size, steps)
 
     if is_distributed:
         batch_gpu = batch_size // dist.get_world_size()
