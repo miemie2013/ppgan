@@ -1,8 +1,8 @@
+
 import torch
-import paddle
-import os
 import numpy as np
-from ppgan.models.generators.generator_styleganv2ada import SynthesisLayer
+from training.networks import SynthesisLayer2
+
 
 x_shape = [1, 512, 4, 4]
 w_shape = [1, 512]
@@ -247,44 +247,51 @@ gain = 1
 
 
 
+batch_size = 2
+lr = 0.0001
+
 # 强制设置为不使用噪声
 use_noise = False
-model = SynthesisLayer(in_channels, out_channels, w_dim, resolution,
+model = SynthesisLayer2(in_channels, out_channels, w_dim, resolution,
                        kernel_size, up, use_noise, activation, resample_filter, conv_clamp, channels_last)
 model.train()
+optimizer = torch.optim.SGD(model.parameters(), lr=lr, momentum=0.9)
+model.load_state_dict(torch.load("52.pth", map_location="cpu"))
 
-use_gpu = True
-gpu_id = int(os.environ.get('FLAGS_selected_gpus', 0))
-place = paddle.CUDAPlace(gpu_id) if use_gpu else paddle.CPUPlace()
+dic2 = np.load('52.npz')
+for batch_idx in range(8):
+    print('======================== batch_%.3d ========================'%batch_idx)
+    optimizer.zero_grad(set_to_none=True)
+    x = dic2['batch_%.3d.input0'%batch_idx]
+    ws = dic2['batch_%.3d.input1'%batch_idx]
+    y_pytorch = dic2['batch_%.3d.output'%batch_idx]
+    dy_dws_pytorch = dic2['batch_%.3d.dy_dws'%batch_idx]
+    dy_dx_pytorch = dic2['batch_%.3d.dy_dx'%batch_idx]
+    ws = torch.Tensor(ws)
+    ws.requires_grad_(True)
+    x = torch.Tensor(x)
+    x.requires_grad_(True)
 
-def copy(name, w, std):
-    value2 = paddle.to_tensor(w, place=place)
-    value = std[name]
-    value = value * 0 + value2
-    std[name] = value
+    y = model(x, ws, noise_mode='random', fused_modconv=fused_modconv, gain=gain)
+    dy_dx = torch.autograd.grad(outputs=[y.sum()], inputs=[x], create_graph=True, only_inputs=True)[0]
+    dy_dws = torch.autograd.grad(outputs=[y.sum()], inputs=[ws], create_graph=True, only_inputs=True)[0]
 
-model_std = model.state_dict()
+    y_paddle = y.cpu().detach().numpy()
+    ddd = np.sum((y_pytorch - y_paddle) ** 2)
+    print('ddd=%.6f' % ddd)
 
-ckpt_file = '52.pth'
-save_name = '52.pdparams'
-state_dict = torch.load(ckpt_file, map_location=torch.device('cpu'))
+    dy_dx_paddle = dy_dx.cpu().detach().numpy()
+    ddd = np.sum((dy_dx_pytorch - dy_dx_paddle) ** 2)
+    print('ddd=%.6f' % ddd)
 
+    dy_dws_paddle = dy_dws.cpu().detach().numpy()
+    ddd = np.sum((dy_dws_pytorch - dy_dws_paddle) ** 2)
+    print('ddd=%.6f' % ddd)
 
-model_dic = {}
-for key, value in state_dict.items():
-    model_dic[key] = value.data.numpy()
-
-for key in model_dic.keys():
-    name2 = key
-    w = model_dic[key]
-    if '.linear.weight' in key:
-        w = w.transpose(1, 0)  # pytorch的nn.Linear()的weight权重要转置才能赋值给paddle的nn.Linear()
-    if '.noise_strength' in key:
-        print()
-        w = np.reshape(w, [1, ])
-    print(key)
-    copy(name2, w, model_std)
-model.set_state_dict(model_std)
-
-paddle.save(model_std, save_name)
-
+    loss = dy_dx.sum() + dy_dws.sum() + y.sum()
+    # loss = dy_dx.sum() + y.sum()
+    # loss = dy_dws.sum() + y.sum()
+    # loss = y.sum()
+    loss.backward()
+    optimizer.step()
+print()
