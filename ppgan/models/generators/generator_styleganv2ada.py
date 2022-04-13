@@ -641,7 +641,7 @@ class SynthesisLayer(nn.Layer):
         self.resolution = resolution
         self.up = up
         self.use_noise = use_noise
-        self.use_noise = False
+        # self.use_noise = False
         self.activation = activation
         self.conv_clamp = conv_clamp
         self.register_buffer('resample_filter', upfirdn2d_setup_filter(resample_filter))

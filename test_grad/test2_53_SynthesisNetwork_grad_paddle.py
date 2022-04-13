@@ -60,7 +60,7 @@ for batch_idx in range(8):
     ddd = np.sum((dy_dws_pytorch - dy_dws_paddle) ** 2)
     print('ddd=%.6f' % ddd)
 
-    # 需要强制设置ppgan/models/generators/generator_styleganv2ada.py里的SynthesisLayer的self.use_noise = False，pytorch的也要设置，才会和pytorch输出一样！！！
+    # 需要强制设置ppgan/models/generators/generator_styleganv2ada.py里的 SynthesisLayer 的self.use_noise = False，pytorch的也要设置，才会和pytorch输出一样！！！
     loss = dy_dws.sum() + y.sum()
     # loss = y.sum()
     loss.backward()
