@@ -358,7 +358,7 @@ class Trainer:
 
         num_items = len(self.test_dataloader)
         real_stats_kwargs = dict(capture_mean_cov=True,)
-        real_stats = FeatureStats(max_items=num_items, **real_stats_kwargs)
+        real_stats = FeatureStats(max_items=n_dataset, **real_stats_kwargs)
 
         log_interval = 1024
         for i in range(self.max_eval_steps):
