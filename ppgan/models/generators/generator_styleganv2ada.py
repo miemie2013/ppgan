@@ -436,12 +436,12 @@ class Conv2dLayer(nn.Layer):
         w = self.weight * self.weight_gain
         b = paddle.cast(self.bias, dtype=x.dtype) if self.bias is not None else None
         flip_weight = (self.up == 1)  # slightly faster
-        x2 = conv2d_resample(x=x, w=paddle.cast(w, dtype=x.dtype), filter=self.resample_filter, up=self.up, down=self.down, padding=self.padding, flip_weight=flip_weight)
+        x = conv2d_resample(x=x, w=paddle.cast(w, dtype=x.dtype), filter=self.resample_filter, up=self.up, down=self.down, padding=self.padding, flip_weight=flip_weight)
 
         act_gain = self.act_gain * gain
         act_clamp = self.conv_clamp * gain if self.conv_clamp is not None else None
-        out = bias_act(x2, b, act=self.activation, gain=act_gain, clamp=act_clamp)
-        return out
+        x = bias_act(x, b, act=self.activation, gain=act_gain, clamp=act_clamp)
+        return x
 
 
 class FullyConnectedLayer(nn.Layer):
@@ -464,7 +464,6 @@ class FullyConnectedLayer(nn.Layer):
 
     def forward(self, x):
         w = paddle.cast(self.weight, dtype=x.dtype) * self.weight_gain
-        # w = self.weight * self.weight_gain
         b = self.bias
         if b is not None:
             b = paddle.cast(b, dtype=x.dtype)
@@ -472,12 +471,12 @@ class FullyConnectedLayer(nn.Layer):
                 b = b * self.bias_gain
 
         if self.activation == 'linear' and b is not None:
-            # out = paddle.addmm(b.unsqueeze(0), x, w.t())   # 因为paddle.addmm()没有实现二阶梯度，所以用其它等价实现。
-            out = paddle.matmul(x, w, transpose_y=True) + b.unsqueeze(0)
+            # x = paddle.addmm(b.unsqueeze(0), x, w.t())   # 因为paddle.addmm()没有实现二阶梯度，所以用其它等价实现。
+            x = paddle.matmul(x, w, transpose_y=True) + b.unsqueeze(0)
         else:
-            r = x.matmul(w.t())
-            out = bias_act(r, b, act=self.activation)
-        return out
+            x = x.matmul(w.t())
+            x = bias_act(x, b, act=self.activation)
+        return x
 
 
 
@@ -602,27 +601,27 @@ def modulated_conv2d(
 
     # Execute by scaling the activations before and after the convolution.
     if not fused_modconv:
-        x_mul_styles = x * paddle.cast(styles, dtype=x.dtype).reshape((batch_size, -1, 1, 1))
-        x_2 = conv2d_resample(x=x_mul_styles, w=paddle.cast(weight, dtype=x.dtype), filter=resample_filter, up=up, down=down, padding=padding, flip_weight=flip_weight)
+        x = x * paddle.cast(styles, dtype=x.dtype).reshape((batch_size, -1, 1, 1))
+        x = conv2d_resample(x=x, w=paddle.cast(weight, dtype=x.dtype), filter=resample_filter, up=up, down=down, padding=padding, flip_weight=flip_weight)
         if demodulate and noise is not None:
-            out = x_2 * paddle.cast(dcoefs, dtype=x.dtype).reshape((batch_size, -1, 1, 1)) + paddle.cast(noise, dtype=x.dtype)
+            x = x * paddle.cast(dcoefs, dtype=x.dtype).reshape((batch_size, -1, 1, 1)) + paddle.cast(noise, dtype=x.dtype)
         elif demodulate:
-            out = x_2 * paddle.cast(dcoefs, dtype=x.dtype).reshape((batch_size, -1, 1, 1))
+            x = x * paddle.cast(dcoefs, dtype=x.dtype).reshape((batch_size, -1, 1, 1))
         elif noise is not None:
-            out = x_2 + paddle.cast(noise, dtype=x.dtype)
+            x = x + paddle.cast(noise, dtype=x.dtype)
         else:
-            out = x_2
-        return out
+            x = x
+        return x
 
     # Execute as one fused op using grouped convolution.
     else:
-        xr = x.reshape((1, -1, *x.shape[2:]))
+        x = x.reshape((1, -1, *x.shape[2:]))
         w = w.reshape((-1, in_channels, kh, kw))
-        x_2 = conv2d_resample(x=xr, w=paddle.cast(w, dtype=xr.dtype), filter=resample_filter, up=up, down=down, padding=padding, groups=batch_size, flip_weight=flip_weight)
-        out = x_2.reshape((batch_size, -1, *x_2.shape[2:]))
+        x = conv2d_resample(x=x, w=paddle.cast(w, dtype=x.dtype), filter=resample_filter, up=up, down=down, padding=padding, groups=batch_size, flip_weight=flip_weight)
+        x = x.reshape((batch_size, -1, *x.shape[2:]))
         if noise is not None:
-            out = out + noise
-        return out
+            x = x + noise
+        return x
 
 class SynthesisLayer(nn.Layer):
     def __init__(self,
@@ -683,14 +682,14 @@ class SynthesisLayer(nn.Layer):
             noise = self.noise_const * self.noise_strength
 
         flip_weight = (self.up == 1) # slightly faster
-        img2 = modulated_conv2d(x=x, weight=self.weight, styles=styles, noise=noise, up=self.up,
+        x = modulated_conv2d(x=x, weight=self.weight, styles=styles, noise=noise, up=self.up,
             padding=self.padding, resample_filter=self.resample_filter, flip_weight=flip_weight, fused_modconv=fused_modconv)
 
         act_gain = self.act_gain * gain
         act_clamp = self.conv_clamp * gain if self.conv_clamp is not None else None
         b = paddle.cast(self.bias, dtype=x.dtype)
-        img3 = bias_act(img2, b, act=self.activation, gain=act_gain, clamp=act_clamp)
-        return img3
+        x = bias_act(x, b, act=self.activation, gain=act_gain, clamp=act_clamp)
+        return x
 
 
 
@@ -712,10 +711,10 @@ class ToRGBLayer(nn.Layer):
 
     def forward(self, x, w, fused_modconv=True):
         styles = self.affine(w) * self.weight_gain
-        x2 = modulated_conv2d(x=x, weight=self.weight, styles=styles, demodulate=False, fused_modconv=fused_modconv)
+        x = modulated_conv2d(x=x, weight=self.weight, styles=styles, demodulate=False, fused_modconv=fused_modconv)
         b = paddle.cast(self.bias, dtype=x.dtype)
-        out = bias_act(x2, b, clamp=self.conv_clamp)
-        return out
+        x = bias_act(x, b, clamp=self.conv_clamp)
+        return x
 
 
 
