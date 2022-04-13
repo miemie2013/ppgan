@@ -85,7 +85,6 @@ def bias_act(x, b=None, dim=1, act='linear', alpha=None, gain=None, clamp=None):
         new_shape = [-1 if i == dim else 1 for i in range(x.ndim)]
         b_ = paddle.reshape(b, new_shape)
         x = x + b_
-    x_add_b = x
 
     # 经过激活函数
     alpha = float(alpha)  # 只有leaky_relu需要
@@ -109,24 +108,17 @@ def bias_act(x, b=None, dim=1, act='linear', alpha=None, gain=None, clamp=None):
         x = F.sigmoid(x) * x
     else:
         raise NotImplementedError("activation \'{}\' is not implemented.".format(act))
-    act_x = x
 
 
     # 乘以缩放因子
     gain = float(gain)
     if gain != 1:
         x = x * gain
-    gain_x = x
 
     # 限制范围
     if clamp >= 0:
         x = paddle.clip(x, -clamp, clamp)
-    clamp_x = x
-    temp_tensors = {}
-    temp_tensors['gain_x'] = gain_x
-    temp_tensors['act_x'] = act_x
-    temp_tensors['x_add_b'] = x_add_b
-    return clamp_x, temp_tensors
+    return x
 
 
 def _parse_padding(padding):
@@ -309,9 +301,8 @@ def conv2d_resample(x, w, filter=None, up=1, down=1, padding=0, groups=1, flip_w
     # Fast path: 1x1 convolution with downsampling only => downsample first, then convolve.
     if kw == 1 and kh == 1 and (down > 1 and up == 1):
         x = upfirdn2d(x, filter, down=down, padding=[px0, px1, py0, py1], flip_filter=flip_filter)
-        x_1 = x
         x = _conv2d_wrapper(x=x, w=w, groups=groups, flip_weight=flip_weight)
-        return x, x_1
+        return x
 
     # Fast path: 1x1 convolution with upsampling only => convolve first, then upsample.
     if kw == 1 and kh == 1 and (up > 1 and down == 1):
@@ -322,9 +313,8 @@ def conv2d_resample(x, w, filter=None, up=1, down=1, padding=0, groups=1, flip_w
     # Fast path: downsampling only => use strided convolution.
     if down > 1 and up == 1:
         x = upfirdn2d(x, filter, padding=[px0, px1, py0, py1], flip_filter=flip_filter)
-        x_1 = x
         x = _conv2d_wrapper(x=x, w=w, stride=down, groups=groups, flip_weight=flip_weight)
-        return x, x_1
+        return x
 
     # Fast path: upsampling with optional downsampling => use transpose strided convolution.
     if up > 1:
@@ -341,18 +331,16 @@ def conv2d_resample(x, w, filter=None, up=1, down=1, padding=0, groups=1, flip_w
         pxt = max(min(-px0, -px1), 0)
         pyt = max(min(-py0, -py1), 0)
         x = _conv2d_wrapper(x=x, w=w, stride=up, padding=[pyt,pxt], groups=groups, transpose=True, flip_weight=(not flip_weight))
-        x_1 = x
         x = upfirdn2d(x, filter, padding=[px0 + pxt, px1 + pxt, py0 + pyt, py1 + pyt], gain=up ** 2, flip_filter=flip_filter)
         if down > 1:
             x = upfirdn2d(x, filter, down=down, flip_filter=flip_filter)
-        return x, x_1
+        return x
 
     # Fast path: no up/downsampling, padding supported by the underlying implementation => use plain conv2d.
     if up == 1 and down == 1:
         if px0 == px1 and py0 == py1 and px0 >= 0 and py0 >= 0:
             out = _conv2d_wrapper(x=x, w=w, padding=[py0,px0], groups=groups, flip_weight=flip_weight)
-            x_1 = None
-            return out, x_1
+            return out
 
     # Fallback: Generic reference implementation.
     x = upfirdn2d(x, (filter if up > 1 else None), up=up, padding=[px0, px1, py0, py1], gain=up ** 2, flip_filter=flip_filter)
@@ -448,11 +436,11 @@ class Conv2dLayer(nn.Layer):
         w = self.weight * self.weight_gain
         b = paddle.cast(self.bias, dtype=x.dtype) if self.bias is not None else None
         flip_weight = (self.up == 1)  # slightly faster
-        x2, x_1 = conv2d_resample(x=x, w=paddle.cast(w, dtype=x.dtype), filter=self.resample_filter, up=self.up, down=self.down, padding=self.padding, flip_weight=flip_weight)
+        x2 = conv2d_resample(x=x, w=paddle.cast(w, dtype=x.dtype), filter=self.resample_filter, up=self.up, down=self.down, padding=self.padding, flip_weight=flip_weight)
 
         act_gain = self.act_gain * gain
         act_clamp = self.conv_clamp * gain if self.conv_clamp is not None else None
-        out, temp_tensors = bias_act(x2, b, act=self.activation, gain=act_gain, clamp=act_clamp)
+        out = bias_act(x2, b, act=self.activation, gain=act_gain, clamp=act_clamp)
         return out
 
 
@@ -488,7 +476,7 @@ class FullyConnectedLayer(nn.Layer):
             out = paddle.matmul(x, w, transpose_y=True) + b.unsqueeze(0)
         else:
             r = x.matmul(w.t())
-            out, temp_tensors = bias_act(r, b, act=self.activation)
+            out = bias_act(r, b, act=self.activation)
         return out
 
 
@@ -590,9 +578,6 @@ def modulated_conv2d(
 ):
     batch_size = x.shape[0]
     out_channels, in_channels, kh, kw = weight.shape
-    # misc.assert_shape(weight, [out_channels, in_channels, kh, kw]) # [OIkk]
-    # misc.assert_shape(x, [batch_size, in_channels, None, None]) # [NIHW]
-    # misc.assert_shape(styles, [batch_size, in_channels]) # [NI]
 
     # Pre-normalize inputs to avoid FP16 overflow.
     if x.dtype == paddle.float16 and demodulate:
@@ -618,7 +603,7 @@ def modulated_conv2d(
     # Execute by scaling the activations before and after the convolution.
     if not fused_modconv:
         x_mul_styles = x * paddle.cast(styles, dtype=x.dtype).reshape((batch_size, -1, 1, 1))
-        x_2, x_1 = conv2d_resample(x=x_mul_styles, w=paddle.cast(weight, dtype=x.dtype), filter=resample_filter, up=up, down=down, padding=padding, flip_weight=flip_weight)
+        x_2 = conv2d_resample(x=x_mul_styles, w=paddle.cast(weight, dtype=x.dtype), filter=resample_filter, up=up, down=down, padding=padding, flip_weight=flip_weight)
         if demodulate and noise is not None:
             out = x_2 * paddle.cast(dcoefs, dtype=x.dtype).reshape((batch_size, -1, 1, 1)) + paddle.cast(noise, dtype=x.dtype)
         elif demodulate:
@@ -627,17 +612,17 @@ def modulated_conv2d(
             out = x_2 + paddle.cast(noise, dtype=x.dtype)
         else:
             out = x_2
-        return out, x_1, x_2, x_mul_styles
+        return out
 
     # Execute as one fused op using grouped convolution.
     else:
         xr = x.reshape((1, -1, *x.shape[2:]))
         w = w.reshape((-1, in_channels, kh, kw))
-        x_2, x_1 = conv2d_resample(x=xr, w=paddle.cast(w, dtype=xr.dtype), filter=resample_filter, up=up, down=down, padding=padding, groups=batch_size, flip_weight=flip_weight)
+        x_2 = conv2d_resample(x=xr, w=paddle.cast(w, dtype=xr.dtype), filter=resample_filter, up=up, down=down, padding=padding, groups=batch_size, flip_weight=flip_weight)
         out = x_2.reshape((batch_size, -1, *x_2.shape[2:]))
         if noise is not None:
             out = out + noise
-        return out, x_1, x_2, xr
+        return out
 
 class SynthesisLayer(nn.Layer):
     def __init__(self,
@@ -698,13 +683,13 @@ class SynthesisLayer(nn.Layer):
             noise = self.noise_const * self.noise_strength
 
         flip_weight = (self.up == 1) # slightly faster
-        img2, x_1, x_2, x_mul_styles = modulated_conv2d(x=x, weight=self.weight, styles=styles, noise=noise, up=self.up,
+        img2 = modulated_conv2d(x=x, weight=self.weight, styles=styles, noise=noise, up=self.up,
             padding=self.padding, resample_filter=self.resample_filter, flip_weight=flip_weight, fused_modconv=fused_modconv)
 
         act_gain = self.act_gain * gain
         act_clamp = self.conv_clamp * gain if self.conv_clamp is not None else None
         b = paddle.cast(self.bias, dtype=x.dtype)
-        img3, temp_tensors = bias_act(img2, b, act=self.activation, gain=act_gain, clamp=act_clamp)
+        img3 = bias_act(img2, b, act=self.activation, gain=act_gain, clamp=act_clamp)
         return img3
 
 
@@ -727,9 +712,9 @@ class ToRGBLayer(nn.Layer):
 
     def forward(self, x, w, fused_modconv=True):
         styles = self.affine(w) * self.weight_gain
-        x2, x_1, x_2, x_mul_styles = modulated_conv2d(x=x, weight=self.weight, styles=styles, demodulate=False, fused_modconv=fused_modconv)
+        x2 = modulated_conv2d(x=x, weight=self.weight, styles=styles, demodulate=False, fused_modconv=fused_modconv)
         b = paddle.cast(self.bias, dtype=x.dtype)
-        out, temp_tensors = bias_act(x2, b, clamp=self.conv_clamp)
+        out = bias_act(x2, b, clamp=self.conv_clamp)
         return out
 
 
