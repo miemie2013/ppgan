@@ -105,11 +105,12 @@ class Trainer:
             self.distributed_data_parallel()
             if self.archi_name == 'StyleGANv2ADAModel':
                 self.distributed_data_parallel_ema()
-                # 为了同步统计量.必须在torch.distributed.init_process_group()方法之后调用.
-                sync_device = paddle.CUDAPlace(self.local_rank) if self.is_distributed else paddle.CPUPlace()
-                training_stats.init_multiprocessing(rank=self.local_rank, sync_device=sync_device)
-                # 修改model的配置，虽然这样写有点丑
-                self.model.rank = self.local_rank
+        if self.archi_name == 'StyleGANv2ADAModel':
+            # 为了同步统计量.
+            sync_device = paddle.CUDAPlace(self.local_rank) if self.is_distributed else paddle.CPUPlace()
+            training_stats.init_multiprocessing(rank=self.local_rank, sync_device=sync_device)
+            # 修改model的配置，虽然这样写有点丑
+            self.model.rank = self.local_rank
 
         # build metrics
         self.metrics = None

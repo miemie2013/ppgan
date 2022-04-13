@@ -105,13 +105,15 @@ def report(name, value):
         elems.sum(),
         elems.square().sum(),
     ])
+    if moments.ndim == 2:
+        moments = paddle.squeeze(moments, 1)
     assert moments.ndim == 1 and moments.shape[0] == _num_moments
-    moments = moments.to(_counter_dtype)
+    moments = paddle.cast(moments, _counter_dtype)
 
-    device = moments.device
-    if device not in _counters[name]:
-        _counters[name][device] = paddle.zeros_like(moments)
-    _counters[name][device].add_(moments)
+    place = moments.place
+    if place not in _counters[name]:
+        _counters[name][place] = paddle.zeros_like(moments)
+    _counters[name][place].add_(moments)
     return value
 
 #----------------------------------------------------------------------------
@@ -258,11 +260,12 @@ def _sync(names):
 
     # Collect deltas within current rank.
     deltas = []
-    device = _sync_device if _sync_device is not None else paddle.aaaaaaa('cpu')
+    place = _sync_device if _sync_device is not None else paddle.CPUPlace()
     for name in names:
-        delta = paddle.zeros([_num_moments], dtype=_counter_dtype, device=device)
+        delta = paddle.zeros([_num_moments], dtype=_counter_dtype)
         for counter in _counters[name].values():
-            delta.add_(counter.to(device))
+            # delta.add_(counter.to(device))
+            delta = delta + counter
             counter.copy_(paddle.zeros_like(counter))
         deltas.append(delta)
     deltas = paddle.stack(deltas)
