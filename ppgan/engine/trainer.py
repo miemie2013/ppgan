@@ -343,21 +343,7 @@ class Trainer:
         use_shared_memory = cfg_.pop('use_shared_memory', True)
         dataset = build_dataset(cfg_)
         n_dataset = len(dataset)
-
-        # 像stylegan_v2那样预处理图片传入inceptionv3
-        mean = [127.5, 127.5, 127.5]
-        std = [127.5, 127.5, 127.5]
-        mean = paddle.to_tensor(mean, dtype=paddle.float32)
-        std = paddle.to_tensor(std, dtype=paddle.float32)
-        mean = paddle.reshape(mean, (1, -1, 1, 1))
-        std = paddle.reshape(std, (1, -1, 1, 1))
-        def transform(image_bgr):
-            image_b = image_bgr[:, 0:1, :, :]
-            image_g = image_bgr[:, 1:2, :, :]
-            image_r = image_bgr[:, 2:3, :, :]
-            image_rgb = paddle.concat([image_r, image_g, image_b], axis=1)
-            image_rgb = (image_rgb - mean) / std
-            return image_rgb
+        return_features = True
 
         if not hasattr(self, 'train_dataloader'):
             self.cfg.dataset.train.batch_size = dataset_batch_size
@@ -383,20 +369,9 @@ class Trainer:
             data = next(iter_loader)
             real_image, label, image_gen_c = data
             real_image = paddle.cast(real_image, dtype=paddle.float32)  # BGR格式
-            preds = inceptionv3_model(transform(real_image))
-            real_features = preds[0][0]
-            real_features = paddle.squeeze(real_features, axis=[2, 3])
+            real_features = inceptionv3_model(real_image, return_features=return_features)
             real_stats.append_tensor(real_features, num_gpus=1, rank=0)
         mu_real, sigma_real = real_stats.get_mean_cov()
-        # dic = {}
-        # dic['mu_real'] = mu_real
-        # dic['sigma_real'] = sigma_real
-        # np.savez('aaa', **dic)
-        # dic2 = np.load('aaa.npz')
-        # ddd = np.sum((dic2['mu_real'] - mu_real) ** 2)
-        # print('ddd=%.6f' % ddd)
-        # ddd = np.sum((dic2['sigma_real'] - sigma_real) ** 2)
-        # print('ddd=%.6f' % ddd)
 
         batch_gen = min(batch_size, 4)
         assert batch_size % batch_gen == 0
@@ -426,9 +401,7 @@ class Trainer:
             images = paddle.concat(images)  # BGR格式
             if images.shape[1] == 1:
                 images = images.tile([1, 3, 1, 1])
-            preds = inceptionv3_model(transform(images))
-            fake_features = preds[0][0]
-            fake_features = paddle.squeeze(fake_features, axis=[2, 3])
+            fake_features = inceptionv3_model(images, return_features=return_features)
             fake_stats.append_tensor(fake_features, num_gpus=1, rank=0)
 
             # 估计剩余时间

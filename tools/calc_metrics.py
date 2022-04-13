@@ -26,7 +26,7 @@ from ppgan.utils.config import get_config
 from ppgan.utils.setup import setup
 from ppgan.engine.trainer import Trainer
 from ppgan.utils.logger import setup_logger
-from ppgan.metrics.inception import InceptionV3
+from ppgan.metrics.inception_paddle import Inception_v3
 
 import argparse
 
@@ -103,9 +103,7 @@ def main(args, cfg):
         trainer.load(args.load)
 
     # build inceptionv3
-    dims = 2048
-    block_idx = InceptionV3.BLOCK_INDEX_BY_DIM[dims]
-    inceptionv3_model = InceptionV3([block_idx], normalize_input=False)
+    inceptionv3_model = Inception_v3()
     param_dict = paddle.load(args.inceptionv3_path)
     inceptionv3_model.load_dict(param_dict)
     inceptionv3_model.eval()
