@@ -13,7 +13,7 @@ code."""
 
 import re
 import numpy as np
-import torch
+import paddle
 from typing import Any, List, Tuple, Union
 
 
@@ -33,19 +33,13 @@ class EasyDict(dict):
         del self[name]
 
 
-def profiled_function(fn):
-    def decorator(*args, **kwargs):
-        with torch.autograd.profiler.record_function(fn.__name__):
-            return fn(*args, **kwargs)
-    decorator.__name__ = fn.__name__
-    return decorator
 
 
 #----------------------------------------------------------------------------
 
 _num_moments    = 3             # [num_scalars, sum_of_scalars, sum_of_squares]
-_reduce_dtype   = torch.float32 # Data type to use for initial per-tensor reduction.
-_counter_dtype  = torch.float64 # Data type to use for the internal counters.
+_reduce_dtype   = paddle.float32 # Data type to use for initial per-tensor reduction.
+_counter_dtype  = paddle.float64 # Data type to use for the internal counters.
 _rank           = 0             # Rank of the current process.
 _sync_device    = None          # Device to use for multiprocess communication. None = single-process.
 _sync_called    = False         # Has _sync() been called yet?
@@ -75,7 +69,6 @@ def init_multiprocessing(rank, sync_device):
 
 #----------------------------------------------------------------------------
 
-@profiled_function
 def report(name, value):
     r"""Broadcasts the given set of scalars to all interested instances of
     `Collector`, across device and process boundaries.
@@ -102,13 +95,13 @@ def report(name, value):
     if name not in _counters:
         _counters[name] = dict()
 
-    elems = torch.as_tensor(value)
+    elems = paddle.to_tensor(value)
     if elems.numel() == 0:
         return value
 
-    elems = elems.detach().flatten().to(_reduce_dtype)
-    moments = torch.stack([
-        torch.ones_like(elems).sum(),
+    elems = paddle.cast(elems.detach().flatten(), _reduce_dtype)
+    moments = paddle.stack([
+        paddle.ones_like(elems).sum(),
         elems.sum(),
         elems.square().sum(),
     ])
@@ -117,7 +110,7 @@ def report(name, value):
 
     device = moments.device
     if device not in _counters[name]:
-        _counters[name][device] = torch.zeros_like(moments)
+        _counters[name][device] = paddle.zeros_like(moments)
     _counters[name][device].add_(moments)
     return value
 
@@ -184,7 +177,7 @@ class Collector:
             self._moments.clear()
         for name, cumulative in _sync(self.names()):
             if name not in self._cumulative:
-                self._cumulative[name] = torch.zeros([_num_moments], dtype=_counter_dtype)
+                self._cumulative[name] = paddle.zeros([_num_moments], dtype=_counter_dtype)
             delta = cumulative - self._cumulative[name]
             self._cumulative[name].copy_(cumulative)
             if float(delta[0]) != 0:
@@ -197,7 +190,7 @@ class Collector:
         """
         assert self._regex.fullmatch(name)
         if name not in self._moments:
-            self._moments[name] = torch.zeros([_num_moments], dtype=_counter_dtype)
+            self._moments[name] = paddle.zeros([_num_moments], dtype=_counter_dtype)
         return self._moments[name]
 
     def num(self, name):
@@ -265,24 +258,24 @@ def _sync(names):
 
     # Collect deltas within current rank.
     deltas = []
-    device = _sync_device if _sync_device is not None else torch.device('cpu')
+    device = _sync_device if _sync_device is not None else paddle.aaaaaaa('cpu')
     for name in names:
-        delta = torch.zeros([_num_moments], dtype=_counter_dtype, device=device)
+        delta = paddle.zeros([_num_moments], dtype=_counter_dtype, device=device)
         for counter in _counters[name].values():
             delta.add_(counter.to(device))
-            counter.copy_(torch.zeros_like(counter))
+            counter.copy_(paddle.zeros_like(counter))
         deltas.append(delta)
-    deltas = torch.stack(deltas)
+    deltas = paddle.stack(deltas)
 
     # Sum deltas across ranks.
     if _sync_device is not None:
-        torch.distributed.all_reduce(deltas)
+        paddle.distributed.all_reduce(deltas)
 
     # Update cumulative values.
     deltas = deltas.cpu()
     for idx, name in enumerate(names):
         if name not in _cumulative:
-            _cumulative[name] = torch.zeros([_num_moments], dtype=_counter_dtype)
+            _cumulative[name] = paddle.zeros([_num_moments], dtype=_counter_dtype)
         _cumulative[name].add_(deltas[idx])
 
     # Return name-value pairs.

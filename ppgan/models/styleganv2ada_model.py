@@ -129,6 +129,16 @@ class StyleGANv2ADAModel(BaseModel):
         self.nets['discriminator'].train()
         self.nets_ema['synthesis'].eval()
         self.nets_ema['mapping'].eval()
+        for name, param in self.nets['synthesis'].named_parameters():
+            param.stop_gradient = True
+        for name, param in self.nets['mapping'].named_parameters():
+            param.stop_gradient = True
+        for name, param in self.nets['discriminator'].named_parameters():
+            param.stop_gradient = True
+        for name, param in self.nets_ema['synthesis'].named_parameters():
+            param.stop_gradient = True
+        for name, param in self.nets_ema['mapping'].named_parameters():
+            param.stop_gradient = True
         self.place = place
         self.rank = rank
         self.c_dim = mapping.c_dim

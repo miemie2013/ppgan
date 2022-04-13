@@ -27,6 +27,7 @@ from ..datasets.builder import build_dataloader, build_dataset
 from ..metrics.fid import FeatureStats
 from ..models import PastaGANModel, StyleGANv2ADAModel
 from ..models.builder import build_model
+from ..utils import training_stats
 from ..utils.visual import tensor2img, save_image
 from ..utils.filesystem import makedirs, save, load
 from ..utils.timer import TimeAverager
@@ -97,9 +98,18 @@ class Trainer:
 
         # build model
         self.model = build_model(cfg.model)
+        self.archi_name = cfg.model.name
+        self.is_distributed = ParallelEnv().nranks > 1
         # multiple gpus prepare
         if ParallelEnv().nranks > 1:
             self.distributed_data_parallel()
+            if self.archi_name == 'StyleGANv2ADAModel':
+                self.distributed_data_parallel_ema()
+                # 为了同步统计量.必须在torch.distributed.init_process_group()方法之后调用.
+                sync_device = paddle.CUDAPlace(self.local_rank) if self.is_distributed else paddle.CPUPlace()
+                training_stats.init_multiprocessing(rank=self.local_rank, sync_device=sync_device)
+                # 修改model的配置，虽然这样写有点丑
+                self.model.rank = self.local_rank
 
         # build metrics
         self.metrics = None
@@ -125,8 +135,9 @@ class Trainer:
 
         # build lr scheduler
         # TODO: has a better way?
-        if isinstance(self.model, PastaGANModel) or isinstance(self.model, StyleGANv2ADAModel):
-            learning_rate = cfg.lr_scheduler_G.learning_rate
+        if self.archi_name == 'StyleGANv2ADAModel':
+            learning_rate_g = cfg.lr_scheduler_G.learning_rate
+            learning_rate_d = cfg.lr_scheduler_D.learning_rate
             beta1 = cfg.optimizer.generator.beta1
             beta2 = cfg.optimizer.generator.beta2
 
@@ -136,22 +147,28 @@ class Trainer:
             for name, reg_interval in [('G', G_reg_interval), ('D', D_reg_interval)]:
                 if reg_interval is None:
                     if name == 'G':
-                        cfg.lr_scheduler_G.learning_rate = learning_rate
+                        cfg.lr_scheduler_G.learning_rate = learning_rate_g
                     elif name == 'D':
-                        cfg.lr_scheduler_D.learning_rate = learning_rate
+                        cfg.lr_scheduler_D.learning_rate = learning_rate_d
                 else:  # Lazy regularization.
-                    mb_ratio = reg_interval / (reg_interval + 1)
-                    new_lr = learning_rate * mb_ratio
-                    new_beta1 = beta1 ** mb_ratio
-                    new_beta2 = beta2 ** mb_ratio
-                if name == 'G':
-                    cfg.lr_scheduler_G.learning_rate = new_lr
-                    cfg.optimizer.generator.beta1 = new_beta1
-                    cfg.optimizer.generator.beta2 = new_beta2
-                elif name == 'D':
-                    cfg.lr_scheduler_D.learning_rate = new_lr
-                    cfg.optimizer.discriminator.beta1 = new_beta1
-                    cfg.optimizer.discriminator.beta2 = new_beta2
+                    if name == 'G':
+                        mb_ratio = reg_interval / (reg_interval + 1)
+                        new_lr = learning_rate_g * mb_ratio
+                        new_beta1 = beta1 ** mb_ratio
+                        new_beta2 = beta2 ** mb_ratio
+
+                        cfg.lr_scheduler_G.learning_rate = new_lr
+                        cfg.optimizer.generator.beta1 = new_beta1
+                        cfg.optimizer.generator.beta2 = new_beta2
+                    elif name == 'D':
+                        mb_ratio = reg_interval / (reg_interval + 1)
+                        new_lr = learning_rate_d * mb_ratio
+                        new_beta1 = beta1 ** mb_ratio
+                        new_beta2 = beta2 ** mb_ratio
+
+                        cfg.lr_scheduler_D.learning_rate = new_lr
+                        cfg.optimizer.discriminator.beta1 = new_beta1
+                        cfg.optimizer.discriminator.beta2 = new_beta2
 
             if 'lr_scheduler_G' in cfg and 'iters_per_epoch' in cfg.lr_scheduler_G:
                 cfg.lr_scheduler_G.iters_per_epoch = self.iters_per_epoch
@@ -211,6 +228,12 @@ class Trainer:
         find_unused_parameters = self.cfg.get('find_unused_parameters', False)
         for net_name, net in self.model.nets.items():
             self.model.nets[net_name] = paddle.DataParallel(
+                net, find_unused_parameters=find_unused_parameters)
+
+    def distributed_data_parallel_ema(self):
+        find_unused_parameters = self.cfg.get('find_unused_parameters', False)
+        for net_name, net in self.model.nets_ema.items():
+            self.model.nets_ema[net_name] = paddle.DataParallel(
                 net, find_unused_parameters=find_unused_parameters)
 
     def learning_rate_scheduler_step(self):
