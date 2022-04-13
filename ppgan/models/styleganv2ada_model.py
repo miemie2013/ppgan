@@ -191,24 +191,11 @@ class StyleGANv2ADAModel(BaseModel):
         img = self.nets['synthesis'](ws)
         return img, ws
 
-    def run_G_grad(self, dloss_dout):
-        dloss_dws = self.nets['synthesis'].grad_layer(dloss_dout)
-        dloss_dws = paddle.stack(dloss_dws, 1)
-        return dloss_dws
-
     def run_D(self, img, c, sync):
         if self.augment_pipe is not None:
             img = self.augment_pipe(img)
         logits = self.nets['discriminator'](img, c)
         return logits
-
-    def run_D_grad(self, dloss_dout):
-        dloss_daug_x = self.nets['discriminator'].grad_layer(dloss_dout)
-        if self.augment_pipe is not None:
-            dloss_dx = self.augment_pipe.grad_layer(dloss_daug_x)
-        else:
-            dloss_dx = dloss_daug_x
-        return dloss_dx
 
     # 梯度累加（变相增大批大小）。
     def accumulate_gradients(self, phase, real_img, real_c, gen_z, gen_c, sync, gain, dic2=None):
@@ -259,9 +246,7 @@ class StyleGANv2ADAModel(BaseModel):
             #     print('do_Gpl gen_ws=%.6f' % ddd)
             pl_noise = paddle.randn(gen_img.shape) / np.sqrt(gen_img.shape[2] * gen_img.shape[3])
             # pl_noise = paddle.ones(gen_img.shape) / np.sqrt(gen_img.shape[2] * gen_img.shape[3])
-            dgen_img_dgen_img = paddle.ones(gen_img.shape, dtype=paddle.float32)
-            dgen_img_dgen_img = dgen_img_dgen_img * pl_noise
-            pl_grads = self.run_G_grad(dgen_img_dgen_img)
+            pl_grads = paddle.grad(outputs=[(gen_img * pl_noise).sum()], inputs=[gen_ws], create_graph=True, only_inputs=True)[0]
 
             pl_lengths = pl_grads.square().sum(2).mean(1).sqrt()
             # if self.align_grad:
@@ -327,8 +312,9 @@ class StyleGANv2ADAModel(BaseModel):
 
             loss_Dr1 = 0
             if do_Dr1:
-                dreal_logitssum_dreal_logits = paddle.ones(real_logits.shape, dtype=paddle.float32)
-                r1_grads = self.run_D_grad(dreal_logitssum_dreal_logits)
+                r1_grads = paddle.grad(outputs=[real_logits.sum()], inputs=[real_img_tmp], create_graph=True, only_inputs=True)[0]
+
+
                 # if self.align_grad:
                 #     ddd = np.sum((dic2[phase + 'r1_grads'] - r1_grads.numpy()) ** 2)
                 #     print('do_Dmain or do_Dr1 do_Dr1 r1_grads=%.6f' % ddd)
