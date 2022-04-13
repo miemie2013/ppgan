@@ -14,14 +14,30 @@ from .generators.builder import build_generator
 from .discriminators.builder import build_discriminator
 from ..modules.init import kaiming_normal_, constant_
 from ppgan.utils.visual import make_grid, tensor2img
+import contextlib
 
 import numpy as np
 import sys
+from ppgan.utils import training_stats
+from ppgan.utils.training_stats import EasyDict
 
 
+@contextlib.contextmanager
+def ddp_sync(module, sync):
+    if sync or not isinstance(module, paddle.DataParallel):
+        yield
+    else:
+        with module.no_sync():
+            yield
 
+def save_tensor(dic, key, tensor):
+    if tensor is not None:  # 有的梯度张量可能是None
+        dic[key] = tensor.numpy()
 
-
+def print_diff(dic, key, tensor):
+    if tensor is not None:  # 有的梯度张量可能是None
+        ddd = np.sum((dic[key] - tensor.numpy()) ** 2)
+        print('diff=%.6f (%s)' % (ddd, key))
 
 
 def soft_update(source, ema_model, beta=1.0):
@@ -81,6 +97,8 @@ class StyleGANv2ADAModel(BaseModel):
         synthesis,
         mapping=None,
         discriminator=None,
+        place=None,
+        rank=0,
         G_reg_interval=4,
         D_reg_interval=16,
         augment_pipe=None,
@@ -111,6 +129,8 @@ class StyleGANv2ADAModel(BaseModel):
         self.nets['discriminator'].train()
         self.nets_ema['synthesis'].eval()
         self.nets_ema['mapping'].eval()
+        self.place = place
+        self.rank = rank
         self.c_dim = mapping.c_dim
         self.z_dim = mapping.z_dim
         self.w_dim = mapping.w_dim
@@ -118,17 +138,19 @@ class StyleGANv2ADAModel(BaseModel):
         self.phases = []
         for name, reg_interval in [('G', G_reg_interval), ('D', D_reg_interval)]:
             if reg_interval is None:
-                self.phases += [dict(name=name + 'both', interval=1)]
+                self.phases += [EasyDict(name=name + 'both', interval=1)]
             else:  # Lazy regularization.
-                self.phases += [dict(name=name + 'main', interval=1)]
-                self.phases += [dict(name=name + 'reg', interval=reg_interval)]
+                self.phases += [EasyDict(name=name + 'main', interval=1)]
+                self.phases += [EasyDict(name=name + 'reg', interval=reg_interval)]
 
         self.z_dim = self.nets['mapping'].z_dim
         self.cur_nimg = 0
         self.batch_idx = 0
 
         # loss config.
-        self.augment_pipe = build_generator(augment_pipe)
+        self.augment_pipe = None
+        if augment_pipe is not None:
+            self.augment_pipe = build_generator(augment_pipe)
         self.style_mixing_prob = style_mixing_prob
         # self.augment_pipe = None
         # self.style_mixing_prob = -1.0
@@ -153,7 +175,9 @@ class StyleGANv2ADAModel(BaseModel):
             self.augment_pipe.p.set_value(paddle.to_tensor(self.augment_p))
             if self.ada_target is not None:
                 self.adjust_p = True
-        self.Loss_signs_real = []
+        self.ada_stats = None
+        if self.adjust_p:
+            self.ada_stats = training_stats.Collector(regex='Loss/signs/real')
 
         self.align_grad = False
         # self.align_grad = True
@@ -175,30 +199,50 @@ class StyleGANv2ADAModel(BaseModel):
         pass
 
     def run_G(self, z, c, sync):
-        ws = self.nets['mapping'](z, c)
-        if self.style_mixing_prob > 0:
-            num_vector = self.num_ws
-            cutoff_ = paddle.randint(low=1, high=num_vector, shape=[1, ], dtype='int64')
-            cond = paddle.rand([1, ], dtype='float32') < self.style_mixing_prob
-            cutoff = paddle.where(cond, cutoff_, paddle.full_like(cutoff_, num_vector))
-            cutoff.stop_gradient = True
-            if cutoff == num_vector:
-                pass
-            else:
-                temp = self.nets['mapping'](paddle.randn(z.shape), c, skip_w_avg_update=True)[:, cutoff:]
-                temp2 = ws[:, :cutoff]
-                ws = paddle.concat([temp2, temp], 1)
-        img = self.nets['synthesis'](ws)
+        '''
+        除了self.augment_pipe，其它3个 self.G_mapping、self.G_synthesis、self.D 都是DDP模型。
+        只有DDP模型才能使用with module.no_sync():
+        '''
+        with ddp_sync(self.nets['mapping'], sync):
+            ws = self.nets['mapping'](z, c)
+            if self.style_mixing_prob > 0:
+                num_vector = self.num_ws
+                cutoff_ = paddle.randint(low=1, high=num_vector, shape=[1, ], dtype='int64')
+                cond = paddle.rand([1, ], dtype='float32') < self.style_mixing_prob
+                cutoff = paddle.where(cond, cutoff_, paddle.full_like(cutoff_, num_vector))
+                cutoff.stop_gradient = True
+                if cutoff == num_vector:
+                    pass
+                else:
+                    temp = self.nets['mapping'](paddle.randn(z.shape), c, skip_w_avg_update=True)[:, cutoff:]
+                    temp2 = ws[:, :cutoff]
+                    ws = paddle.concat([temp2, temp], 1)
+        with ddp_sync(self.nets['synthesis'], sync):
+            img = self.nets['synthesis'](ws)
         return img, ws
 
     def run_D(self, img, c, sync):
+        '''
+        除了self.augment_pipe，其它3个 self.G_mapping、self.G_synthesis、self.D 都是DDP模型。
+        只有DDP模型才能使用with module.no_sync():
+        '''
         if self.augment_pipe is not None:
-            img = self.augment_pipe(img)
-        logits = self.nets['discriminator'](img, c)
+            # img = self.augment_pipe(img)
+            debug_percentile = 0.7
+            img = self.augment_pipe(img, debug_percentile)
+        with ddp_sync(self.nets['discriminator'], sync):
+            logits = self.nets['discriminator'](img, c)
         return logits
 
+    def get_bare_model(self, net):
+        """Get bare model, especially under wrapping with DataParallel.
+        """
+        if isinstance(net, (paddle.DataParallel)):
+            net = net._layers
+        return net
+
     # 梯度累加（变相增大批大小）。
-    def accumulate_gradients(self, phase, real_img, real_c, gen_z, gen_c, sync, gain, dic2=None):
+    def accumulate_gradients(self, phase, real_img, real_c, gen_z, gen_c, sync, gain, dic=None):
         assert phase in ['Gmain', 'Greg', 'Gboth', 'Dmain', 'Dreg', 'Dboth']
         do_Gmain = (phase in ['Gmain', 'Gboth'])
         do_Dmain = (phase in ['Dmain', 'Dboth'])
@@ -206,31 +250,47 @@ class StyleGANv2ADAModel(BaseModel):
         do_Dr1   = (phase in ['Dreg', 'Dboth']) and (self.r1_gamma != 0)
 
         loss_numpy = {}
+        aaaaaaaa1 = training_stats._counters
 
         # Gmain: Maximize logits for generated images.
         if do_Gmain:
+            # 训练生成器，判别器应该冻结，而且希望fake_img的gen_logits越大越好（愚弄D，使其判断是真图片），所以损失是-log(sigmoid(gen_logits))
+            # 每个step都做1次
             gen_img, _gen_ws = self.run_G(gen_z, gen_c, sync=(sync and not do_Gpl)) # May get synced by Gpl.
-            # if self.align_grad:
-            #     ddd = np.sum((dic2[phase + 'gen_img'] - gen_img.numpy()) ** 2)
-            #     print('do_Gmain gen_img=%.6f' % ddd)
-            #     ddd = np.sum((dic2[phase + '_gen_ws'] - _gen_ws.numpy()) ** 2)
-            #     print('do_Gmain _gen_ws=%.6f' % ddd)
+            if self.align_grad:
+                print_diff(dic, phase + ' gen_img', gen_img)
+                print_diff(dic, phase + ' _gen_ws', _gen_ws)
 
             gen_logits = self.run_D(gen_img, gen_c, sync=False)
-            # if self.align_grad:
-            #     ddd = np.sum((dic2[phase + 'gen_logits'] - gen_logits.numpy()) ** 2)
-            #     print('do_Gmain gen_logits=%.6f' % ddd)
+            if self.align_grad:
+                print_diff(dic, phase + ' gen_logits', gen_logits)
 
+            training_stats.report('Loss/scores/fake', gen_logits)
+            training_stats.report('Loss/signs/fake', gen_logits.sign())
             loss_Gmain = paddle.nn.functional.softplus(-gen_logits)  # -log(sigmoid(gen_logits))
+            training_stats.report('Loss/G/loss', loss_Gmain)
             loss_Gmain = loss_Gmain.mean()
             loss_numpy['loss_Gmain'] = loss_Gmain.numpy()
 
             loss_G = loss_Gmain
             loss_G = loss_G * float(gain)
             loss_G.backward()  # 咩酱：gain即上文提到的这个阶段的训练间隔。
+            if self.align_grad:
+                mapping = self.get_bare_model(self.nets['mapping'])
+                discriminator = self.get_bare_model(self.nets['discriminator'])
+                m_w_grad = mapping.fc7.weight.grad
+                m_b_grad = mapping.fc7.bias.grad
+                d_w_grad = discriminator.b32.conv0.weight.grad
+                d_b_grad = discriminator.b32.conv0.bias.grad
+                print_diff(dic, phase + ' m_w_grad', m_w_grad)
+                print_diff(dic, phase + ' m_b_grad', m_b_grad)
+                print_diff(dic, phase + ' d_w_grad', d_w_grad)
+                print_diff(dic, phase + ' d_b_grad', d_b_grad)
 
         # Gpl: Apply path length regularization.
         if do_Gpl:
+            # 训练生成器，判别器应该冻结（其实也没有跑判别器），是生成器的梯度惩罚损失（一种高级一点的梯度裁剪）
+            # 每4个step做1次
             batch_size = gen_z.shape[0] // self.pl_batch_shrink
             batch_size = max(batch_size, 1)
 
@@ -239,31 +299,24 @@ class StyleGANv2ADAModel(BaseModel):
                 gen_c_ = gen_c[:batch_size]
 
             gen_img, gen_ws = self.run_G(gen_z[:batch_size], gen_c_, sync=sync)
-            # if self.align_grad:
-            #     ddd = np.sum((dic2[phase + 'gen_img'] - gen_img.numpy()) ** 2)
-            #     print('do_Gpl gen_img=%.6f' % ddd)
-            #     ddd = np.sum((dic2[phase + 'gen_ws'] - gen_ws.numpy()) ** 2)
-            #     print('do_Gpl gen_ws=%.6f' % ddd)
+            if self.align_grad:
+                print_diff(dic, phase + ' gen_img', gen_img)
+                print_diff(dic, phase + ' gen_ws', gen_ws)
             pl_noise = paddle.randn(gen_img.shape) / np.sqrt(gen_img.shape[2] * gen_img.shape[3])
             # pl_noise = paddle.ones(gen_img.shape) / np.sqrt(gen_img.shape[2] * gen_img.shape[3])
             pl_grads = paddle.grad(outputs=[(gen_img * pl_noise).sum()], inputs=[gen_ws], create_graph=True, only_inputs=True)[0]
 
             pl_lengths = pl_grads.square().sum(2).mean(1).sqrt()
-            # if self.align_grad:
-            #     aaaaaaaaa1 = dic2[phase + 'pl_grads']
-            #     aaaaaaaaa2 = pl_grads.numpy()
-            #     aaaaaaaaa3 = dic2[phase + 'pl_lengths']
-            #     aaaaaaaaa4 = pl_lengths.numpy()
-            #     ddd = np.sum((dic2[phase + 'pl_grads'] - pl_grads.numpy()) ** 2)
-            #     print('do_Gpl pl_grads=%.6f' % ddd)
-            #     ddd = np.sum((dic2[phase + 'pl_lengths'] - pl_lengths.numpy()) ** 2)
-            #     print('do_Gpl pl_lengths=%.6f' % ddd)
+            if self.align_grad:
+                print_diff(dic, phase + ' pl_grads', pl_grads)
 
             pl_mean = self.pl_mean + self.pl_decay * (pl_lengths.mean() - self.pl_mean)
             self.pl_mean.set_value(pl_mean.detach())
 
             pl_penalty = (pl_lengths - pl_mean).square()
+            training_stats.report('Loss/pl_penalty', pl_penalty)
             loss_Gpl = pl_penalty * self.pl_weight
+            training_stats.report('Loss/G/reg', loss_Gpl)
 
             loss_Gpl = (gen_img[:, 0, 0, 0] * 0 + loss_Gpl).mean() * float(gain)
             loss_numpy['loss_Gpl'] = loss_Gpl.numpy()
@@ -272,17 +325,18 @@ class StyleGANv2ADAModel(BaseModel):
         # Dmain: Minimize logits for generated images.
         loss3 = 0.0
         if do_Dmain:
+            # 训练判别器，生成器应该冻结，而且希望fake_img的gen_logits越小越好（判断是假图片），所以损失是-log(1 - sigmoid(gen_logits))
+            # 每个step都做1次
             gen_img, _gen_ws = self.run_G(gen_z, gen_c, sync=False)
             gen_img.stop_gradient = True   # 训练判别器时，假图片要停止梯度，不能更新生成器的参数。
-            # if self.align_grad:
-            #     ddd = np.sum((dic2[phase + 'gen_img'] - gen_img.numpy()) ** 2)
-            #     print('do_Dmain gen_img=%.6f' % ddd)
-            #     ddd = np.sum((dic2[phase + '_gen_ws'] - _gen_ws.numpy()) ** 2)
-            #     print('do_Dmain _gen_ws=%.6f' % ddd)
+            if self.align_grad:
+                print_diff(dic, phase + ' gen_img', gen_img)
+                print_diff(dic, phase + ' _gen_ws', _gen_ws)
             gen_logits = self.run_D(gen_img, gen_c, sync=False) # Gets synced by loss_Dreal.
-            # if self.align_grad:
-            #     ddd = np.sum((dic2[phase + 'gen_logits'] - gen_logits.numpy()) ** 2)
-            #     print('do_Dmain gen_logits=%.6f' % ddd)
+            if self.align_grad:
+                print_diff(dic, phase + ' gen_logits', gen_logits)
+            training_stats.report('Loss/scores/fake', gen_logits)
+            training_stats.report('Loss/signs/fake', gen_logits.sign())
 
             loss_Dgen = paddle.nn.functional.softplus(gen_logits)  # -log(1 - sigmoid(gen_logits))
             loss_Dgen = loss_Dgen.mean()
@@ -296,68 +350,82 @@ class StyleGANv2ADAModel(BaseModel):
             real_img_tmp = real_img.detach()
             real_img_tmp.stop_gradient = not do_Dr1
             real_logits = self.run_D(real_img_tmp, real_c, sync=sync)
-            if self.adjust_p and self.augment_pipe is not None:
-                self.Loss_signs_real.append(real_logits.sign().numpy())
-            # if self.align_grad:
-            #     ddd = np.sum((dic2[phase + 'real_logits'] - real_logits.numpy()) ** 2)
-            #     print('do_Dmain or do_Dr1 real_logits=%.6f' % ddd)
+            training_stats.report('Loss/scores/real', real_logits)
+            training_stats.report('Loss/signs/real', real_logits.sign())
+            if self.align_grad:
+                print_diff(dic, phase + ' real_logits', real_logits)
 
             loss_Dreal = 0
             if do_Dmain:
+                # 训练判别器，生成器应该冻结，而且希望real_img的gen_logits越大越好（判断是真图片），所以损失是-log(sigmoid(real_logits))
+                # 每个step都做1次
                 loss_Dreal = paddle.nn.functional.softplus(-real_logits) # -log(sigmoid(real_logits))
-                # if self.align_grad:
-                #     ddd = np.sum((dic2[phase + 'loss_Dreal'] - loss_Dreal.numpy()) ** 2)
-                #     print('do_Dmain or do_Dr1 do_Dmain loss_Dreal=%.6f' % ddd)
+                if self.align_grad:
+                    print_diff(dic, phase + ' loss_Dreal', loss_Dreal)
                 loss_numpy['loss_Dreal'] = loss_Dreal.numpy().mean()
+                training_stats.report('Loss/D/loss', loss_Dgen + loss_Dreal)
 
             loss_Dr1 = 0
             if do_Dr1:
+                # 训练判别器，生成器应该冻结（其实也没有跑判别器），是判别器的梯度惩罚损失（一种高级一点的梯度裁剪）
+                # 每16个step做1次
                 r1_grads = paddle.grad(outputs=[real_logits.sum()], inputs=[real_img_tmp], create_graph=True, only_inputs=True)[0]
-
-
-                # if self.align_grad:
-                #     ddd = np.sum((dic2[phase + 'r1_grads'] - r1_grads.numpy()) ** 2)
-                #     print('do_Dmain or do_Dr1 do_Dr1 r1_grads=%.6f' % ddd)
-
+                if self.align_grad:
+                    print_diff(dic, phase + ' r1_grads', r1_grads)
                 r1_penalty = r1_grads.square().sum([1, 2, 3])
-                # if self.align_grad:
-                #     ddd = np.sum((dic2[phase + 'r1_penalty'] - r1_penalty.numpy()) ** 2)
-                #     print('do_Dmain or do_Dr1 do_Dr1 r1_penalty=%.6f' % ddd)
                 loss_Dr1 = r1_penalty * (self.r1_gamma / 2)
                 loss_numpy['loss_Dr1'] = loss_Dr1.numpy().mean()
+                training_stats.report('Loss/r1_penalty', r1_penalty)
+                training_stats.report('Loss/D/reg', loss_Dr1)
             loss4 = (loss_Dreal + loss_Dr1).mean() * float(gain)
             if do_Dmain:
                 loss4 += loss3
             loss4.backward()  # 咩酱：gain即上文提到的这个阶段的训练间隔。
         return loss_numpy
 
-    def train_iter(self, optimizers=None):
+    def train_iter(self, optimizers=None, rank=0, world_size=1):
+        place = self.place
         phase_real_img = self.input[0]
         phase_real_c = self.input[1]
         phases_all_gen_c = self.input[2]
 
+        if self.align_grad:
+            if self.batch_idx == 0:
+                '''
+                假如训练命令的命令行参数是 --gpus=2 --batch 8 --cfg my32
+                即总的批大小是8，每卡批大小是4，那么这里
+                phase_real_img.shape = [4, 3, 32, 32]
+                phase_real_c.shape   = [4, 0]
+                batch_gpu            = 4
+                即拿到的phase_real_img和phase_real_c是一张卡（一个进程）上的训练样本，（每张卡）批大小是4
+                '''
+                print('rank =', rank)
+                print('world_size =', world_size)
+                print('phase_real_img.shape =', phase_real_img.shape)
+                print('phase_real_c.shape =', phase_real_c.shape)
+
         # 对齐梯度用
         dic2 = None
-        # if self.align_grad:
-        #     print('======================== batch%.5d.npz ========================'%self.batch_idx)
-        #     npz_path = 'batch%.5d.npz'%self.batch_idx
-        #     isDebug = True if sys.gettrace() else False
-        #     if isDebug:
-        #         npz_path = '../batch%.5d.npz'%self.batch_idx
-        #     dic2 = np.load(npz_path)
-        #     aaaaaaaaa = dic2['phase_real_img']
-        #     phase_real_img = paddle.to_tensor(aaaaaaaaa)
+        if self.align_grad:
+            print('======================== batch%.5d.npz ========================'%self.batch_idx)
+            npz_path = 'batch%.5d.npz'%self.batch_idx
+            isDebug = True if sys.gettrace() else False
+            if isDebug:
+                npz_path = '../batch%.5d.npz'%self.batch_idx
+            dic2 = np.load(npz_path)
+            aaaaaaaaa = dic2['phase_real_img']
+            phase_real_img = paddle.to_tensor(aaaaaaaaa, dtype=paddle.float32, place=place)
 
 
         phase_real_img = paddle.cast(phase_real_img, dtype=paddle.float32) / 127.5 - 1
 
 
         phases = self.phases
-        batch_size = phase_real_img.shape[0]
+        batch_gpu = phase_real_img.shape[0]  # 一张显卡上的批大小
 
         all_gen_z = None
-        num_gpus = 1  # 显卡数量
-        batch_gpu = batch_size // num_gpus  # 一张显卡上的批大小
+        num_gpus = world_size  # 显卡数量
+        batch_size = batch_gpu * num_gpus
         if self.z_dim > 0:
             all_gen_z = paddle.randn([len(phases) * batch_size, self.z_dim])  # 咩酱：训练的4个阶段每个gpu的噪声
             # if self.align_grad:
