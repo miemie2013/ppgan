@@ -92,6 +92,41 @@ elif opt_name == 'discriminator':
 
 
 
+export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/cuda-10.2/lib64
+export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/lib/x86_64-linux-gnu
+
+
+
+python tools/convert_weights.py -f exps/styleganv2ada/styleganv2ada_32_custom.py -c_G G_00.pth -c_Gema G_ema_00.pth -c_D D_00.pth -oc styleganv2ada_32_00.pth
+
+
+python tools/convert_weights.py -f exps/styleganv2ada/styleganv2ada_32_custom.py -c_G G_19.pth -c_Gema G_ema_19.pth -c_D D_19.pth -oc styleganv2ada_32_19.pth
+
+
+CUDA_VISIBLE_DEVICES=0
+python tools/train.py -f exps/styleganv2ada/styleganv2ada_32_custom.py -d 1 -b 8 -eb 1 -c styleganv2ada_32_00.pth
+
+
+CUDA_VISIBLE_DEVICES=0,1
+python tools/main.py -c configs/stylegan_v2ada_32_custom.yaml --load styleganv2ada_32_afhqcat.pdparams
+
+python tools/main.py -c configs/stylegan_v2ada_32_custom.yaml
+
+
+CUDA_VISIBLE_DEVICES=0
+python tools/train.py -f exps/styleganv2ada/styleganv2ada_32_custom.py --dist-url tcp://192.168.0.104:12319 --num_machines 2 --machine_rank 1 -b 8 -eb 2 -c styleganv2ada_32_00.pth
+
+
+
+python diff_weights.py --cp1 styleganv2ada_32_19.pth --cp2 StyleGANv2ADA_outputs/styleganv2ada_32_custom/1.pth --d_value 0.0005
+
+
+
+
+
+
+
+
 
 cd ~/w*
 cd convert_weights

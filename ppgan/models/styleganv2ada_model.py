@@ -408,10 +408,10 @@ class StyleGANv2ADAModel(BaseModel):
         dic2 = None
         if self.align_grad:
             print('======================== batch%.5d.npz ========================'%self.batch_idx)
-            npz_path = 'batch%.5d.npz'%self.batch_idx
+            npz_path = 'batch%.5d_rank%.2d.npz'%(self.batch_idx, rank)
             isDebug = True if sys.gettrace() else False
             if isDebug:
-                npz_path = '../batch%.5d.npz'%self.batch_idx
+                npz_path = '../batch%.5d_rank%.2d.npz'%(self.batch_idx, rank)
             dic2 = np.load(npz_path)
             aaaaaaaaa = dic2['phase_real_img']
             phase_real_img = paddle.to_tensor(aaaaaaaaa, dtype=paddle.float32, place=place)
@@ -428,8 +428,8 @@ class StyleGANv2ADAModel(BaseModel):
         batch_size = batch_gpu * num_gpus
         if self.z_dim > 0:
             all_gen_z = paddle.randn([len(phases) * batch_size, self.z_dim])  # 咩酱：训练的4个阶段每个gpu的噪声
-            # if self.align_grad:
-            #     all_gen_z = paddle.to_tensor(dic2['all_gen_z'], dtype=all_gen_z.dtype)
+            if self.align_grad:
+                all_gen_z = paddle.to_tensor(dic2['all_gen_z'], dtype=all_gen_z.dtype)
         else:
             all_gen_z = paddle.randn([len(phases) * batch_size, 1])  # 咩酱：训练的4个阶段每个gpu的噪声
         phases_all_gen_z = paddle.split(all_gen_z, num_or_sections=len(phases))  # 咩酱：训练的4个阶段的噪声
@@ -454,38 +454,32 @@ class StyleGANv2ADAModel(BaseModel):
         loss_numpys = []
         loss_phase_name = []
         for phase, phase_gen_z, phase_gen_c in zip(phases, all_gen_z, all_gen_c):  # 咩酱：phase_gen_z是这个阶段每个gpu的噪声，是一个元组，元组长度等于gpu数量。
-            if self.batch_idx % phase['interval'] != 0:  # 咩酱：每一个阶段phase有一个属性interval，即训练间隔，每隔几个批次图片才会执行1次这个阶段！
+            if self.batch_idx % phase.interval != 0:  # 咩酱：每一个阶段phase有一个属性interval，即训练间隔，每隔几个批次图片才会执行1次这个阶段！
                 continue
 
             # Initialize gradient accumulation.  咩酱：初始化梯度累加（变相增大批大小）。
-            if 'G' in phase['name']:
+            if 'G' in phase.name:
                 optimizers['generator'].clear_gradients()
                 for name, param in self.nets['synthesis'].named_parameters():
                     param.stop_gradient = False
                 for name, param in self.nets['mapping'].named_parameters():
                     param.stop_gradient = False
-                for name, param in self.nets['discriminator'].named_parameters():
-                    param.stop_gradient = True
-            elif 'D' in phase['name']:
+            elif 'D' in phase.name:
                 optimizers['discriminator'].clear_gradients()
-                for name, param in self.nets['synthesis'].named_parameters():
-                    param.stop_gradient = True
-                for name, param in self.nets['mapping'].named_parameters():
-                    param.stop_gradient = True
                 for name, param in self.nets['discriminator'].named_parameters():
                     param.stop_gradient = False
 
-            # 梯度累加。一个总的批次的图片分开{显卡数量}次遍历。
-            # Accumulate gradients over multiple rounds.  咩酱：遍历每一个gpu上的批次图片。这样写好奇葩啊！round_idx是gpu_id
+            # 梯度累加。不管多卡还是单卡，这个for循环只会循环1次。
+            # Accumulate gradients over multiple rounds.
             for round_idx, (real_img, real_c, gen_z, gen_c) in enumerate(zip(phase_real_img, phase_real_c, phase_gen_z, phase_gen_c)):
-                sync = (round_idx == batch_size // (batch_gpu * num_gpus) - 1)   # 咩酱：右边的式子结果一定是0。即只有0号gpu做同步。这是梯度累加的固定写法。
-                gain = phase['interval']     # 咩酱：即上文提到的训练间隔。
+                sync = (round_idx == batch_size // (batch_gpu * num_gpus) - 1)   # 咩酱：右边的式子结果一定是0。sync一定是True
+                gain = phase.interval     # 咩酱：即上文提到的训练间隔。
 
                 # 梯度累加（变相增大批大小）。
-                loss_numpy = self.accumulate_gradients(phase=phase['name'], real_img=real_img, real_c=real_c,
-                                                       gen_z=gen_z, gen_c=gen_c, sync=sync, gain=gain, dic2=dic2)
+                loss_numpy = self.accumulate_gradients(phase=phase.name, real_img=real_img, real_c=real_c,
+                                                       gen_z=gen_z, gen_c=gen_c, sync=sync, gain=gain, dic=dic2)
                 loss_numpys.append(loss_numpy)
-                loss_phase_name.append(phase['name'])
+                loss_phase_name.append(phase.name)
 
             # Update weights.
             # phase.module.requires_grad_(False)
@@ -493,15 +487,19 @@ class StyleGANv2ADAModel(BaseModel):
             # for param in phase.module.parameters():
             #     if param.grad is not None:
             #         misc.nan_to_num(param.grad, nan=0, posinf=1e5, neginf=-1e5, out=param.grad)
-            if 'G' in phase['name']:
+            if 'G' in phase.name:
+                for name, param in self.nets['synthesis'].named_parameters():
+                    param.stop_gradient = True
+                for name, param in self.nets['mapping'].named_parameters():
+                    param.stop_gradient = True
                 optimizers['generator'].step()  # 更新参数
-            elif 'D' in phase['name']:
+            elif 'D' in phase.name:
+                for name, param in self.nets['discriminator'].named_parameters():
+                    param.stop_gradient = True
                 optimizers['discriminator'].step()  # 更新参数
 
 
         # compute moving average of network parameters。指数滑动平均
-        # self.mapping_ema.requires_grad_(False)
-        # self.synthesis_ema.requires_grad_(False)
         ema_kimg = self.ema_kimg
         ema_nimg = ema_kimg * 1000
         ema_rampup = self.ema_rampup
@@ -516,30 +514,32 @@ class StyleGANv2ADAModel(BaseModel):
                     self.nets_ema['mapping'],
                     beta=ema_beta)
 
-        # if self.align_grad:
-        #     if self.batch_idx == 19:
-        #         paddle.save(self.nets['synthesis'].state_dict(), 'synthesis_19.pdparams')
-        #         paddle.save(self.nets_ema['synthesis'].state_dict(), 'synthesis_ema_19.pdparams')
-        #         paddle.save(self.nets['mapping'].state_dict(), 'mapping_19.pdparams')
-        #         paddle.save(self.nets_ema['mapping'].state_dict(), 'mapping_ema_19.pdparams')
-        #         paddle.save(self.nets['discriminator'].state_dict(), 'discriminator_19.pdparams')
-
         self.cur_nimg += batch_size
         self.batch_idx += 1
+
+        if self.align_grad:
+            if self.is_distributed:
+                w_avg = self.mapping.module.w_avg
+            else:
+                w_avg = self.mapping.w_avg
+            print_diff(dic2, 'w_avg', w_avg)
 
         # Execute ADA heuristic.
         if self.adjust_p and self.augment_pipe is not None and (self.batch_idx % self.ada_interval == 0):
             # self.ada_interval个迭代中，real_logits.sign()的平均值。
-            Loss_signs_real_mean = np.mean(np.concatenate(self.Loss_signs_real, 0))
+            self.ada_stats.update()
+            Loss_signs_real_mean = self.ada_stats['Loss/signs/real']
+
             diff = Loss_signs_real_mean - self.ada_target
             adjust = np.sign(diff)
-            # print(Loss_signs_real_mean)
-            # print('==========================')
+            if self.align_grad:
+                print_diff(dic2, 'augment_pipe_p', self.augment_pipe.p)
+                kkk = 'aaaaaaaaaa1'; ddd = np.sum((dic2[kkk] - np.array(Loss_signs_real_mean)) ** 2)
+                print('diff=%.6f (%s)' % (ddd, kkk))
             adjust = adjust * (batch_size * self.ada_interval) / (self.ada_kimg * 1000)
             new_p = self.augment_pipe.p + adjust
             new_p = paddle.clip(new_p, min=0)
             self.augment_pipe.p.set_value(new_p)
-            self.Loss_signs_real = []
 
         self.losses = OrderedDict()
         for loss_dict in loss_numpys:
