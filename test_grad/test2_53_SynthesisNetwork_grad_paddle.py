@@ -49,11 +49,7 @@ for batch_idx in range(8):
     ws.stop_gradient = False
     y = model(ws)
 
-    # dy_dws_list = paddle.grad(outputs=[y.sum()], inputs=ws, create_graph=True)
-    # dy_dws = paddle.stack(dy_dws_list, 1)
-    dysum_dy = paddle.ones(y.shape, dtype=paddle.float32)
-    dy_dws = model.grad_layer(dysum_dy)
-    dy_dws = paddle.stack(dy_dws, 1)
+    dy_dws = paddle.grad(outputs=[y.sum()], inputs=ws, create_graph=True)[0]
 
 
     y_paddle = y.numpy()
@@ -62,11 +58,6 @@ for batch_idx in range(8):
 
     dy_dws_paddle = dy_dws.numpy()
     ddd = np.sum((dy_dws_pytorch - dy_dws_paddle) ** 2)
-    print('ddd=%.6f' % ddd)
-
-    ddd = np.mean((y_pytorch - y_paddle) ** 2)
-    print('ddd=%.6f' % ddd)
-    ddd = np.mean((dy_dws_pytorch - dy_dws_paddle) ** 2)
     print('ddd=%.6f' % ddd)
 
     # 需要强制设置ppgan/models/generators/generator_styleganv2ada.py里的SynthesisLayer的self.use_noise = False，pytorch的也要设置，才会和pytorch输出一样！！！

@@ -129,77 +129,6 @@ def bias_act(x, b=None, dim=1, act='linear', alpha=None, gain=None, clamp=None):
     return clamp_x, temp_tensors
 
 
-def bias_act_grad(dloss_dclamp_x, temp_tensors, b=None, dim=1, act='linear', alpha=None, gain=None, clamp=None):
-    gain_x = temp_tensors['gain_x']
-    act_x = temp_tensors['act_x']
-    x_add_b = temp_tensors['x_add_b']
-    def_gain = 1.0
-    if act in ['relu', 'lrelu', 'swish']:  # 除了这些激活函数的def_gain = np.sqrt(2)，其余激活函数的def_gain = 1.0
-        def_gain = np.sqrt(2)
-    def_alpha = 0.0
-    if act in ['lrelu']:  # 除了这些激活函数的def_alpha = 0.2，其余激活函数的def_alpha = 0.0
-        def_alpha = 0.2
-
-    alpha = float(alpha if alpha is not None else def_alpha)
-    gain = float(gain if gain is not None else def_gain)
-    clamp = float(clamp if clamp is not None else -1)
-
-    # 限制范围
-    if clamp >= 0:
-        # 计算bias_act()的梯度时，需要计算paddle.where(gain_x > clamp, ...)，gain_x必须加detach()
-        gain_x = gain_x.detach()
-        dclamp_x_dgain_x1 = paddle.where(gain_x > clamp, paddle.zeros(gain_x.shape, dtype=gain_x.dtype),
-                                         paddle.ones(gain_x.shape, dtype=gain_x.dtype))
-        dclamp_x_dgain_x2 = paddle.where(gain_x < -clamp, paddle.zeros(gain_x.shape, dtype=gain_x.dtype),
-                                         paddle.ones(gain_x.shape, dtype=gain_x.dtype))
-        dclamp_x_dgain_x = dclamp_x_dgain_x1 * dclamp_x_dgain_x2
-        dloss_dgain_x = dloss_dclamp_x * dclamp_x_dgain_x
-    else:
-        dloss_dgain_x = dloss_dclamp_x
-
-    # 乘以缩放因子
-    gain = float(gain)
-    if gain != 1:
-        dloss_dact_x = dloss_dgain_x * gain
-    else:
-        dloss_dact_x = dloss_dgain_x
-
-    # 经过激活函数
-    alpha = float(alpha)  # 只有leaky_relu需要
-    if act == 'linear':
-        dloss_dx_add_b = dloss_dact_x
-    elif act == 'relu':
-        # 计算bias_act()的梯度时，且激活是relu之类时，需要计算paddle.where(x_add_b > 0.0, ...)，x_add_b必须加detach()
-        x_add_b = x_add_b.detach()
-        dact_x_dx_add_b = paddle.where(x_add_b > 0.0, paddle.ones(x_add_b.shape, dtype=x_add_b.dtype),
-                                       paddle.zeros(x_add_b.shape, dtype=x_add_b.dtype))
-        dloss_dx_add_b = dloss_dact_x * dact_x_dx_add_b
-    elif act == 'lrelu':
-        # 计算bias_act()的梯度时，且激活是relu之类时，需要计算paddle.where(x_add_b > 0.0, ...)，x_add_b必须加detach()
-        x_add_b = x_add_b.detach()
-        dact_x_dx_add_b = paddle.where(x_add_b > 0.0, paddle.ones(x_add_b.shape, dtype=x_add_b.dtype),
-                                       paddle.ones(x_add_b.shape, dtype=x_add_b.dtype)*alpha)
-        dloss_dx_add_b = dloss_dact_x * dact_x_dx_add_b
-    elif act == 'tanh':
-        raise NotImplementedError("activation \'{}\' is not implemented.".format(act))
-    elif act == 'sigmoid':
-        dloss_dx_add_b = dloss_dact_x * act_x * (1.0 - act_x)
-    elif act == 'elu':
-        raise NotImplementedError("activation \'{}\' is not implemented.".format(act))
-    elif act == 'selu':
-        raise NotImplementedError("activation \'{}\' is not implemented.".format(act))
-    elif act == 'softplus':
-        raise NotImplementedError("activation \'{}\' is not implemented.".format(act))
-    elif act == 'swish':
-        raise NotImplementedError("activation \'{}\' is not implemented.".format(act))
-    else:
-        raise NotImplementedError("activation \'{}\' is not implemented.".format(act))
-
-    # 加上偏移
-    dloss_dx = dloss_dx_add_b
-
-    return dloss_dx
-
 def _parse_padding(padding):
     if isinstance(padding, int):
         padding = [padding, padding]
@@ -250,382 +179,7 @@ def _conv2d_wrapper(x, w, stride=1, padding=0, groups=1, transpose=False, flip_w
         return out
 
 
-conv2d_grad_kerner_pos_cache = dict()
-conv2d_transpose_grad_kerner_pos_cache = dict()
 
-
-def _conv2d_wrapper_grad(dloss_dout, x, w, stride=1, padding=0, groups=1, transpose=False, flip_weight=True):
-    """Wrapper for the underlying `conv2d()` and `conv_transpose2d()` implementations.
-    """
-    out_channels, in_channels_per_group, kh, kw = w.shape
-
-    # Flip weight if requested.
-    if not flip_weight: # conv2d() actually performs correlation (flip_weight=True) not convolution (flip_weight=False).
-        w = w.flip([2, 3])
-    w_flip = w
-
-    # Workaround performance pitfall in cuDNN 8.0.5, triggered when using
-    # 1x1 kernel + memory_format=channels_last + less than 64 channels.
-    if kw == 1 and kh == 1 and stride == 1 and padding in [0, [0, 0], (0, 0)] and not transpose:
-        if x.shape[2] * x.shape[3] == 1 and min(out_channels, in_channels_per_group) < 64:
-            if out_channels <= 4 and groups == 1:
-                N, out_C, _, _ = dloss_dout.shape
-                out_C, C, _, _ = w.shape
-                dloss_dout = dloss_dout.squeeze(3)   # [N, out_C, 1, 1] -> [N, out_C, 1]
-
-                # loss对输入x的偏导数
-                dloss_dout = paddle.unsqueeze(dloss_dout, 1)      # [N, 1, out_C, 1]
-                dout_dx = w_flip.squeeze(3).squeeze(2)            # [out_C, C, 1, 1] -> [out_C, C]   out对x的偏导数是w_flip。
-                dout_dx = paddle.transpose(dout_dx, [1, 0])       # [out_C, C] -> [C, out_C]
-                dout_dx = paddle.unsqueeze(dout_dx, axis=[0, 3])  # [1, C, out_C, 1]
-                dloss_dx = dloss_dout * dout_dx  # [N, C, out_C, 1]  使用复合函数求导法则（链式法则）
-                dloss_dx = paddle.sum(dloss_dx, axis=[2, 3], keepdim=True)  # [N, C, 1, 1]   把偏移数量那一维求和
-
-                # 求dloss_dW
-                in_shape = x.shape   # [N, C, 1, 1]
-                # dout_dW = x.reshape([in_shape[0], in_channels_per_group, -1])   # [N, C, 1, 1] -> [N, C, 1]
-                dout_dW = x   # [N, C, 1, 1]
-                dloss_dW = dloss_dout * dout_dW   # [N, C, out_C, 1]
-                dloss_dW = paddle.sum(dloss_dW, axis=[0, 3])   # [C, out_C]
-                dloss_dW = paddle.transpose(dloss_dW, [1, 0])  # [out_C, C]
-                dloss_dW = paddle.reshape(dloss_dW, (out_C, C, 1, 1))  # [out_C, C, 1, 1]
-            else:
-                dloss_dx = F.conv2d_transpose(x=dloss_dout, weight=w_flip, output_padding=0, groups=groups)
-
-                # 求dloss_dW
-                N, out_C, out_H, out_W = dloss_dout.shape
-                out_C, c, kH, kW = w.shape
-                g = groups
-                oc = out_C // g
-                if isinstance(padding, int):
-                    pad_x = F.pad(x, [padding, padding, padding, padding])  # [N, in_C, pad_H, pad_W]
-                elif isinstance(padding, list):
-                    if len(padding) == 2:
-                        padding_h = padding[0]
-                        padding_w = padding[1]
-                        pad_x = F.pad(x, [padding_h, padding_h, padding_w, padding_w])  # [N, in_C, pad_H, pad_W]
-                    else:
-                        raise NotImplementedError("not implemented.")
-                else:
-                    raise NotImplementedError("not implemented.")
-                N, in_C, pad_H, pad_W = pad_x.shape
-                pad_x = paddle.transpose(pad_x, [2, 3, 0, 1])  # [N, in_C, pad_H, pad_W] -> [pad_H, pad_W, N, in_C]
-                pad_x = paddle.reshape(pad_x, (pad_H, pad_W, N, g, c))  # [pad_H, pad_W, N, g, c]
-                kerner_center_y, kerner_center_x = paddle.meshgrid([paddle.arange(out_H), paddle.arange(out_W)])
-                kerner_center_y = kerner_center_y * stride + (kH - 1) // 2
-                kerner_center_x = kerner_center_x * stride + (kW - 1) // 2
-                assert kH == kW
-                if kH == 1:
-                    kerner_center_yx_00 = paddle.stack((kerner_center_y, kerner_center_x), 2).cast(dtype='int32')
-                    kerner_pos_yx = paddle.unsqueeze(kerner_center_yx_00, 0)  # [kH*kW, out_H, out_W, 2]
-                else:
-                    raise NotImplementedError("kH \'{}\' is not implemented.".format(kH))
-                kerner_pos_yx = paddle.reshape(kerner_pos_yx,
-                                               (-1, 2))  # [kH*kW, out_H, out_W, 2] -> [kH*kW*out_H*out_W, 2]
-                kerner_pos_yx.stop_gradient = True
-                dY_dW = paddle.gather_nd(pad_x,
-                                         kerner_pos_yx)  # [pad_H, pad_W, N, g, c] -> [kH*kW*out_H*out_W, N, g, c]
-                dY_dW = paddle.reshape(dY_dW, (kH, kW, out_H, out_W, N, g, c))  # [kH, kW, out_H, out_W, N, g, c]
-                dY_dW = paddle.transpose(dY_dW, [4, 5, 6, 2, 3, 0, 1])  # [N, g, c, out_H, out_W, kH, kW]
-                dY_dW = paddle.reshape(dY_dW, (N, g, 1, c, out_H, out_W, kH, kW))  # [N, g, 1, c, out_H, out_W, kH, kW]
-                grad = paddle.reshape(dloss_dout,
-                                      (N, g, oc, 1, out_H, out_W, 1, 1))  # [N, g, oc, 1, out_H, out_W, 1, 1]
-                # 旧的方案，用逐元素相乘，显存爆炸
-                # dloss_dW = grad * dY_dW                                               # [N, g, oc, c, out_H, out_W, kH, kW]
-                # dloss_dW = paddle.sum(dloss_dW, axis=[0, 4, 5])    # [g, oc, c, kH, kW]
-                # dloss_dW = paddle.reshape(dloss_dW, (g*oc, c, kH, kW))
-                # 新的方案，用1x1卷积等价实现，显存不爆炸。
-                dY_dW = paddle.transpose(dY_dW, [3, 1, 2, 0, 4, 5, 6, 7])  # [c, g, 1, N, out_H, out_W, kH, kW]
-                grad = paddle.transpose(grad, [3, 1, 2, 0, 4, 5, 6, 7])  # [1, g, oc, N, out_H, out_W, 1, 1]
-                dY_dW = paddle.reshape(dY_dW, (c, g * N * out_H * out_W, kH, kW))
-                grad = paddle.reshape(grad, (g * oc, N * out_H * out_W, 1, 1))
-                dloss_dW = F.conv2d(dY_dW, grad, groups=g)  # [c, g*oc, kH, kW]
-                dloss_dW = paddle.transpose(dloss_dW, [1, 0, 2, 3])  # [g*oc, c, kH, kW]
-            if not flip_weight:
-                dloss_dW = dloss_dW.flip([2, 3])
-            return dloss_dx, dloss_dW
-
-    # Otherwise => execute using conv2d_gradfix.
-    if transpose:
-        dloss_dx = F.conv2d(x=dloss_dout, weight=w_flip, stride=stride, padding=padding, groups=groups)
-
-        # 求dloss_dW
-        N, in_C, in_H, in_W = x.shape
-        N, out_C, out_H, out_W = dloss_dout.shape
-        in_C, oc, kH, kW = w.shape
-        g = groups
-        c = in_C // g
-
-        if isinstance(padding, int):
-            pad_dloss_dy = F.pad(dloss_dout, [padding, padding, padding, padding])  # [N, in_C, pad_H, pad_W]
-            padding_h = padding
-            padding_w = padding
-        elif isinstance(padding, list):
-            if len(padding) == 2:
-                padding_h = padding[0]
-                padding_w = padding[1]
-                pad_dloss_dy = F.pad(dloss_dout, [padding_h, padding_h, padding_w, padding_w])  # [N, in_C, pad_H, pad_W]
-            else:
-                raise NotImplementedError("not implemented.")
-        else:
-            raise NotImplementedError("not implemented.")
-        N, out_C, pad_H, pad_W = pad_dloss_dy.shape
-        pad_dloss_dy = paddle.transpose(pad_dloss_dy, [2, 3, 0, 1])  # [N, out_C, pad_H, pad_W] -> [pad_H, pad_W, N, out_C]
-        pad_dloss_dy = paddle.reshape(pad_dloss_dy, (pad_H, pad_W, N, g, oc))  # [pad_H, pad_W, N, g, oc]
-        assert kH == kW
-        key = (kH, kW, in_H, in_W, stride, padding_h, padding_w, groups)
-        kerner_pos_yx = conv2d_transpose_grad_kerner_pos_cache.get(key, None)
-        if kerner_pos_yx is None:
-            kerner_center_y, kerner_center_x = paddle.meshgrid([paddle.arange(in_H), paddle.arange(in_W)])
-            kerner_center_y = kerner_center_y * stride + (kH - 1) // 2
-            kerner_center_x = kerner_center_x * stride + (kW - 1) // 2
-            if kH == 3:
-                kerner_center_yx_00 = paddle.stack((kerner_center_y - 1, kerner_center_x - 1), 2).cast(dtype='int32')
-                kerner_center_yx_01 = paddle.stack((kerner_center_y - 1, kerner_center_x), 2).cast(dtype='int32')
-                kerner_center_yx_02 = paddle.stack((kerner_center_y - 1, kerner_center_x + 1), 2).cast(dtype='int32')
-                kerner_center_yx_10 = paddle.stack((kerner_center_y, kerner_center_x - 1), 2).cast(dtype='int32')
-                kerner_center_yx_11 = paddle.stack((kerner_center_y, kerner_center_x), 2).cast(dtype='int32')
-                kerner_center_yx_12 = paddle.stack((kerner_center_y, kerner_center_x + 1), 2).cast(dtype='int32')
-                kerner_center_yx_20 = paddle.stack((kerner_center_y + 1, kerner_center_x - 1), 2).cast(dtype='int32')
-                kerner_center_yx_21 = paddle.stack((kerner_center_y + 1, kerner_center_x), 2).cast(dtype='int32')
-                kerner_center_yx_22 = paddle.stack((kerner_center_y + 1, kerner_center_x + 1), 2).cast(dtype='int32')
-                kerner_pos_yx = paddle.stack((kerner_center_yx_00, kerner_center_yx_01, kerner_center_yx_02,
-                                              kerner_center_yx_10, kerner_center_yx_11, kerner_center_yx_12,
-                                              kerner_center_yx_20, kerner_center_yx_21, kerner_center_yx_22), 0)  # [kH*kW, in_H, in_W, 2]
-            elif kH == 1:
-                kerner_center_yx_00 = paddle.stack((kerner_center_y, kerner_center_x), 2).cast(dtype='int32')
-                kerner_pos_yx = paddle.unsqueeze(kerner_center_yx_00, 0)  # [kH*kW, in_H, in_W, 2]
-            else:
-                raise NotImplementedError("kH \'{}\' is not implemented.".format(kH))
-            kerner_pos_yx = paddle.reshape(kerner_pos_yx, (-1, 2))  # [kH*kW, in_H, in_W, 2] -> [kH*kW*in_H*in_W, 2]
-            kerner_pos_yx.stop_gradient = True
-            conv2d_transpose_grad_kerner_pos_cache[key] = kerner_pos_yx
-        dloss_dY = paddle.gather_nd(pad_dloss_dy, kerner_pos_yx)  # [pad_H, pad_W, N, g, oc] -> [kH*kW*in_H*in_W, N, g, oc]
-        dloss_dY = paddle.reshape(dloss_dY, (kH, kW, in_H, in_W, N, g, oc))      # [kH, kW, in_H, in_W, N, g, oc]
-        dloss_dY = paddle.transpose(dloss_dY, [4, 5, 6, 2, 3, 0, 1])             # [N, g, oc, in_H, in_W, kH, kW]
-        dloss_dY = paddle.reshape(dloss_dY, (N, g, 1, oc, in_H, in_W, kH, kW))   # [N, g, 1, oc, in_H, in_W, kH, kW]
-        dY_dW = paddle.reshape(x, (N, g, c, 1, in_H, in_W, 1, 1))                # [N, g, c, 1, in_H, in_W, 1, 1]
-        # 旧的方案，用逐元素相乘，显存爆炸
-        # dloss_dW = dloss_dY * dY_dW                                              # [N, g, c, oc, in_H, in_W, kH, kW]
-        # dloss_dW = paddle.sum(dloss_dW, axis=[0, 4, 5])                          # [g, c, oc, kH, kW]
-        # dloss_dW = paddle.reshape(dloss_dW, (g * c, oc, kH, kW))
-        # 新的方案，用1x1卷积等价实现，显存不爆炸。
-        dloss_dY = paddle.transpose(dloss_dY, [3, 1, 2, 0, 4, 5, 6, 7])  # [oc, g, 1, N, in_H, in_W, kH, kW]
-        dY_dW = paddle.transpose(dY_dW, [3, 1, 2, 0, 4, 5, 6, 7])        # [1, g, c, N, in_H, in_W, 1, 1]
-        dloss_dY = paddle.reshape(dloss_dY, (oc, g*N*in_H*in_W, kH, kW))
-        dY_dW = paddle.reshape(dY_dW, (g*c, N*in_H*in_W, 1, 1))
-        dloss_dW = F.conv2d(dloss_dY, dY_dW, groups=g)  # [oc, g*c, kH, kW]
-        dloss_dW = paddle.transpose(dloss_dW, [1, 0, 2, 3])  # [g*c, oc, kH, kW]
-    else:
-        # if kw == 1 and kh == 1 and stride == 1 and groups == 1:
-        #     www = paddle.transpose(w_flip, [1, 0, 2, 3])
-        #     dloss_dx = F.conv2d(x=dloss_dout, weight=www, stride=stride, padding=padding, groups=groups)
-        # else:
-        #     output_padding = stride - 1
-        #     dloss_dx = F.conv2d_transpose(x=dloss_dout, weight=w_flip, stride=stride, padding=padding, output_padding=output_padding, groups=groups)
-        output_padding = stride - 1
-        N, out_C, out_H, out_W = dloss_dout.shape
-        assert out_H == out_W
-        if out_H%2 == 0 and stride == 2:  # output_padding很难确定，需要具体分辨率具体分析。。。
-            output_padding = 0
-        dloss_dx = F.conv2d_transpose(x=dloss_dout, weight=w_flip, stride=stride, padding=padding, output_padding=output_padding, groups=groups)
-
-        # 求dloss_dW
-        out_C, c, kH, kW = w.shape
-        g = groups
-        oc = out_C // g
-        if isinstance(padding, int):
-            pad_x = F.pad(x, [padding, padding, padding, padding])  # [N, in_C, pad_H, pad_W]
-            padding_h = padding
-            padding_w = padding
-        elif isinstance(padding, list):
-            if len(padding) == 2:
-                padding_h = padding[0]
-                padding_w = padding[1]
-                pad_x = F.pad(x, [padding_h, padding_h, padding_w, padding_w])  # [N, in_C, pad_H, pad_W]
-            else:
-                raise NotImplementedError("not implemented.")
-        else:
-            raise NotImplementedError("not implemented.")
-        N, in_C, pad_H, pad_W = pad_x.shape
-        pad_x = paddle.transpose(pad_x, [2, 3, 0, 1])  # [N, in_C, pad_H, pad_W] -> [pad_H, pad_W, N, in_C]
-        pad_x = paddle.reshape(pad_x, (pad_H, pad_W, N, g, c))  # [pad_H, pad_W, N, g, c]
-        assert kH == kW
-        key = (kH, kW, out_H, out_W, stride, padding_h, padding_w, groups)
-        kerner_pos_yx = conv2d_grad_kerner_pos_cache.get(key, None)
-        if kerner_pos_yx is None:
-            kerner_center_y, kerner_center_x = paddle.meshgrid([paddle.arange(out_H), paddle.arange(out_W)])
-            kerner_center_y = kerner_center_y * stride + (kH - 1) // 2
-            kerner_center_x = kerner_center_x * stride + (kW - 1) // 2
-            if kH == 3:
-                kerner_center_yx_00 = paddle.stack((kerner_center_y - 1, kerner_center_x - 1), 2).cast(dtype='int32')
-                kerner_center_yx_01 = paddle.stack((kerner_center_y - 1, kerner_center_x), 2).cast(dtype='int32')
-                kerner_center_yx_02 = paddle.stack((kerner_center_y - 1, kerner_center_x + 1), 2).cast(dtype='int32')
-                kerner_center_yx_10 = paddle.stack((kerner_center_y, kerner_center_x - 1), 2).cast(dtype='int32')
-                kerner_center_yx_11 = paddle.stack((kerner_center_y, kerner_center_x), 2).cast(dtype='int32')
-                kerner_center_yx_12 = paddle.stack((kerner_center_y, kerner_center_x + 1), 2).cast(dtype='int32')
-                kerner_center_yx_20 = paddle.stack((kerner_center_y + 1, kerner_center_x - 1), 2).cast(dtype='int32')
-                kerner_center_yx_21 = paddle.stack((kerner_center_y + 1, kerner_center_x), 2).cast(dtype='int32')
-                kerner_center_yx_22 = paddle.stack((kerner_center_y + 1, kerner_center_x + 1), 2).cast(dtype='int32')
-                kerner_pos_yx = paddle.stack((kerner_center_yx_00, kerner_center_yx_01, kerner_center_yx_02,
-                                              kerner_center_yx_10, kerner_center_yx_11, kerner_center_yx_12,
-                                              kerner_center_yx_20, kerner_center_yx_21, kerner_center_yx_22),
-                                             0)  # [kH*kW, out_H, out_W, 2]
-            elif kH == 1:
-                kerner_center_yx_00 = paddle.stack((kerner_center_y, kerner_center_x), 2).cast(dtype='int32')
-                kerner_pos_yx = paddle.unsqueeze(kerner_center_yx_00, 0)  # [kH*kW, out_H, out_W, 2]
-            else:
-                raise NotImplementedError("kH \'{}\' is not implemented.".format(kH))
-            kerner_pos_yx = paddle.reshape(kerner_pos_yx, (-1, 2))  # [kH*kW, out_H, out_W, 2] -> [kH*kW*out_H*out_W, 2]
-            kerner_pos_yx.stop_gradient = True
-            conv2d_grad_kerner_pos_cache[key] = kerner_pos_yx
-        dY_dW = paddle.gather_nd(pad_x, kerner_pos_yx)  # [pad_H, pad_W, N, g, c] -> [kH*kW*out_H*out_W, N, g, c]
-        dY_dW = paddle.reshape(dY_dW, (kH, kW, out_H, out_W, N, g, c))        # [kH, kW, out_H, out_W, N, g, c]
-        dY_dW = paddle.transpose(dY_dW, [4, 5, 6, 2, 3, 0, 1])                # [N, g, c, out_H, out_W, kH, kW]
-        dY_dW = paddle.reshape(dY_dW, (N, g, 1, c, out_H, out_W, kH, kW))     # [N, g, 1, c, out_H, out_W, kH, kW]
-        grad = paddle.reshape(dloss_dout, (N, g, oc, 1, out_H, out_W, 1, 1))  # [N, g, oc, 1, out_H, out_W, 1, 1]
-        # 旧的方案，用逐元素相乘，显存爆炸
-        # dloss_dW = grad * dY_dW                                               # [N, g, oc, c, out_H, out_W, kH, kW]
-        # dloss_dW = paddle.sum(dloss_dW, axis=[0, 4, 5])    # [g, oc, c, kH, kW]
-        # dloss_dW = paddle.reshape(dloss_dW, (g*oc, c, kH, kW))
-        # 新的方案，用1x1卷积等价实现，显存不爆炸。
-        dY_dW = paddle.transpose(dY_dW, [3, 1, 2, 0, 4, 5, 6, 7])    # [c, g, 1, N, out_H, out_W, kH, kW]
-        grad = paddle.transpose(grad, [3, 1, 2, 0, 4, 5, 6, 7])      # [1, g, oc, N, out_H, out_W, 1, 1]
-        dY_dW = paddle.reshape(dY_dW, (c, g*N*out_H*out_W, kH, kW))
-        grad = paddle.reshape(grad, (g*oc, N*out_H*out_W, 1, 1))
-        dloss_dW = F.conv2d(dY_dW, grad, groups=g)  # [c, g*oc, kH, kW]
-        dloss_dW = paddle.transpose(dloss_dW, [1, 0, 2, 3])  # [g*oc, c, kH, kW]
-
-    if not flip_weight:
-        dloss_dW = dloss_dW.flip([2, 3])
-    return dloss_dx, dloss_dW
-
-
-
-class Conv2D_Grad(object):
-    def __init__(self):
-        super().__init__()
-        self.cfg = {}
-
-    def __call__(self, dloss_dout, x,
-           weight,
-           bias=None,
-           stride=1,
-           padding=0,
-           dilation=1,
-           groups=1):
-        if dilation != 1:
-            raise NotImplementedError("dilation \'{}\' is not implemented.".format(dilation))
-        if isinstance(padding, list):
-            if len(padding) == 2:
-                padding_0 = padding[0]
-                padding_1 = padding[1]
-                assert padding_0 == padding_1
-                padding = padding_0
-            elif len(padding) == 4:
-                padding_0 = padding[0]
-                padding_1 = padding[1]
-                padding_2 = padding[2]
-                padding_3 = padding[3]
-                assert padding_0 == padding_1
-                assert padding_0 == padding_2
-                assert padding_0 == padding_3
-                padding = padding_0
-
-
-        # 求loss对卷积层的输入的偏导数。
-        # https://github.com/miemie2013/Pure_Python_Deep_Learning  提供技术支持。
-        N, in_C, H, W = x.shape
-        N, out_C, out_H, out_W = dloss_dout.shape
-        w = weight      # [out_C, c, kH, kW]
-        out_C, c, kH, kW = w.shape
-        oc = out_C // groups
-
-        w_t = paddle.reshape(w, (out_C, c*kH*kW))   # [out_C, c*kH*kW]
-        w_t = paddle.transpose(w_t, [1, 0])   # [c*kH*kW, out_C]
-        w_t = paddle.reshape(w_t, (c*kH*kW, groups, oc, 1, 1))   # [c*kH*kW, groups, oc, 1, 1]
-        w_t = paddle.transpose(w_t, [1, 0, 2, 3, 4])   # [groups, c*kH*kW, oc, 1, 1]
-        w_t = paddle.reshape(w_t, (groups*c*kH*kW, oc, 1, 1))   # [groups*c*kH*kW, oc, 1, 1]
-        dx = F.conv2d(dloss_dout, w_t, bias=None, stride=1, padding=0, groups=groups)   # [N, groups*c*kH*kW, out_H, out_W]
-        dx = paddle.reshape(dx, (-1, in_C, kH, kW, out_H, out_W))   # [N, in_C, kH, kW, out_H, out_W]
-
-        # 强无敌的gather_nd()。
-        pad_H = H + padding * 2
-        pad_W = W + padding * 2
-        dx = paddle.transpose(dx, [0, 1, 4, 2, 5, 3])  # [N, in_C, out_H, kH, out_W, kW]
-        dx = paddle.reshape(dx, (-1, in_C, out_H * kH, out_W * kW))  # [N, in_C, out_H*kH, out_W*kW]
-        dx = paddle.transpose(dx, [2, 3, 0, 1])  # [out_H*kH, out_W*kW, N, in_C]
-
-        # 统计dX里每个位置的元素是由dx里哪些元素求和得到。
-        # dX形状为[N, in_C, pad_H, pad_W]，是卷积层输入(pad之后的输入)的梯度。
-        # dx形状为[N, in_C, out_H*kH, out_W*kW]，是卷积层输入的临时梯度。
-        key = (stride, padding, dilation, groups)
-        if key not in self.cfg.keys():
-            dic = {}
-            max_len = 0
-            for i in range(out_H):
-                for j in range(out_W):
-                    for i2 in range(kH):
-                        for j2 in range(kW):
-                            # 遍历dx里每一个梯度
-                            dx_x = j * kW + j2
-                            dx_y = i * kH + i2
-                            # 该梯度应该加到dX上的位置
-                            dX_x = j * stride + j2
-                            dX_y = i * stride + i2
-                            key = 'X(%d,%d)' % (dX_y, dX_x)
-                            if key not in dic:
-                                dic[key] = ['d(%d,%d)' % (dx_y, dx_x)]
-                            else:
-                                dic[key].append('d(%d,%d)' % (dx_y, dx_x))
-            dx_pos = dic   # dX里每一个位置的元素应该由dx里哪些位置的梯度求和得到。
-            for key in dx_pos.keys():
-                value = dic[key]
-                len_ = len(value)
-                if len_ > max_len:
-                    max_len = len_
-            special_inds = np.zeros((pad_H, pad_W, max_len, 2), np.int32)
-            special_mask = np.zeros((pad_H, pad_W, max_len, 1), np.float32)
-
-            # 先模拟一次可变形卷积核滑动，填入可变形卷积需要的offset和mask
-            for i in range(pad_H):
-                for j in range(pad_W):
-                    key = 'X(%d,%d)' % (i, j)
-                    if key not in dx_pos.keys():
-                        continue
-                    value = dx_pos[key]
-                    p = 0
-                    for v in value:
-                        dx_yx = v[2:-1].split(',')
-                        dx_y = int(dx_yx[0])
-                        dx_x = int(dx_yx[1])
-                        special_inds[i, j, p, 0] = dx_y
-                        special_inds[i, j, p, 1] = dx_x
-                        special_mask[i, j, p, 0] = 1.0
-                        p += 1
-            cfg = [dx_pos, max_len, special_inds, special_mask]
-            self.cfg[key] = cfg
-        cfg = self.cfg[key]
-        dx_pos = cfg[0]
-        max_len = cfg[1]
-        special_inds = cfg[2]
-        special_mask = cfg[3]
-        ytxt = paddle.to_tensor(special_inds)
-        mask = paddle.to_tensor(special_mask)
-        ytxt = paddle.reshape(ytxt, (pad_H * pad_W * max_len, 2))  # [pad_H * pad_W * max_len, 2]
-        mask = paddle.reshape(mask, (pad_H * pad_W * max_len, 1, 1))  # [pad_H * pad_W * max_len, 1, 1]
-        y1x1_int = paddle.cast(ytxt, 'int32')
-        y1x1_int.stop_gradient = True
-        mask.stop_gradient = True
-        dX = paddle.gather_nd(dx, y1x1_int)  # [out_H*kH, out_W*kW, N, in_C] -> [pad_H * pad_W * max_len, N, in_C]
-        dX *= mask  # [pad_H * pad_W * max_len, N, in_C]     空位处乘以0
-        dX = paddle.reshape(dX, (pad_H, pad_W, max_len, N, in_C))   # [pad_H, pad_W, max_len, N, in_C]
-        dX = paddle.sum(dX, axis=[2])       # [pad_H, pad_W, N, in_C]
-        dX = paddle.transpose(dX, [2, 3, 0, 1])   # [N, in_C, pad_H, pad_W]
-        dX = dX[:, :, padding:padding + H, padding:padding + W]
-        return dX
-
-# conv2d_grad_layer = Conv2D_Grad()
 
 def _parse_scaling(scaling):
     # scaling 一变二
@@ -698,58 +252,6 @@ def upfirdn2d(x, filter, up=1, down=1, padding=0, flip_filter=False, gain=1):
     return x
 
 
-def upfirdn2d_grad(dloss_dout, x, filter, up=1, down=1, padding=0, flip_filter=False, gain=1):
-    if filter is None:
-        filter = paddle.ones([1, 1], dtype=paddle.float32)
-    batch_size, num_channels, in_height, in_width = x.shape
-    upx, upy = _parse_scaling(up)        # scaling 一变二
-    downx, downy = _parse_scaling(down)  # scaling 一变二
-    padx0, padx1, pady0, pady1 = _parse_padding(padding)
-
-    # Downsample by throwing away pixels.
-    assert downy == downx
-    if downy == 1:
-        dloss_dx = dloss_dout
-    elif downy == 2:
-        N, C, H, W = dloss_dout.shape
-        # Upsample by inserting zeros.
-        # paddle最多支持5维张量，所以分开2次pad。
-        # 根据data_format指定的意义填充(pad_left, pad_right, pad_top, pad_bottom, pad_front, pad_back)
-        dloss_dx = dloss_dout.reshape([N, C, H, 1, W])
-        dloss_dx = paddle.nn.functional.pad(dloss_dx, [0, 0, 0, 1, 0, 0], data_format="NCDHW")
-        dloss_dx = dloss_dx.reshape([N, C, H * 2, W, 1])
-        dloss_dx = paddle.nn.functional.pad(dloss_dx, [0, 1, 0, 0, 0, 0], data_format="NCDHW")
-        dloss_dx = dloss_dx.reshape([N, C, H * 2, W * 2])
-        dloss_dx = dloss_dx[:, :, :-1, :-1]   # down == 2时，切片之前的形状是这个。Discriminator里有down == 2的情况
-    else:
-        raise NotImplementedError("downy \'{}\' is not implemented.".format(downy))
-
-    # Setup filter.
-    filter = filter * (gain ** (filter.ndim / 2))
-    assert filter.dtype == x.dtype
-    # filter = paddle.cast(filter, dtype=x.dtype)
-    if not flip_filter:
-        filter = filter.flip(list(range(filter.ndim)))
-
-    # Convolve with the filter.
-    filter = paddle.unsqueeze(filter, [0, 1]).tile([num_channels, 1] + [1] * filter.ndim)
-    if filter.ndim == 4:
-        dloss_dx = F.conv2d_transpose(x=dloss_dx, weight=filter, groups=num_channels, output_padding=0)
-    else:
-        dloss_dx = F.conv2d_transpose(x=dloss_dx, weight=filter.unsqueeze(3), groups=num_channels, output_padding=0)
-        dloss_dx = F.conv2d_transpose(x=dloss_dx, weight=filter.unsqueeze(2), groups=num_channels, output_padding=0)
-
-    # Pad or crop.
-    dloss_dx = F.pad(dloss_dx, [max(-padx0, 0), max(-padx1, 0), max(-pady0, 0), max(-pady1, 0)])
-    dloss_dx = dloss_dx[:, :, max(pady0, 0) : dloss_dx.shape[2]-max(pady1, 0), max(padx0, 0) : dloss_dx.shape[3]-max(padx1, 0)]
-
-    # Upsample by inserting zeros.
-    dloss_dx = dloss_dx.reshape([batch_size, num_channels, in_height, upy, in_width, upx])
-    dloss_dx = dloss_dx[:, :, :, :1, :, :1]
-    dloss_dx = dloss_dx.reshape([batch_size, num_channels, in_height, in_width])
-
-    return dloss_dx
-
 
 def downsample2d(x, f, down=2, padding=0, flip_filter=False, gain=1):
     downx, downy = _parse_scaling(down)
@@ -762,18 +264,6 @@ def downsample2d(x, f, down=2, padding=0, flip_filter=False, gain=1):
         pady1 + (fh - downy) // 2,
     ]
     return upfirdn2d(x, f, down=down, padding=p, flip_filter=flip_filter, gain=gain)
-
-def downsample2d_grad(dloss_dout, x, f, down=2, padding=0, flip_filter=False, gain=1):
-    downx, downy = _parse_scaling(down)
-    padx0, padx1, pady0, pady1 = _parse_padding(padding)
-    fw, fh = _get_filter_size(f)
-    p = [
-        padx0 + (fw - downx + 1) // 2,
-        padx1 + (fw - downx) // 2,
-        pady0 + (fh - downy + 1) // 2,
-        pady1 + (fh - downy) // 2,
-    ]
-    return upfirdn2d_grad(dloss_dout, x, f, down=down, padding=p, flip_filter=flip_filter, gain=gain)
 
 
 def conv2d_resample(x, w, filter=None, up=1, down=1, padding=0, groups=1, flip_weight=True, flip_filter=False):
@@ -872,88 +362,6 @@ def conv2d_resample(x, w, filter=None, up=1, down=1, padding=0, groups=1, flip_w
     return x
 
 
-def conv2d_resample_grad(dloss_dout, x_1, x, w, filter=None, up=1, down=1, padding=0, groups=1, flip_weight=True, flip_filter=False):
-    assert isinstance(up, int) and (up >= 1)
-    assert isinstance(down, int) and (down >= 1)
-    assert isinstance(groups, int) and (groups >= 1)
-    out_channels, in_channels_per_group, kh, kw = w.shape
-    fw, fh = _get_filter_size(filter)
-    # 图片4条边上的padding
-    px0, px1, py0, py1 = _parse_padding(padding)
-
-    # Adjust padding to account for up/downsampling.
-    if up > 1:
-        px0 += (fw + up - 1) // 2
-        px1 += (fw - up) // 2
-        py0 += (fh + up - 1) // 2
-        py1 += (fh - up) // 2
-    if down > 1:
-        px0 += (fw - down + 1) // 2
-        px1 += (fw - down) // 2
-        py0 += (fh - down + 1) // 2
-        py1 += (fh - down) // 2
-
-    # Fast path: 1x1 convolution with downsampling only => downsample first, then convolve.
-    if kw == 1 and kh == 1 and (down > 1 and up == 1):
-        dy_dx, dy_dw = _conv2d_wrapper_grad(dloss_dout, x=x_1, w=w, groups=groups, flip_weight=flip_weight)
-        dy_dx = upfirdn2d_grad(dy_dx, x, filter, down=down, padding=[px0, px1, py0, py1], flip_filter=flip_filter)
-        return dy_dx, dy_dw
-
-    # Fast path: 1x1 convolution with upsampling only => convolve first, then upsample.
-    if kw == 1 and kh == 1 and (up > 1 and down == 1):
-        raise NotImplementedError("not implemented.")
-
-    # Fast path: downsampling only => use strided convolution.
-    if down > 1 and up == 1:
-        dy_dx, dy_dw = _conv2d_wrapper_grad(dloss_dout, x=x_1, w=w, stride=down, groups=groups, flip_weight=flip_weight)
-        dy_dx = upfirdn2d_grad(dy_dx, x, filter, padding=[px0, px1, py0, py1], flip_filter=flip_filter)
-        return dy_dx, dy_dw
-
-    # Fast path: upsampling with optional downsampling => use transpose strided convolution.
-    if up > 1:
-        if groups == 1:
-            w = w.transpose((1, 0, 2, 3))
-            w3 = w
-        else:
-            w0 = w
-            w1 = w.reshape((groups, out_channels // groups, in_channels_per_group, kh, kw))
-            w2 = w1.transpose((0, 2, 1, 3, 4))
-            w3 = w2.reshape((groups * in_channels_per_group, out_channels // groups, kh, kw))
-        px0 -= kw - 1
-        px1 -= kw - up
-        py0 -= kh - 1
-        py1 -= kh - up
-        pxt = max(min(-px0, -px1), 0)
-        pyt = max(min(-py0, -py1), 0)
-        if down > 1:
-            raise NotImplementedError("not implemented.")
-        dy_dx = upfirdn2d_grad(dloss_dout, x_1, filter, padding=[px0 + pxt, px1 + pxt, py0 + pyt, py1 + pyt], gain=up ** 2, flip_filter=flip_filter)
-        dy_dx, dy_dw3 = _conv2d_wrapper_grad(dy_dx, x=x, w=w3, stride=up, padding=[pyt,pxt], groups=groups, transpose=True, flip_weight=(not flip_weight))
-        if groups == 1:
-            dy_dw = dy_dw3.transpose((1, 0, 2, 3))
-        else:
-            dy_dw2 = dy_dw3.reshape(w2.shape)
-            dy_dw1 = dy_dw2.transpose((0, 2, 1, 3, 4))
-            dy_dw = dy_dw1.reshape(w0.shape)
-        # print('eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee')
-        return dy_dx, dy_dw
-
-    # Fast path: no up/downsampling, padding supported by the underlying implementation => use plain conv2d.
-    if up == 1 and down == 1:
-        if px0 == px1 and py0 == py1 and px0 >= 0 and py0 >= 0:
-            dy_dx, dy_dw = _conv2d_wrapper_grad(dloss_dout, x=x, w=w, padding=[py0,px0], groups=groups, flip_weight=flip_weight)
-            # print('eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee')
-            return dy_dx, dy_dw
-
-    # Fallback: Generic reference implementation.
-    # x = upfirdn2d(x, (filter if up > 1 else None), up=up, padding=[px0, px1, py0, py1], gain=up ** 2, flip_filter=flip_filter)
-    # x = _conv2d_wrapper(x=x, w=w, groups=groups, flip_weight=flip_weight)
-    # if down > 1:
-    #     x = upfirdn2d(x, filter, down=down, flip_filter=flip_filter)
-    raise NotImplementedError("not implemented.")
-    # return x
-
-
 
 def upsample2d(x, f, up=2, padding=0, flip_filter=False, gain=1):
     r"""Upsample a batch of 2D images using the given 2D FIR filter.
@@ -992,20 +400,6 @@ def upsample2d(x, f, up=2, padding=0, flip_filter=False, gain=1):
     return upfirdn2d(x, f, up=up, padding=p, flip_filter=flip_filter, gain=gain*upx*upy)
 
 
-def upsample2d_grad(dloss_dout, x, f, up=2, padding=0, flip_filter=False, gain=1):
-    upx, upy = _parse_scaling(up)
-    padx0, padx1, pady0, pady1 = _parse_padding(padding)
-    fw, fh = _get_filter_size(f)
-    p = [
-        padx0 + (fw + upx - 1) // 2,
-        padx1 + (fw - upx) // 2,
-        pady0 + (fh + upy - 1) // 2,
-        pady1 + (fh - upy) // 2,
-    ]
-    return upfirdn2d_grad(dloss_dout, x, f, up=up, padding=p, flip_filter=flip_filter, gain=gain*upx*upy)
-
-
-
 class Conv2dLayer(nn.Layer):
     def __init__(self,
         in_channels,                    # Number of input channels.
@@ -1021,19 +415,6 @@ class Conv2dLayer(nn.Layer):
         trainable       = True,         # Update the weights of this layer during training?
     ):
         super().__init__()
-        self.grad_layer = Conv2dLayer_Grad(
-            in_channels,
-            out_channels,
-            kernel_size,
-            bias,
-            activation,
-            up,
-            down,
-            resample_filter,
-            conv_clamp,
-            channels_last,
-            trainable,
-        )
         self.activation = activation
         self.up = up
         self.down = down
@@ -1067,60 +448,12 @@ class Conv2dLayer(nn.Layer):
         w = self.weight * self.weight_gain
         b = paddle.cast(self.bias, dtype=x.dtype) if self.bias is not None else None
         flip_weight = (self.up == 1)  # slightly faster
-        self.grad_layer.flip_weight = flip_weight
-        self.grad_layer.resample_filter = self.resample_filter
-        self.grad_layer.x = x
-        self.grad_layer.w = w
-        self.grad_layer.b = b
-        self.grad_layer.up = self.up
-        self.grad_layer.down = self.down
-        self.grad_layer.padding = self.padding
         x2, x_1 = conv2d_resample(x=x, w=paddle.cast(w, dtype=x.dtype), filter=self.resample_filter, up=self.up, down=self.down, padding=self.padding, flip_weight=flip_weight)
-        self.grad_layer.x_1 = x_1
 
         act_gain = self.act_gain * gain
         act_clamp = self.conv_clamp * gain if self.conv_clamp is not None else None
-        self.grad_layer.activation = self.activation
-        self.grad_layer.act_gain = act_gain
-        self.grad_layer.act_clamp = act_clamp
         out, temp_tensors = bias_act(x2, b, act=self.activation, gain=act_gain, clamp=act_clamp)
-        self.grad_layer.gain_x2 = temp_tensors['gain_x']
-        self.grad_layer.act_x2 = temp_tensors['act_x']
-        self.grad_layer.x2_add_b = temp_tensors['x_add_b']
         return out
-
-
-class Conv2dLayer_Grad(object):
-    def __init__(self,
-        in_channels,                    # Number of input channels.
-        out_channels,                   # Number of output channels.
-        kernel_size,                    # Width and height of the convolution kernel.
-        bias            = True,         # Apply additive bias before the activation function?
-        activation      = 'linear',     # Activation function: 'relu', 'lrelu', etc.
-        up              = 1,            # Integer upsampling factor.
-        down            = 1,            # Integer downsampling factor.
-        resample_filter = [1,3,3,1],    # Low-pass filter to apply when resampling activations.
-        conv_clamp      = None,         # Clamp the output to +-X, None = disable clamping.
-        channels_last   = False,        # Expect the input to have memory_format=channels_last?
-        trainable       = True,         # Update the weights of this layer during training?
-    ):
-        super().__init__()
-        self.down = down
-
-    def __call__(self, dloss_dout):
-        b = self.b
-        temp_tensors = {}
-        temp_tensors['gain_x'] = self.gain_x2
-        temp_tensors['act_x'] = self.act_x2
-        temp_tensors['x_add_b'] = self.x2_add_b
-        dloss_dx2 = bias_act_grad(dloss_dout, temp_tensors, b, act=self.activation, gain=self.act_gain, clamp=self.act_clamp)
-
-        x = self.x
-        w = self.w
-        flip_weight = self.flip_weight
-        x_1 = self.x_1
-        dloss_dx, dloss_dw = conv2d_resample_grad(dloss_dx2, x_1, x=x, w=paddle.cast(w, dtype=x.dtype), filter=self.resample_filter, up=self.up, down=self.down, padding=self.padding, flip_weight=flip_weight)
-        return dloss_dx
 
 
 class FullyConnectedLayer(nn.Layer):
@@ -1140,14 +473,6 @@ class FullyConnectedLayer(nn.Layer):
                                           default_initializer=paddle.nn.initializer.Constant(bias_init)) if bias else None
         self.weight_gain = lr_multiplier / np.sqrt(in_features)
         self.bias_gain = lr_multiplier
-        self.grad_layer = FullyConnectedLayer_Grad(
-            in_features,
-            out_features,
-            bias,
-            activation,
-            lr_multiplier,
-            bias_init,
-        )
 
     def forward(self, x):
         w = paddle.cast(self.weight, dtype=x.dtype) * self.weight_gain
@@ -1158,66 +483,14 @@ class FullyConnectedLayer(nn.Layer):
             if self.bias_gain != 1:
                 b = b * self.bias_gain
 
-        self.grad_layer.w = w
         if self.activation == 'linear' and b is not None:
-            self.grad_layer.b = b
             # out = paddle.addmm(b.unsqueeze(0), x, w.t())   # 因为paddle.addmm()没有实现二阶梯度，所以用其它等价实现。
             out = paddle.matmul(x, w, transpose_y=True) + b.unsqueeze(0)
         else:
             r = x.matmul(w.t())
             out, temp_tensors = bias_act(r, b, act=self.activation)
-            self.grad_layer.gain_r = temp_tensors['gain_x']
-            self.grad_layer.act_r = temp_tensors['act_x']
-            self.grad_layer.r_add_b = temp_tensors['x_add_b']
         return out
 
-
-class FullyConnectedLayer_Grad(object):
-    def __init__(self,
-        in_features,                # Number of input features.
-        out_features,               # Number of output features.
-        bias            = True,     # Apply additive bias before the activation function?
-        activation      = 'linear', # Activation function: 'relu', 'lrelu', etc.
-        lr_multiplier   = 1,        # Learning rate multiplier.
-        bias_init       = 0,        # Initial value for the additive bias.
-    ):
-        super().__init__()
-        self.in_features = in_features
-        self.out_features = out_features
-        self.bias = bias
-        self.activation = activation
-        self.lr_multiplier = lr_multiplier
-        self.bias_init = bias_init
-        self.b = None
-
-    def __call__(self, dloss_dout):
-        b = self.b
-        w = self.w   # [out_C, in_C]
-        w_t = w.t()  # [in_C, out_C]
-        if self.activation == 'linear' and b is not None:
-            # loss对输入x的偏导数
-            dloss_dout = paddle.unsqueeze(dloss_dout, 1)  # [N, 1, out_C]
-            dout_dx = w_t                                 # [in_C, out_C]  out对x的偏导数是w的转置。
-            dout_dx = paddle.unsqueeze(dout_dx, 0)        # [1, in_C, out_C]
-            dloss_dx = dloss_dout * dout_dx               # [N, in_C, out_C]  使用复合函数求导法则（链式法则）
-            dloss_dx = paddle.sum(dloss_dx, axis=2)       # [N, in_C]   把偏移数量那一维求和
-        else:
-            gain_r = self.gain_r
-            act_r = self.act_r
-            r_add_b = self.r_add_b
-            temp_tensors = {}
-            temp_tensors['gain_x'] = gain_r
-            temp_tensors['act_x'] = act_r
-            temp_tensors['x_add_b'] = r_add_b
-            dloss_dr = bias_act_grad(dloss_dout, temp_tensors, act=self.activation)
-
-            # loss对输入x的偏导数
-            dloss_dr = paddle.unsqueeze(dloss_dr, 1)      # [N, 1, out_C]
-            dr_dx = w_t                                   # [in_C, out_C]  out对x的偏导数是w的转置。
-            dr_dx = paddle.unsqueeze(dr_dx, 0)            # [1, in_C, out_C]
-            dloss_dx = dloss_dr * dr_dx                   # [N, in_C, out_C]  使用复合函数求导法则（链式法则）
-            dloss_dx = paddle.sum(dloss_dx, axis=2)       # [N, in_C]   把偏移数量那一维求和
-        return dloss_dx
 
 
 def normalize_2nd_moment(x, dim=1, eps=1e-8):
@@ -1366,126 +639,6 @@ def modulated_conv2d(
             out = out + noise
         return out, x_1, x_2, xr
 
-def modulated_conv2d_grad(dloss_dout, x_1, x_2, x_mul_styles,
-    x,                          # Input tensor of shape [batch_size, in_channels, in_height, in_width].
-    weight,                     # Weight tensor of shape [out_channels, in_channels, kernel_height, kernel_width].
-    styles,                     # Modulation coefficients of shape [batch_size, in_channels].
-    noise           = None,     # Optional noise tensor to add to the output activations.
-    up              = 1,        # Integer upsampling factor.
-    down            = 1,        # Integer downsampling factor.
-    padding         = 0,        # Padding with respect to the upsampled image.
-    resample_filter = None,     # Low-pass filter to apply when resampling activations. Must be prepared beforehand by calling upfirdn2d.setup_filter().
-    demodulate      = True,     # Apply weight demodulation?
-    flip_weight     = True,     # False = convolution, True = correlation (matches torch.nn.functional.conv2d).
-    fused_modconv   = True,     # Perform modulation, convolution, and demodulation as a single fused operation?
-):
-    batch_size = x.shape[0]
-    out_channels, in_channels, kh, kw = weight.shape
-    # misc.assert_shape(weight, [out_channels, in_channels, kh, kw]) # [OIkk]
-    # misc.assert_shape(x, [batch_size, in_channels, None, None]) # [NIHW]
-    # misc.assert_shape(styles, [batch_size, in_channels]) # [NI]
-
-    # Pre-normalize inputs to avoid FP16 overflow.
-    if x.dtype == paddle.float16 and demodulate:
-        raise NotImplementedError("not implemented.")
-
-    # Calculate per-sample weights and demodulation coefficients.
-    w = None
-    dcoefs = None
-    if demodulate or fused_modconv:
-        w = weight.unsqueeze(0)  # [NOIkk]
-        w0 = w
-        w = w * styles.reshape((batch_size, 1, -1, 1, 1))  # [NOIkk]
-        w1 = w
-        _, _, D_w1_2, D_w1_3, D_w1_4 = w1.shape
-    if demodulate:
-        dcoefs = (w.square().sum(axis=[2, 3, 4]) + 1e-8).rsqrt()  # [NO]
-    if demodulate and fused_modconv:
-        w = w * dcoefs.reshape((batch_size, -1, 1, 1, 1))  # [NOIkk]
-        w2 = w
-
-    # Execute by scaling the activations before and after the convolution.
-    if not fused_modconv:
-        if demodulate:
-            dloss_dx_2 = dloss_dout * paddle.cast(dcoefs, dtype=x.dtype).reshape((batch_size, -1, 1, 1))
-            dloss_dstyles_1 = dloss_dout * paddle.cast(dcoefs, dtype=x.dtype).reshape((batch_size, -1, 1, 1))         # du * v
-            dloss_dstyles_2 = x_2 * dloss_dout   # u * dv
-            dloss_dstyles_2 = paddle.sum(dloss_dstyles_2, axis=[2, 3])
-        elif noise is not None:
-            dloss_dx_2 = dloss_dout
-        else:
-            dloss_dx_2 = dloss_dout
-        dloss_dx_mul_styles, dloss_dweight = conv2d_resample_grad(dloss_dx_2, x_1, x_mul_styles, paddle.cast(weight, dtype=x.dtype), filter=resample_filter, up=up, down=down, padding=padding, flip_weight=flip_weight)
-        if demodulate:
-            dloss_dstyles_1, _ = conv2d_resample_grad(dloss_dstyles_1, x_1, x_mul_styles, paddle.cast(weight, dtype=x.dtype), filter=resample_filter, up=up, down=down, padding=padding, flip_weight=flip_weight)
-            dloss_dstyles_1 = dloss_dstyles_1 * x
-            dloss_dstyles_1 = paddle.sum(dloss_dstyles_1, axis=[2, 3])
-        if not demodulate:
-            dloss_dstyles = dloss_dx_mul_styles * x
-            dloss_dstyles = paddle.sum(dloss_dstyles, axis=[2, 3])
-        dloss_dx = dloss_dx_mul_styles * paddle.cast(styles, dtype=x.dtype).reshape((batch_size, -1, 1, 1))
-
-        if demodulate and fused_modconv:
-            # 不可能执行这个，因为fused_modconv肯定是False
-            pass
-        if demodulate:
-            # dcoefs = (w.square().sum(axis=[2, 3, 4]) + 1e-8).rsqrt()  # [NO]
-            dloss_dw_square_sum_add_1e8 = -0.5 * dloss_dstyles_2 * dcoefs * dcoefs * dcoefs
-            dloss_dw_square_sum = dloss_dw_square_sum_add_1e8
-            dloss_dw_square = paddle.unsqueeze(dloss_dw_square_sum, axis=[2, 3, 4])
-            dloss_dw_square = paddle.tile(dloss_dw_square, [1, 1, w1.shape[2], w1.shape[3], w1.shape[4]])
-            dloss_dstyles_2 = dloss_dw_square * 2 * w1
-        if demodulate or fused_modconv:
-            # w = weight.unsqueeze(0)  # [NOIkk]
-            # w = w * styles.reshape((batch_size, 1, -1, 1, 1))  # [NOIkk]
-            dloss_dstyles_2 = dloss_dstyles_2 * w0
-            dloss_dstyles_2 = paddle.sum(dloss_dstyles_2, axis=[1, 3, 4])
-            dloss_dstyles = dloss_dstyles_1 + dloss_dstyles_2
-
-        # print('eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee')
-        return dloss_dx, dloss_dstyles
-
-    # Execute as one fused op using grouped convolution.
-    else:
-        xr = x_mul_styles
-        dloss_dx_2 = dloss_dout.reshape((1, -1, *x_2.shape[2:]))
-        w3 = w2.reshape((-1, in_channels, kh, kw))
-        dloss_dxr, dloss_dw3 = conv2d_resample_grad(dloss_dx_2, x_1, x=xr, w=paddle.cast(w3, dtype=xr.dtype), filter=resample_filter, up=up, down=down, padding=padding, groups=batch_size, flip_weight=flip_weight)
-        dloss_dx = dloss_dxr.reshape((batch_size, -1, *x.shape[2:]))
-
-        dloss_dw2 = dloss_dw3.reshape(w2.shape)
-
-
-
-        if demodulate and fused_modconv:
-            # w2 = w1 * dcoefs.reshape((batch_size, -1, 1, 1, 1))
-            dloss_dstyles_1 = dloss_dw2 * dcoefs.reshape((batch_size, -1, 1, 1, 1))  # du * v
-            dloss_dstyles_2 = w1 * dloss_dw2  # u * dv
-            # dloss_dstyles_2继续对dcoefs求导
-            dloss_dstyles_2 = paddle.sum(dloss_dstyles_2, axis=[2, 3, 4])
-        if demodulate:
-            # dcoefs = (w.square().sum(axis=[2, 3, 4]) + 1e-8).rsqrt()  # [NO]
-            dloss_dw_square_sum_add_1e8 = -0.5 * dloss_dstyles_2 * dcoefs * dcoefs * dcoefs
-            dloss_dw_square_sum = dloss_dw_square_sum_add_1e8
-            dloss_dw_square = paddle.unsqueeze(dloss_dw_square_sum, axis=[2, 3, 4])
-            dloss_dw_square = paddle.tile(dloss_dw_square, [1, 1, w1.shape[2], w1.shape[3], w1.shape[4]])
-            dloss_dstyles_2 = dloss_dw_square * 2 * w1
-        if demodulate or fused_modconv:
-            # w = weight.unsqueeze(0)  # [NOIkk]
-            # w = w * styles.reshape((batch_size, 1, -1, 1, 1))  # [NOIkk]
-
-            # dloss_dstyles_1继续对w1求导
-            dloss_dstyles_1 = dloss_dstyles_1 * w0
-            dloss_dstyles_1 = paddle.sum(dloss_dstyles_1, axis=[1, 3, 4])
-
-            dloss_dstyles_2 = dloss_dstyles_2 * w0
-            dloss_dstyles_2 = paddle.sum(dloss_dstyles_2, axis=[1, 3, 4])
-            dloss_dstyles = dloss_dstyles_1 + dloss_dstyles_2
-
-        # print('eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee')
-        return dloss_dx, dloss_dstyles
-
-
 class SynthesisLayer(nn.Layer):
     def __init__(self,
         in_channels,                    # Number of input channels.
@@ -1504,7 +657,7 @@ class SynthesisLayer(nn.Layer):
         self.resolution = resolution
         self.up = up
         self.use_noise = use_noise
-        # self.use_noise = False
+        self.use_noise = False
         self.activation = activation
         self.conv_clamp = conv_clamp
         self.register_buffer('resample_filter', upfirdn2d_setup_filter(resample_filter))
@@ -1532,116 +685,28 @@ class SynthesisLayer(nn.Layer):
         # self.bias = torch.nn.Parameter(torch.zeros([out_channels]))
         self.bias = self.create_parameter([out_channels, ],
                                           default_initializer=paddle.nn.initializer.Constant(0.0))
-        self.grad_layer = SynthesisLayer_Grad(
-            in_channels,
-            out_channels,
-            w_dim,
-            resolution,
-            kernel_size,
-            up,
-            use_noise,
-            activation,
-            resample_filter,
-            conv_clamp,
-            channels_last,
-        )
 
     def forward(self, x, w, noise_mode='random', fused_modconv=True, gain=1):
         assert noise_mode in ['random', 'const', 'none']
         in_resolution = self.resolution // self.up
         styles = self.affine(w)
-        self.grad_layer.w = w
-        self.grad_layer.styles = styles
-        self.grad_layer.affine = self.affine
 
         noise = None
         if self.use_noise and noise_mode == 'random':
             noise = paddle.randn([x.shape[0], 1, self.resolution, self.resolution]) * self.noise_strength
         if self.use_noise and noise_mode == 'const':
             noise = self.noise_const * self.noise_strength
-        self.grad_layer.noise = noise
 
         flip_weight = (self.up == 1) # slightly faster
-        self.grad_layer.flip_weight = flip_weight
-        self.grad_layer.x = x
-        self.grad_layer.weight = self.weight
-        self.grad_layer.resample_filter = self.resample_filter
-        self.grad_layer.padding = self.padding
-        self.grad_layer.fused_modconv = fused_modconv
         img2, x_1, x_2, x_mul_styles = modulated_conv2d(x=x, weight=self.weight, styles=styles, noise=noise, up=self.up,
             padding=self.padding, resample_filter=self.resample_filter, flip_weight=flip_weight, fused_modconv=fused_modconv)
-        self.grad_layer.img2 = img2
-        self.grad_layer.x_1 = x_1
-        self.grad_layer.x_2 = x_2
-        self.grad_layer.x_mul_styles = x_mul_styles
 
         act_gain = self.act_gain * gain
         act_clamp = self.conv_clamp * gain if self.conv_clamp is not None else None
         b = paddle.cast(self.bias, dtype=x.dtype)
-        self.grad_layer.act_gain = act_gain
-        self.grad_layer.act_clamp = act_clamp
-        self.grad_layer.b = b
         img3, temp_tensors = bias_act(img2, b, act=self.activation, gain=act_gain, clamp=act_clamp)
-        self.grad_layer.gain_x2 = temp_tensors['gain_x']
-        self.grad_layer.act_x2 = temp_tensors['act_x']
-        self.grad_layer.x2_add_b = temp_tensors['x_add_b']
         return img3
 
-
-
-class SynthesisLayer_Grad(object):
-    def __init__(self,
-        in_channels,                    # Number of input channels.
-        out_channels,                   # Number of output channels.
-        w_dim,                          # Intermediate latent (W) dimensionality.
-        resolution,                     # Resolution of this layer.
-        kernel_size     = 3,            # Convolution kernel size.
-        up              = 1,            # Integer upsampling factor.
-        use_noise       = True,         # Enable noise input?
-        activation      = 'lrelu',      # Activation function: 'relu', 'lrelu', etc.
-        resample_filter = [1,3,3,1],    # Low-pass filter to apply when resampling activations.
-        conv_clamp      = None,         # Clamp the output of convolution layers to +-X, None = disable clamping.
-        channels_last   = False,        # Use channels_last format for the weights?
-    ):
-        super().__init__()
-        self.in_channels = in_channels
-        self.out_channels = out_channels
-        self.w_dim = w_dim
-        self.resolution = resolution
-        self.kernel_size = kernel_size
-        self.up = up
-        self.use_noise = use_noise
-        self.activation = activation
-        self.resample_filter = resample_filter
-        self.conv_clamp = conv_clamp
-        self.channels_last = channels_last
-
-    def __call__(self, dloss_dout):
-        styles = self.styles
-        b = self.b
-        gain_x2 = self.gain_x2
-        act_x2 = self.act_x2
-        x2_add_b = self.x2_add_b
-
-        x = self.x
-        x_1 = self.x_1
-        x_2 = self.x_2
-        noise = self.noise
-        flip_weight = self.flip_weight
-        x_mul_styles = self.x_mul_styles
-        fused_modconv = self.fused_modconv
-
-        temp_tensors = {}
-        temp_tensors['gain_x'] = gain_x2
-        temp_tensors['act_x'] = act_x2
-        temp_tensors['x_add_b'] = x2_add_b
-        dloss_dimg2 = bias_act_grad(dloss_dout, temp_tensors, b=b, act=self.activation, gain=self.act_gain, clamp=self.act_clamp)
-
-        dloss_dx, dloss_dstyles = modulated_conv2d_grad(dloss_dimg2, x_1, x_2, x_mul_styles, x=x, weight=self.weight, styles=styles, noise=noise, up=self.up,
-            padding=self.padding, resample_filter=self.resample_filter, flip_weight=flip_weight, fused_modconv=fused_modconv)
-        dloss_daffine_w = dloss_dstyles
-        dloss_dw = self.affine.grad_layer(dloss_daffine_w)
-        return dloss_dx, dloss_dw
 
 
 
@@ -1659,72 +724,13 @@ class ToRGBLayer(nn.Layer):
         self.bias = self.create_parameter([out_channels, ],
                                           default_initializer=paddle.nn.initializer.Constant(0.0))
         self.weight_gain = 1 / np.sqrt(in_channels * (kernel_size ** 2))
-        self.grad_layer = ToRGBLayer_Grad(
-            in_channels,
-            out_channels,
-            w_dim,
-            kernel_size,
-            conv_clamp,
-            channels_last,
-        )
 
     def forward(self, x, w, fused_modconv=True):
-        self.grad_layer.w = w
         styles = self.affine(w) * self.weight_gain
-        self.grad_layer.styles = styles
-        self.grad_layer.x = x
-        self.grad_layer.fused_modconv = fused_modconv
-        self.grad_layer.weight_gain = self.weight_gain
-        self.grad_layer.weight = self.weight
-        self.grad_layer.affine = self.affine
         x2, x_1, x_2, x_mul_styles = modulated_conv2d(x=x, weight=self.weight, styles=styles, demodulate=False, fused_modconv=fused_modconv)
-        self.grad_layer.x2 = x2
-        self.grad_layer.x_1 = x_1
-        self.grad_layer.x_2 = x_2
-        self.grad_layer.x_mul_styles = x_mul_styles
         b = paddle.cast(self.bias, dtype=x.dtype)
-        self.grad_layer.b = b
         out, temp_tensors = bias_act(x2, b, clamp=self.conv_clamp)
-        self.grad_layer.gain_x2 = temp_tensors['gain_x']
-        self.grad_layer.act_x2 = temp_tensors['act_x']
-        self.grad_layer.x2_add_b = temp_tensors['x_add_b']
         return out
-
-class ToRGBLayer_Grad(object):
-    def __init__(self, in_channels, out_channels, w_dim, kernel_size=1, conv_clamp=None, channels_last=False):
-        super().__init__()
-        self.in_channels = in_channels
-        self.out_channels = out_channels
-        self.w_dim = w_dim
-        self.kernel_size = kernel_size
-        self.conv_clamp = conv_clamp
-        self.channels_last = channels_last
-
-    def __call__(self, dloss_dout):
-        styles = self.styles
-        x2 = self.x2
-        b = self.b
-        gain_x2 = self.gain_x2
-        act_x2 = self.act_x2
-        x2_add_b = self.x2_add_b
-
-        x = self.x
-        w = self.w
-        x_1 = self.x_1
-        x_2 = self.x_2
-        x_mul_styles = self.x_mul_styles
-        fused_modconv = self.fused_modconv
-
-        temp_tensors = {}
-        temp_tensors['gain_x'] = gain_x2
-        temp_tensors['act_x'] = act_x2
-        temp_tensors['x_add_b'] = x2_add_b
-        dloss_dx2 = bias_act_grad(dloss_dout, temp_tensors, b=b, clamp=self.conv_clamp)
-
-        dloss_dx, dloss_dstyles = modulated_conv2d_grad(dloss_dx2, x_1, x_2, x_mul_styles, x=x, weight=self.weight, styles=styles, demodulate=False, fused_modconv=fused_modconv)
-        dloss_daffine_w = dloss_dstyles * self.weight_gain
-        dloss_dw = self.affine.grad_layer(dloss_daffine_w)
-        return dloss_dx, dloss_dw
 
 
 
@@ -1823,25 +829,9 @@ class StyleGANv2ADA_SynthesisNetwork(nn.Layer):
                 self.num_ws += 1
             self.is_lasts.append(is_last)
             self.architectures.append(architecture)
-        self.grad_layer = StyleGANv2ADA_SynthesisNetwork_Grad(
-            w_dim,
-            img_resolution,
-            img_channels,
-            channel_base,
-            channel_max,
-            num_fp16_res,
-        )
-        self.grad_layer.block_resolutions = self.block_resolutions
-        self.grad_layer.channels_dict = self.channels_dict
-        self.grad_layer.is_lasts = self.is_lasts
-        self.grad_layer.architectures = self.architectures
-        self.grad_layer.convs = self.convs
-        self.grad_layer.torgbs = self.torgbs
-        self.grad_layer.num_ws = self.num_ws
 
     def forward(self, ws, **block_kwargs):
         fused_modconv = False
-        self.grad_layer.fused_modconv = fused_modconv
         layer_kwargs = {}
 
         x = img = None
@@ -1885,140 +875,14 @@ class StyleGANv2ADA_SynthesisNetwork(nn.Layer):
             # ToRGB.
             if img is not None:
                 resample_filter = getattr(self, f"resample_filter_{block_idx}")
-                setattr(self.grad_layer, f"resample_filter_{block_idx}", resample_filter)
-                setattr(self.grad_layer, f"upsample2d_input_{block_idx}", img)
                 img = upsample2d(img, resample_filter)
             if is_last or architecture == 'skip':
                 y = self.torgbs[torgb_i](x2, ws[:, i, :], fused_modconv=fused_modconv)
                 self.end_i.append(i)
                 torgb_i += 1
                 img = img + y if img is not None else y
-        self.grad_layer.start_i = self.start_i
-        self.grad_layer.end_i = self.end_i
         return img
 
-
-
-class StyleGANv2ADA_SynthesisNetwork_Grad(object):
-    def __init__(self,
-        w_dim,                      # Intermediate latent (W) dimensionality.
-        img_resolution,             # Output image resolution.
-        img_channels,               # Number of color channels.
-        channel_base    = 32768,    # Overall multiplier for the number of channels.
-        channel_max     = 512,      # Maximum number of channels in any layer.
-        num_fp16_res    = 0,        # 在前N个最高分辨率处使用FP16.
-        **block_kwargs,             # SynthesisBlock的参数.
-    ):
-        super().__init__()
-        self.w_dim = w_dim
-        self.img_resolution = img_resolution
-        self.img_channels = img_channels
-        self.channel_base = channel_base
-        self.channel_max = channel_max
-        self.num_fp16_res = num_fp16_res
-
-    def pre_ws_grad(self, dloss_dws, dloss_dx2, conv_i, i, block_idx):
-        # Main layers.
-        if block_idx == 0:
-            dloss_dx1, dloss_dws_i = self.convs[conv_i].grad_layer(dloss_dx2)
-            dloss_dws[i].append(dloss_dws_i)
-            i -= 1
-            conv_i -= 1
-        # elif self.architecture == 'resnet':
-        #     y = self.skip(x, gain=np.sqrt(0.5))
-        #     x = self.conv0(x, ws[:, i + 1], fused_modconv=fused_modconv, **layer_kwargs)
-        #     x = self.conv1(x, ws[:, i + 1], fused_modconv=fused_modconv, gain=np.sqrt(0.5), **layer_kwargs)
-        #     x = y.add_(x)
-        else:
-            dloss_dx1, dloss_dws_i = self.convs[conv_i].grad_layer(dloss_dx2)
-            dloss_dws[i].append(dloss_dws_i)
-            i -= 1
-            conv_i -= 1
-            dloss_dx0, dloss_dws_i = self.convs[conv_i].grad_layer(dloss_dx1)
-            dloss_dws[i].append(dloss_dws_i)
-            i -= 1
-            conv_i -= 1
-
-        if block_idx == 0:
-            return
-        else:
-            dloss_dx2 = dloss_dx0
-            self.pre_ws_grad(dloss_dws, dloss_dx2, conv_i, i, block_idx - 1)
-
-    def __call__(self, dloss_dout):
-        fused_modconv = self.fused_modconv
-        conv_i = len(self.convs) - 1
-        torgb_i = len(self.torgbs) - 1
-        dloss_dimg = dloss_dout
-        # dloss_dws = [[]] * self.num_ws
-        dloss_dws = []
-        for kkk in range(self.num_ws):
-            dloss_dws.append([])
-        for block_idx in range(len(self.block_resolutions) - 1, -1, -1):
-            res = self.block_resolutions[block_idx]
-            in_channels = self.channels_dict[res // 2] if res > 4 else 0
-            is_last = self.is_lasts[block_idx]
-            architecture = self.architectures[block_idx]
-
-            '''
-            最终的img是每次循环的y累加的结果。
-            （正向传播时）每一次循环torgbs层用到的ws和下一次循环第一个convs层用到的ws是一样的！
-            下一次循环用到的x0是上一次循环的x2，所以x0表达式里包含有之前全部的ws...
-            img = y0 + y1 + y2 + ...
-                = t0(c0(const, w0), w1) + y1 + y2 + ...
-                = t0(x2) + y1 + y2 + ...
-                = t0(x2) + t1(c2(c1(x2, w1), w2), w3) + y2 + ...
-            所以，最后的y_n是有全部的w的表达式的。
-            对于每一个y_i，求出y_i对所有w的偏导，再求和即可。
-            '''
-
-
-            i = self.end_i[block_idx]
-            # ToRGB.
-            if is_last or architecture == 'skip':
-                dloss_dy = dloss_dimg
-                dloss_dx2, dloss_dws_i = self.torgbs[torgb_i].grad_layer(dloss_dy)
-                dloss_dws[i].append(dloss_dws_i)
-                i -= 1
-                torgb_i -= 1
-            if in_channels != 0:
-                resample_filter = getattr(self, f"resample_filter_{block_idx}")
-                dloss_dimg = upsample2d_grad(dloss_dimg, getattr(self, f"upsample2d_input_{block_idx}"), resample_filter)
-
-            # Main layers.
-            if in_channels == 0:
-                dloss_dx1, dloss_dws_i = self.convs[conv_i].grad_layer(dloss_dx2)
-                dloss_dws[i].append(dloss_dws_i)
-                # i -= 1
-                conv_i -= 1
-            # elif self.architecture == 'resnet':
-            #     y = self.skip(x, gain=np.sqrt(0.5))
-            #     x = self.conv0(x, ws[:, i + 1], fused_modconv=fused_modconv, **layer_kwargs)
-            #     x = self.conv1(x, ws[:, i + 1], fused_modconv=fused_modconv, gain=np.sqrt(0.5), **layer_kwargs)
-            #     x = y.add_(x)
-            else:
-                dloss_dx1, dloss_dws_i = self.convs[conv_i].grad_layer(dloss_dx2)
-                dloss_dws[i].append(dloss_dws_i)
-                i -= 1
-                conv_i -= 1
-                dloss_dx0, dloss_dws_i = self.convs[conv_i].grad_layer(dloss_dx1)
-                dloss_dws[i].append(dloss_dws_i)
-                # i -= 1
-                conv_i -= 1
-
-            if in_channels == 0:
-                pass
-            else:
-                dloss_dx2 = dloss_dx0
-                self.pre_ws_grad(dloss_dws, dloss_dx2, conv_i, i - 1, block_idx - 1)
-        for kkk in range(self.num_ws):
-            grad = dloss_dws[kkk]
-            if len(grad) == 1:
-                dloss_dws[kkk] = grad[0]
-            else:
-                dloss_dws[kkk] = paddle.stack(grad, 1)
-                dloss_dws[kkk] = paddle.sum(dloss_dws[kkk], 1)
-        return dloss_dws
 
 
 
@@ -2500,34 +1364,6 @@ class StyleGANv2ADA_AugmentPipe(nn.Layer):
             images = images14
 
         return images
-
-
-def pad_reflect_grad(dloss_dout, mx0, mx1, my0, my1):
-    dloss_dx = dloss_dout[:, :, my0:-my1, mx0:-mx1]
-
-    if mx0 > 0:
-        left_up = dloss_dout[:, :, :my0, :mx0]
-        left_ = dloss_dout[:, :, my0:-my1, :mx0]
-        left_down = dloss_dout[:, :, -my1:, :mx0]
-        dloss_dx[:, :, 1:1 + my0, 1:1 + mx0] += left_up[:, :, ::-1, ::-1]
-        dloss_dx[:, :, :, 1:1 + mx0] += left_[:, :, :, ::-1]
-        dloss_dx[:, :, -1 - my1:-1, 1:1 + mx0] += left_down[:, :, ::-1, ::-1]
-
-    right_up = dloss_dout[:, :, :my0, -mx1:]
-    right_ = dloss_dout[:, :, my0:-my1, -mx1:]
-    right_down = dloss_dout[:, :, -my1:, -mx1:]
-
-    up_ = dloss_dout[:, :, :my0, mx0:-mx1]
-    down_ = dloss_dout[:, :, -my1:, mx0:-mx1]
-
-
-    dloss_dx[:, :, 1:1 + my0, -1 - mx1:-1] += right_up[:, :, ::-1, ::-1]
-    dloss_dx[:, :, :, -1 - mx1:-1] += right_[:, :, :, ::-1]
-    dloss_dx[:, :, -1 - my1:-1, -1 - mx1:-1] += right_down[:, :, ::-1, ::-1]
-
-    dloss_dx[:, :, 1:1 + my0, :] += up_[:, :, ::-1, :]
-    dloss_dx[:, :, -1 - my1:-1, :] += down_[:, :, ::-1, :]
-    return dloss_dx
 
 
 

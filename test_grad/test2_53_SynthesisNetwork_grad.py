@@ -30,7 +30,7 @@ synthesis_cfg = dict(
     conv_clamp=conv_clamp,
 )
 
-batch_size = 1
+batch_size = 2
 w_shape = [batch_size, w_dim]
 lr = 0.0001
 
