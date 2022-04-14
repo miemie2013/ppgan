@@ -198,6 +198,7 @@ class StyleGANv2ADATestDataset(BaseDataset):
         z = np.random.RandomState(seed).randn(self.z_dim, )
         datas = {
             'z': z,
+            'seed': seed,
         }
         return datas
 

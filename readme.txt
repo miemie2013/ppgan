@@ -9,6 +9,17 @@ wget https://paddlegan.bj.bcebos.com/InceptionV3.pdparams
 
 ======================== StyleGANv2_ADA ========================
 
+
+# 转换原版仓库权重
+python convert_weights/stylegan2ada_convert_weights.py -c configs/stylegan_v2ada_512_afhqcat.yaml -c_G G_afhqcat.pth -c_Gema G_ema_afhqcat.pth -c_D D_afhqcat.pth -oc styleganv2ada_512_afhqcat.pdparams
+
+
+
+
+
+
+
+
 1.因为会报错 ValueError: (InvalidArgument) float16 can only be used when CUDNN or NPU is used
 所以强制设置StyleGANv2ADA_SynthesisNetwork的use_fp16 = False
 class StyleGANv2ADA_SynthesisNetwork(nn.Layer):
@@ -96,26 +107,19 @@ export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/cuda-10.2/lib64
 export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/lib/x86_64-linux-gnu
 
 
+# 转换权重方便对齐
+python convert_weights/stylegan2ada_convert_weights.py -c configs/stylegan_v2ada_32_custom.yaml -c_G G_00.pth -c_Gema G_ema_00.pth -c_D D_00.pth -oc styleganv2ada_32_00.pdparams
 
-python tools/convert_weights.py -f exps/styleganv2ada/styleganv2ada_32_custom.py -c_G G_00.pth -c_Gema G_ema_00.pth -c_D D_00.pth -oc styleganv2ada_32_00.pth
 
-
-python tools/convert_weights.py -f exps/styleganv2ada/styleganv2ada_32_custom.py -c_G G_19.pth -c_Gema G_ema_19.pth -c_D D_19.pth -oc styleganv2ada_32_19.pth
+python convert_weights/stylegan2ada_convert_weights.py -c configs/stylegan_v2ada_32_custom.yaml -c_G G_19.pth -c_Gema G_ema_19.pth -c_D D_19.pth -oc styleganv2ada_32_19.pdparams
 
 
 CUDA_VISIBLE_DEVICES=0
-python tools/main.py -c configs/stylegan_v2ada_32_custom.yaml
+python tools/main.py -c configs/stylegan_v2ada_32_custom.yaml --load styleganv2ada_32_00.pdparams
 
 
 CUDA_VISIBLE_DEVICES=0,1
-python -m paddle.distributed.launch tools/main.py -c configs/stylegan_v2ada_32_custom.yaml --load styleganv2ada_32_afhqcat.pdparams
-
-python -m paddle.distributed.launch tools/main.py -c configs/stylegan_v2ada_32_custom.yaml
-
-
-
-CUDA_VISIBLE_DEVICES=0
-python tools/train.py -f exps/styleganv2ada/styleganv2ada_32_custom.py --dist-url tcp://192.168.0.104:12319 --num_machines 2 --machine_rank 1 -b 8 -eb 2 -c styleganv2ada_32_00.pth
+python -m paddle.distributed.launch tools/main.py -c configs/stylegan_v2ada_32_custom.yaml --load styleganv2ada_32_00.pdparams
 
 
 
