@@ -181,7 +181,7 @@ class Collector:
             if name not in self._cumulative:
                 self._cumulative[name] = paddle.zeros([_num_moments], dtype=_counter_dtype)
             delta = cumulative - self._cumulative[name]
-            self._cumulative[name].copy_(cumulative)
+            self._cumulative[name].set_value(cumulative)
             if float(delta[0]) != 0:
                 self._moments[name] = delta
 
@@ -266,7 +266,7 @@ def _sync(names):
         for counter in _counters[name].values():
             # delta.add_(counter.to(device))
             delta = delta + counter
-            counter.copy_(paddle.zeros_like(counter))
+            counter.set_value(paddle.zeros_like(counter))
         deltas.append(delta)
     deltas = paddle.stack(deltas)
 

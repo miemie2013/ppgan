@@ -561,10 +561,10 @@ class StyleGANv2ADAModel(BaseModel):
         self.batch_idx += 1
 
         if self.align_grad:
-            if self.is_distributed:
-                w_avg = self.mapping.module.w_avg
+            if isinstance(self.nets['mapping'], (paddle.DataParallel)):
+                w_avg = self.nets['mapping']._layers.w_avg
             else:
-                w_avg = self.mapping.w_avg
+                w_avg = self.nets['mapping'].w_avg
             print_diff(dic2, 'w_avg', w_avg)
 
         # Execute ADA heuristic.
