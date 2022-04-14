@@ -25,7 +25,6 @@ from paddle.distributed import ParallelEnv
 
 from ..datasets.builder import build_dataloader, build_dataset
 from ..metrics.fid import FeatureStats
-from ..models import PastaGANModel, StyleGANv2ADAModel
 from ..models.builder import build_model
 from ..utils import training_stats
 from ..utils.visual import tensor2img, save_image
@@ -100,7 +99,6 @@ class Trainer:
         self.model = build_model(cfg.model)
         self.archi_name = cfg.model.name
         self.is_distributed = ParallelEnv().nranks > 1
-        self.world_size = ParallelEnv().nranks
         # multiple gpus prepare
         if ParallelEnv().nranks > 1:
             self.distributed_data_parallel()
@@ -201,7 +199,8 @@ class Trainer:
             if self.total_iters is None:
                 kimgs = cfg.get('kimgs', None)
                 kimgs = kimgs * 1000
-                batch_size = self.cfg.dataset.train.batch_size
+                batch_gpu = self.cfg.dataset.train.batch_size
+                batch_size = batch_gpu * self.world_size
                 self.total_iters = kimgs // batch_size
 
         if self.by_epoch:
@@ -269,7 +268,10 @@ class Trainer:
             # unpack data from dataset and apply preprocessing
             # data input should be dict
             self.model.setup_input(data)
-            self.model.train_iter(self.optimizers)
+            if self.archi_name == 'StyleGANv2ADAModel':
+                self.model.train_iter(self.optimizers, self.local_rank, self.world_size)
+            else:
+                self.model.train_iter(self.optimizers)
 
             batch_cost_averager.record(
                 time.time() - step_start_time,

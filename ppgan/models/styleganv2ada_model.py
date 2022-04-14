@@ -326,6 +326,7 @@ class StyleGANv2ADAModel(BaseModel):
 
         # Dmain: Minimize logits for generated images.
         # loss3 = 0.0
+        loss_Dgen = 0
         if do_Dmain:
             # 训练判别器，生成器应该冻结，而且希望fake_img的gen_logits越小越好（判断是假图片），所以损失是-log(1 - sigmoid(gen_logits))
             # 每个step都做1次
