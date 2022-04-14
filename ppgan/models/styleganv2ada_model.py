@@ -1,6 +1,4 @@
-# code was heavily based on https://github.com/clovaai/stargan-v2
-# Users should be careful about adopting these functions in any commercial matters.
-# https://github.com/clovaai/stargan-v2#license
+# code was heavily based on https://github.com/NVlabs/stylegan2-ada-pytorch
 import cv2
 from paddle.fluid.layers.nn import soft_relu
 from .base_model import BaseModel
@@ -129,16 +127,6 @@ class StyleGANv2ADAModel(BaseModel):
         self.nets['discriminator'].train()
         self.nets_ema['synthesis'].eval()
         self.nets_ema['mapping'].eval()
-        for name, param in self.nets['synthesis'].named_parameters():
-            param.stop_gradient = True
-        for name, param in self.nets['mapping'].named_parameters():
-            param.stop_gradient = True
-        for name, param in self.nets['discriminator'].named_parameters():
-            param.stop_gradient = True
-        for name, param in self.nets_ema['synthesis'].named_parameters():
-            param.stop_gradient = True
-        for name, param in self.nets_ema['mapping'].named_parameters():
-            param.stop_gradient = True
         self.place = place
         self.rank = rank
         self.c_dim = mapping.c_dim
@@ -162,7 +150,7 @@ class StyleGANv2ADAModel(BaseModel):
         if augment_pipe is not None:
             self.augment_pipe = build_generator(augment_pipe)
         self.style_mixing_prob = style_mixing_prob
-        # self.augment_pipe = None
+        self.augment_pipe = None
         # self.style_mixing_prob = -1.0
         self.r1_gamma = r1_gamma
         self.pl_batch_shrink = pl_batch_shrink
@@ -474,8 +462,14 @@ class StyleGANv2ADAModel(BaseModel):
                     param.stop_gradient = False
                 for name, param in self.nets['mapping'].named_parameters():
                     param.stop_gradient = False
+                for name, param in self.nets['discriminator'].named_parameters():
+                    param.stop_gradient = True
             elif 'D' in phase.name:
                 optimizers['discriminator'].clear_gradients()
+                for name, param in self.nets['synthesis'].named_parameters():
+                    param.stop_gradient = True
+                for name, param in self.nets['mapping'].named_parameters():
+                    param.stop_gradient = True
                 for name, param in self.nets['discriminator'].named_parameters():
                     param.stop_gradient = False
 
@@ -498,14 +492,8 @@ class StyleGANv2ADAModel(BaseModel):
             #     if param.grad is not None:
             #         misc.nan_to_num(param.grad, nan=0, posinf=1e5, neginf=-1e5, out=param.grad)
             if 'G' in phase.name:
-                for name, param in self.nets['synthesis'].named_parameters():
-                    param.stop_gradient = True
-                for name, param in self.nets['mapping'].named_parameters():
-                    param.stop_gradient = True
                 optimizers['generator'].step()  # 更新参数
             elif 'D' in phase.name:
-                for name, param in self.nets['discriminator'].named_parameters():
-                    param.stop_gradient = True
                 optimizers['discriminator'].step()  # 更新参数
 
 

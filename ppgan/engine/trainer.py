@@ -100,6 +100,7 @@ class Trainer:
         self.model = build_model(cfg.model)
         self.archi_name = cfg.model.name
         self.is_distributed = ParallelEnv().nranks > 1
+        self.world_size = ParallelEnv().nranks
         # multiple gpus prepare
         if ParallelEnv().nranks > 1:
             self.distributed_data_parallel()

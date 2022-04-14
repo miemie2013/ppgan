@@ -104,13 +104,14 @@ python tools/convert_weights.py -f exps/styleganv2ada/styleganv2ada_32_custom.py
 
 
 CUDA_VISIBLE_DEVICES=0
-python tools/train.py -f exps/styleganv2ada/styleganv2ada_32_custom.py -d 1 -b 8 -eb 1 -c styleganv2ada_32_00.pth
+python tools/main.py -c configs/stylegan_v2ada_32_custom.yaml
 
 
 CUDA_VISIBLE_DEVICES=0,1
-python tools/main.py -c configs/stylegan_v2ada_32_custom.yaml --load styleganv2ada_32_afhqcat.pdparams
+python -m paddle.distributed.launch tools/main.py -c configs/stylegan_v2ada_32_custom.yaml --load styleganv2ada_32_afhqcat.pdparams
 
-python tools/main.py -c configs/stylegan_v2ada_32_custom.yaml
+python -m paddle.distributed.launch tools/main.py -c configs/stylegan_v2ada_32_custom.yaml
+
 
 
 CUDA_VISIBLE_DEVICES=0
