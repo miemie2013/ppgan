@@ -55,7 +55,7 @@ model:
     conv_clamp: *CONV_CLAMP
     block_kwargs: {}
     mapping_kwargs: {}
-    epilogue_kwargs: {mbstd_group_size: 8}
+    epilogue_kwargs: {mbstd_group_size: 4}
 
 dataset:
   train:
@@ -65,7 +65,7 @@ dataset:
     is_train: True
     resolution: *IMAGE_SIZE
     use_labels: False
-    xflip: False
+    xflip: True
     num_workers: 0
     batch_size: 1
     len_phases: 4
@@ -78,13 +78,13 @@ dataset:
 
 lr_scheduler_G:
   name: MultiStepDecay
-  learning_rate: 0.002
+  learning_rate: 0.002  # 0.002 / 32.0 per image; 0.000625 if batch_size is 4; 0.0009375 if batch_size is 6;
   milestones: [99999000]
   gamma: 0.5
 
 lr_scheduler_D:
   name: MultiStepDecay
-  learning_rate: 0.002
+  learning_rate: 0.002  # 0.002 / 32.0 per image; 0.000625 if batch_size is 4; 0.0009375 if batch_size is 6;
   milestones: [99999000]
   gamma: 0.5
 
