@@ -1,0 +1,117 @@
+kimgs: 25000
+output_dir: output_dir
+find_unused_parameters: true
+
+model:
+  name: StyleGANv2ADAModel
+  G_reg_interval: 4
+  D_reg_interval: 16
+  # loss
+  r1_gamma: 2.0
+  pl_batch_shrink: 2
+  ema_kimg: 10
+  ema_rampup: None
+  augment_p: 0.0
+  ada_kimg: 100
+  ada_interval: 4
+  ada_target: 0.6
+  synthesis:
+    name: StyleGANv2ADA_SynthesisNetwork
+    w_dim: &W_DIM 512
+    img_resolution: &IMAGE_SIZE 1024
+    img_channels: &IMG_CHANNELS 3
+    channel_base: &CHANNEL_BASE 32768
+    channel_max: &CHANNEL_MAX 512
+    num_fp16_res: &NUM_FP16_RES 4
+    conv_clamp: &CONV_CLAMP 256
+  mapping:
+    name: StyleGANv2ADA_MappingNetwork
+    z_dim: &Z_DIM 512
+    c_dim: &C_DIM 0
+    w_dim: *W_DIM
+    num_layers: 8
+  augment_pipe:
+    name: StyleGANv2ADA_AugmentPipe
+    xflip: 1
+    rotate90: 1
+    xint: 1
+    scale: 1
+    rotate: 1
+    aniso: 1
+    xfrac: 1
+    brightness: 1
+    contrast: 1
+    lumaflip: 1
+    hue: 1
+    saturation: 1
+  discriminator:
+    name: StyleGANv2ADA_Discriminator
+    c_dim: *C_DIM
+    img_resolution: *IMAGE_SIZE
+    img_channels: *IMG_CHANNELS
+    channel_base: *CHANNEL_BASE
+    channel_max: *CHANNEL_MAX
+    num_fp16_res: *NUM_FP16_RES
+    conv_clamp: *CONV_CLAMP
+    block_kwargs: {}
+    mapping_kwargs: {}
+    epilogue_kwargs: {mbstd_group_size: 8}
+
+dataset:
+  train:
+    name: StyleGANv2ADADataset
+    dataroot: ../data/data42681/afhq/train/cat
+#    dataroot: ../data/data42681/afhq/train/dog
+    is_train: True
+    resolution: *IMAGE_SIZE
+    use_labels: False
+    xflip: False
+    num_workers: 0
+    batch_size: 1
+    len_phases: 4
+    preprocess: None
+
+  test:
+    name: StyleGANv2ADATestDataset
+    seeds: [85, 100, 75, 458, 1500]
+    z_dim: *Z_DIM
+
+lr_scheduler_G:
+  name: MultiStepDecay
+  learning_rate: 0.002
+  milestones: [99999000]
+  gamma: 0.5
+
+lr_scheduler_D:
+  name: MultiStepDecay
+  learning_rate: 0.002
+  milestones: [99999000]
+  gamma: 0.5
+
+optimizer:
+  generator:
+    name: Adam
+    net_names:
+      - synthesis
+      - mapping
+    beta1: 0.0
+    beta2: 0.99
+    epsilon: 1e-8
+  discriminator:
+    name: Adam
+    net_names:
+      - discriminator
+    beta1: 0.0
+    beta2: 0.99
+    epsilon: 1e-8
+
+validate:
+  interval: 1000   # test iters
+  save_img: true
+
+log_config:
+  interval: 10   # log iters
+  visiual_interval: 1000   # visual iters
+
+snapshot_config:
+  interval: 1000   # save epochs when use 'epochs'; save iters when use 'total_iters' or 'kimgs'.

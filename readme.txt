@@ -11,11 +11,18 @@ wget https://paddlegan.bj.bcebos.com/InceptionV3.pdparams
 
 
 # 转换原版仓库权重
-python convert_weights/stylegan2ada_convert_weights.py -c configs/stylegan_v2ada_512_afhqcat.yaml -c_G G_afhqcat.pth -c_Gema G_ema_afhqcat.pth -c_D D_afhqcat.pth -oc styleganv2ada_512_afhqcat.pdparams
+python convert_weights/stylegan2ada_convert_weights.py -c configs/stylegan_v2ada_512_afhqcat.yaml -c_Gema G_ema_afhqcat.pth -c_G G_afhqcat.pth -c_D D_afhqcat.pth -oc styleganv2ada_512_afhqcat.pdparams
 
+python convert_weights/stylegan2ada_convert_weights.py -c configs/stylegan_v2ada_1024_metfaces_1_gpu.yaml -c_Gema G_ema_metfaces.pth -c_G G_metfaces.pth -c_D D_metfaces.pth -oc styleganv2ada_1024_metfaces.pdparams
 
+python convert_weights/stylegan2ada_convert_weights.py -c configs/stylegan_v2ada_1024_metfaces_1_gpu.yaml -c_Gema G_ema_ffhq.pth -c_G G_ffhq.pth -c_D D_ffhq.pth -oc styleganv2ada_1024_ffhq.pdparams
 
+# 测试
+python tools/main.py -c configs/stylegan_v2ada_512_afhqcat.yaml --evaluate-only --load styleganv2ada_512_afhqcat.pdparams
 
+python tools/main.py -c configs/stylegan_v2ada_1024_metfaces_1_gpu.yaml --evaluate-only --load styleganv2ada_1024_metfaces.pdparams
+
+python tools/main.py -c configs/stylegan_v2ada_1024_metfaces_1_gpu.yaml --evaluate-only --load styleganv2ada_1024_ffhq.pdparams
 
 
 
