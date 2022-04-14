@@ -641,7 +641,7 @@ class SynthesisLayer(nn.Layer):
         self.resolution = resolution
         self.up = up
         self.use_noise = use_noise
-        # self.use_noise = False
+        self.use_noise = False
         self.activation = activation
         self.conv_clamp = conv_clamp
         self.register_buffer('resample_filter', upfirdn2d_setup_filter(resample_filter))
@@ -994,7 +994,7 @@ def rotate2d_inv(theta, **kwargs):
 # All augmentations are disabled by default; individual augmentations can
 # be enabled by setting their probability multipliers to 1.
 
-
+'''
 @GENERATORS.register()
 class StyleGANv2ADA_AugmentPipe(nn.Layer):
     def __init__(self,
@@ -1347,6 +1347,76 @@ class StyleGANv2ADA_AugmentPipe(nn.Layer):
             images14 = images * mask
             images = images14
 
+        return images
+'''
+
+@GENERATORS.register()
+class StyleGANv2ADA_AugmentPipe(nn.Layer):
+    def __init__(self,
+        xflip=0, rotate90=0, xint=0, xint_max=0.125,
+        scale=0, rotate=0, aniso=0, xfrac=0, scale_std=0.2, rotate_max=1, aniso_std=0.2, xfrac_std=0.125,
+        brightness=0, contrast=0, lumaflip=0, hue=0, saturation=0, brightness_std=0.2, contrast_std=0.5, hue_max=1, saturation_std=1,
+        imgfilter=0, imgfilter_bands=[1,1,1,1], imgfilter_std=1,
+        noise=0, cutout=0, noise_std=0.1, cutout_size=0.5,
+    ):
+        super().__init__()
+        self.register_buffer('p', paddle.ones([1, ], dtype='float32'))       # Overall multiplier for augmentation probability.
+
+        # Pixel blitting.
+        self.xflip            = float(xflip)            # Probability multiplier for x-flip.
+        self.rotate90         = float(rotate90)         # Probability multiplier for 90 degree rotations.
+        self.xint             = float(xint)             # Probability multiplier for integer translation.
+        self.xint_max         = float(xint_max)         # Range of integer translation, relative to image dimensions.
+
+        # General geometric transformations.
+        self.scale            = float(scale)            # Probability multiplier for isotropic scaling.
+        self.rotate           = float(rotate)           # Probability multiplier for arbitrary rotation.
+        self.aniso            = float(aniso)            # Probability multiplier for anisotropic scaling.
+        self.xfrac            = float(xfrac)            # Probability multiplier for fractional translation.
+        self.scale_std        = float(scale_std)        # Log2 standard deviation of isotropic scaling.
+        self.rotate_max       = float(rotate_max)       # Range of arbitrary rotation, 1 = full circle.
+        self.aniso_std        = float(aniso_std)        # Log2 standard deviation of anisotropic scaling.
+        self.xfrac_std        = float(xfrac_std)        # Standard deviation of frational translation, relative to image dimensions.
+
+        # Color transformations.
+        self.brightness       = float(brightness)       # Probability multiplier for brightness.
+        self.contrast         = float(contrast)         # Probability multiplier for contrast.
+        self.lumaflip         = float(lumaflip)         # Probability multiplier for luma flip.
+        self.hue              = float(hue)              # Probability multiplier for hue rotation.
+        self.saturation       = float(saturation)       # Probability multiplier for saturation.
+        self.brightness_std   = float(brightness_std)   # Standard deviation of brightness.
+        self.contrast_std     = float(contrast_std)     # Log2 standard deviation of contrast.
+        self.hue_max          = float(hue_max)          # Range of hue rotation, 1 = full circle.
+        self.saturation_std   = float(saturation_std)   # Log2 standard deviation of saturation.
+
+        # Image-space filtering.
+        self.imgfilter        = float(imgfilter)        # Probability multiplier for image-space filtering.
+        self.imgfilter_bands  = list(imgfilter_bands)   # Probability multipliers for individual frequency bands.
+        self.imgfilter_std    = float(imgfilter_std)    # Log2 standard deviation of image-space filter amplification.
+
+        # Image-space corruptions.
+        self.noise            = float(noise)            # Probability multiplier for additive RGB noise.
+        self.cutout           = float(cutout)           # Probability multiplier for cutout.
+        self.noise_std        = float(noise_std)        # Standard deviation of additive RGB noise.
+        self.cutout_size      = float(cutout_size)      # Size of the cutout rectangle, relative to image dimensions.
+
+        # Setup orthogonal lowpass filter for geometric augmentations.
+        self.register_buffer('Hz_geom', upfirdn2d_setup_filter(wavelets['sym6']))
+
+        # Construct filter bank for image-space filtering.
+        Hz_lo = np.asarray(wavelets['sym2'])            # H(z)
+        Hz_hi = Hz_lo * ((-1) ** np.arange(Hz_lo.size)) # H(-z)
+        Hz_lo2 = np.convolve(Hz_lo, Hz_lo[::-1]) / 2    # H(z) * H(z^-1) / 2
+        Hz_hi2 = np.convolve(Hz_hi, Hz_hi[::-1]) / 2    # H(-z) * H(-z^-1) / 2
+        Hz_fbank = np.eye(4, 1)                         # Bandpass(H(z), b_i)
+        for i in range(1, Hz_fbank.shape[0]):
+            Hz_fbank = np.dstack([Hz_fbank, np.zeros_like(Hz_fbank)]).reshape(Hz_fbank.shape[0], -1)[:, :-1]
+            Hz_fbank = scipy.signal.convolve(Hz_fbank, [Hz_lo2])
+            Hz_fbank[i, (Hz_fbank.shape[1] - Hz_hi2.size) // 2 : (Hz_fbank.shape[1] + Hz_hi2.size) // 2] += Hz_hi2
+        self.register_buffer('Hz_fbank', paddle.to_tensor(Hz_fbank, dtype=paddle.float32))
+        self.grid_sample = GridSample(mode='bilinear', padding_mode='zeros', align_corners=False)
+
+    def forward(self, images, debug_percentile=None):
         return images
 
 

@@ -151,13 +151,13 @@ class BaseModel(ABC):
                     lr = lr_G
                 elif opt_name == 'discriminator':
                     lr = lr_D
-                self.optimizers[opt_name] = build_optimizer(cfg_, lr, parameters)
+                # self.optimizers[opt_name] = build_optimizer(cfg_, lr, parameters)
 
                 # 对齐梯度使用
-                # if opt_name == 'generator':
-                #     self.optimizers[opt_name] = paddle.optimizer.Momentum(parameters=parameters, learning_rate=0.001, momentum=0.9)
-                # elif opt_name == 'discriminator':
-                #     self.optimizers[opt_name] = paddle.optimizer.Momentum(parameters=parameters, learning_rate=0.002, momentum=0.9)
+                if opt_name == 'generator':
+                    self.optimizers[opt_name] = paddle.optimizer.Momentum(parameters=parameters, learning_rate=0.001, momentum=0.9)
+                elif opt_name == 'discriminator':
+                    self.optimizers[opt_name] = paddle.optimizer.Momentum(parameters=parameters, learning_rate=0.002, momentum=0.9)
 
         return self.optimizers
 

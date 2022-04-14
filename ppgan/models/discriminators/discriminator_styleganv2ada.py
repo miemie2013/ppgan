@@ -207,7 +207,7 @@ class StyleGANv2ADA_Discriminator(nn.Layer):
             in_channels = channels_dict[res] if res < img_resolution else 0
             tmp_channels = channels_dict[res]
             out_channels = channels_dict[res // 2]
-            # use_fp16 = (res >= fp16_resolution)
+            use_fp16 = (res >= fp16_resolution)
             use_fp16 = False
             block = DiscriminatorBlock(in_channels, tmp_channels, out_channels, resolution=res,
                 first_layer_idx=cur_layer_idx, use_fp16=use_fp16, **block_kwargs, **common_kwargs)
