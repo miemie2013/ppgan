@@ -48,6 +48,8 @@ def soft_update(source, ema_model, beta=1.0):
 
     if isinstance(source, paddle.DataParallel):
         source = source._layers
+    if isinstance(ema_model, paddle.DataParallel):
+        ema_model = ema_model._layers
 
     ema_model_map = dict(ema_model.named_parameters())
     for param_name, source_param in source.named_parameters():
