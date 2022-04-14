@@ -429,6 +429,20 @@ class StyleGANv2ADAModel(BaseModel):
         phases = self.phases
         batch_gpu = phase_real_img.shape[0]  # 一张显卡上的批大小
 
+        batch_idx = self.batch_idx
+        # if batch_idx == 0:
+        #     '''
+        #     假如训练命令的命令行参数是 --gpus=2 --batch 8 --cfg my32
+        #     即总的批大小是8，每卡批大小是4，那么这里
+        #     phase_real_img.shape = [4, 3, 32, 32]
+        #     phase_real_c.shape   = [4, 0]
+        #     batch_gpu            = 4
+        #     即拿到的phase_real_img和phase_real_c是一张卡（一个进程）上的训练样本，（每张卡）批大小是4
+        #     '''
+        #     print('phase_real_img.shape =', phase_real_img.shape)
+        #     print('phase_real_c.shape =', phase_real_c.shape)
+        #     print('batch_gpu =', batch_gpu)
+
         all_gen_z = None
         num_gpus = world_size  # 显卡数量
         batch_size = batch_gpu * num_gpus
@@ -438,8 +452,29 @@ class StyleGANv2ADAModel(BaseModel):
             #     all_gen_z = paddle.to_tensor(dic2['all_gen_z'], dtype=all_gen_z.dtype)
         else:
             all_gen_z = paddle.randn([len(phases) * batch_size, 1])  # 咩酱：训练的4个阶段每个gpu的噪声
+        # if batch_idx == 0:
+        #     '''
+        #     假如训练命令的命令行参数是 --gpus=2 --batch 8 --cfg my32
+        #     all_gen_z.shape = [4*8, 512]
+        #     '''
+        #     print('all_gen_z.shape =', all_gen_z.shape)
         phases_all_gen_z = paddle.split(all_gen_z, num_or_sections=len(phases))  # 咩酱：训练的4个阶段的噪声
         all_gen_z = [paddle.split(phase_gen_z, num_or_sections=num_gpus) for phase_gen_z in phases_all_gen_z]  # 咩酱：训练的4个阶段每个gpu的噪声
+        # if batch_idx == 0:
+        #     '''
+        #     all_gen_z.split(batch_size)的意思是，
+        #     把 all_gen_z 分成 all_gen_z.shape[0] // batch_size 份， 每一份的大小是 batch_size。这里份数即 阶段phases 数4.
+        #
+        #     phase_gen_z.split(batch_gpu)的意思是，
+        #     把 phase_gen_z 分成 phase_gen_z.shape[0] // batch_gpu 份， 每一份的大小是 batch_gpu。这里份数即 显卡 数2.
+        #
+        #     len(all_gen_z)        = 4
+        #     len(all_gen_z[0])     = 2
+        #     all_gen_z[0][0].shape = [4, 512]
+        #     '''
+        #     print('len(all_gen_z) =', len(all_gen_z))
+        #     print('len(all_gen_z[0]) =', len(all_gen_z[0]))
+        #     print('all_gen_z[0][0].shape =', all_gen_z[0][0].shape)
 
         c_dim = phases_all_gen_c[0].shape[1]
         all_gen_c = None
@@ -448,11 +483,13 @@ class StyleGANv2ADAModel(BaseModel):
         else:
             all_gen_c = [[None for _2 in range(num_gpus)] for _1 in range(len(phases))]
 
-        phase_real_img = paddle.split(phase_real_img, num_or_sections=num_gpus)
+        # phase_real_img只会产生1份，所以num_or_sections=1
+        phase_real_img = paddle.split(phase_real_img, num_or_sections=1)
 
         c_dim = phase_real_c.shape[1]
         if c_dim > 0:
-            phase_real_c = paddle.split(phase_real_c, num_or_sections=num_gpus)
+            # phase_real_c只会产生1份，所以num_or_sections=1
+            phase_real_c = paddle.split(phase_real_c, num_or_sections=1)
         else:
             phase_real_c = [[None for _2 in range(num_gpus)] for _1 in range(len(phases))]
 
