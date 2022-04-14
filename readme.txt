@@ -121,6 +121,15 @@ python convert_weights/stylegan2ada_convert_weights.py -c configs/stylegan_v2ada
 python convert_weights/stylegan2ada_convert_weights.py -c configs/stylegan_v2ada_32_custom.yaml -c_G G_19.pth -c_Gema G_ema_19.pth -c_D D_19.pth -oc styleganv2ada_32_19.pdparams
 
 
+# 转换权重方便对齐（简单网络版）
+python convert_weights/stylegan2ada_convert_weights_simple.py -c configs/stylegan_v2ada_32_custom.yaml -c_G G_00.pth -c_Gema G_ema_00.pth -c_D D_00.pth -oc styleganv2ada_32_00.pdparams
+
+
+python convert_weights/stylegan2ada_convert_weights_simple.py -c configs/stylegan_v2ada_32_custom.yaml -c_G G_19.pth -c_Gema G_ema_19.pth -c_D D_19.pth -oc styleganv2ada_32_19.pdparams
+
+
+
+
 CUDA_VISIBLE_DEVICES=0
 python tools/main.py -c configs/stylegan_v2ada_32_custom.yaml --load styleganv2ada_32_00.pdparams
 
@@ -130,7 +139,7 @@ python -m paddle.distributed.launch tools/main.py -c configs/stylegan_v2ada_32_c
 
 
 
-python diff_weights.py --cp1 styleganv2ada_32_19.pdparams --cp2 output_dir/stylegan_v2ada_32_custom-2022-04-14-19-17/iter_20_checkpoint.pdparams --d_value 0.0005
+python diff_weights.py --cp1 styleganv2ada_32_19.pdparams --cp2 output_dir/stylegan_v2ada_32_custom-2022-04-14-22-44/iter_20_checkpoint.pdparams --d_value 0.0005
 
 
 

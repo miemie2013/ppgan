@@ -276,17 +276,17 @@ class StyleGANv2ADAModel(BaseModel):
             # loss_G = loss_G * float(gain)
             # loss_G.backward()  # 咩酱：gain即上文提到的这个阶段的训练间隔。
             (loss_Gmain.mean() * float(gain)).backward()  # 咩酱：gain即上文提到的这个阶段的训练间隔。
-            if self.align_grad:
-                mapping = self.get_bare_model(self.nets['mapping'])
-                discriminator = self.get_bare_model(self.nets['discriminator'])
-                m_w_grad = mapping.fc7.weight.grad
-                m_b_grad = mapping.fc7.bias.grad
-                d_w_grad = discriminator.b32.conv0.weight.grad
-                d_b_grad = discriminator.b32.conv0.bias.grad
-                print_diff(dic, phase + ' m_w_grad', m_w_grad)
-                print_diff(dic, phase + ' m_b_grad', m_b_grad)
-                print_diff(dic, phase + ' d_w_grad', d_w_grad)
-                print_diff(dic, phase + ' d_b_grad', d_b_grad)
+            # if self.align_grad:
+            #     mapping = self.get_bare_model(self.nets['mapping'])
+            #     discriminator = self.get_bare_model(self.nets['discriminator'])
+            #     m_w_grad = mapping.fc7.weight.grad
+            #     m_b_grad = mapping.fc7.bias.grad
+            #     d_w_grad = discriminator.b32.conv0.weight.grad
+            #     d_b_grad = discriminator.b32.conv0.bias.grad
+            #     print_diff(dic, phase + ' m_w_grad', m_w_grad)
+            #     print_diff(dic, phase + ' m_b_grad', m_b_grad)
+            #     print_diff(dic, phase + ' d_w_grad', d_w_grad)
+            #     print_diff(dic, phase + ' d_b_grad', d_b_grad)
 
         # Gpl: Apply path length regularization.
         if do_Gpl:

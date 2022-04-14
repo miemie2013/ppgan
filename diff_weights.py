@@ -35,8 +35,7 @@ if __name__ == "__main__":
     for key in ['synthesis', 'synthesis_ema', 'mapping', 'mapping_ema', 'discriminator']:
         aa = aaa[key]
         for key2, value1 in aa.items():
-            if '_ema' in key:
-                key2 = key2 + ' ema'
+            key2 = key + '.' + key2
             state_dict1_pytorch[key2] = value1
 
     ckpt_file2 = args.cp2
@@ -45,15 +44,12 @@ if __name__ == "__main__":
     for key in ['synthesis', 'synthesis_ema', 'mapping', 'mapping_ema', 'discriminator']:
         aa = aaa[key]
         for key2, value1 in aa.items():
-            if '_ema' in key:
-                key2 = key2 + ' ema'
+            key2 = key + '.' + key2
             state_dict2_pytorch[key2] = value1
 
     d_value = args.d_value
     print('======================== diff(weights) > d_value=%.6f ========================' % d_value)
     for key, value1 in state_dict1_pytorch.items():
-        if '_ema' in key:
-            continue
         if 'augment_pipe.' in key:
             continue
         v1 = value1.cpu().detach().numpy()
@@ -67,8 +63,6 @@ if __name__ == "__main__":
     print()
     print('======================== diff(weights) <= d_value=%.6f ========================' % d_value)
     for key, value1 in state_dict1_pytorch.items():
-        if '_ema' in key:
-            continue
         if 'augment_pipe.' in key:
             continue
         v1 = value1.cpu().detach().numpy()

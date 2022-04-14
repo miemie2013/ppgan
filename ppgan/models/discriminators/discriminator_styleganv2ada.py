@@ -170,7 +170,7 @@ class DiscriminatorEpilogue(nn.Layer):
         return x
 
 
-
+'''
 @DISCRIMINATORS.register()
 class StyleGANv2ADA_Discriminator(nn.Layer):
     def __init__(self,
@@ -227,6 +227,40 @@ class StyleGANv2ADA_Discriminator(nn.Layer):
         if self.c_dim > 0:
             cmap = self.mapping(None, c)
         x = self.b4(x, img, cmap)
+        return x
+'''
+
+
+
+@DISCRIMINATORS.register()
+class StyleGANv2ADA_Discriminator(nn.Layer):
+    def __init__(self,
+        c_dim,                          # Conditioning label (C) dimensionality.
+        img_resolution,                 # Input resolution.
+        img_channels,                   # Number of input color channels.
+        architecture        = 'resnet', # Architecture: 'orig', 'skip', 'resnet'.
+        channel_base        = 32768,    # Overall multiplier for the number of channels.
+        channel_max         = 512,      # Maximum number of channels in any layer.
+        num_fp16_res        = 0,        # Use FP16 for the N highest resolutions.
+        conv_clamp          = None,     # Clamp the output of convolution layers to +-X, None = disable clamping.
+        cmap_dim            = None,     # Dimensionality of mapped conditioning label, None = default.
+        block_kwargs        = {},       # Arguments for DiscriminatorBlock.
+        mapping_kwargs      = {},       # Arguments for MappingNetwork.
+        epilogue_kwargs     = {},       # Arguments for DiscriminatorEpilogue.
+    ):
+        super().__init__()
+        self.conv = paddle.nn.Conv2D(
+            in_channels=3,
+            out_channels=1,
+            kernel_size=1,
+            stride=1,
+            padding=0,
+            groups=1,
+            bias_attr=False)
+
+    def forward(self, img, c, **block_kwargs):
+        x = self.conv(img)
+        x = x.mean([2, 3])
         return x
 
 

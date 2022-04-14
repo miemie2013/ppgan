@@ -483,7 +483,7 @@ class FullyConnectedLayer(nn.Layer):
 def normalize_2nd_moment(x, dim=1, eps=1e-8):
     return x * (x.square().mean(axis=dim, keepdim=True) + eps).rsqrt()
 
-
+'''
 @GENERATORS.register()
 class StyleGANv2ADA_MappingNetwork(nn.Layer):
     def __init__(self,
@@ -561,6 +561,87 @@ class StyleGANv2ADA_MappingNetwork(nn.Layer):
                 # x[:, :truncation_cutoff] = self.w_avg.lerp(x[:, :truncation_cutoff], truncation_psi)
                 x[:, :truncation_cutoff] = self.w_avg + truncation_psi * (x[:, :truncation_cutoff] - self.w_avg)
         return x
+'''
+
+@GENERATORS.register()
+class StyleGANv2ADA_MappingNetwork(nn.Layer):
+    def __init__(self,
+        z_dim,                      # Input latent (Z) dimensionality, 0 = no latent.
+        c_dim,                      # Conditioning label (C) dimensionality, 0 = no label.
+        w_dim,                      # Intermediate latent (W) dimensionality.
+        num_ws,                     # Number of intermediate latents to output, None = do not broadcast.
+        num_layers      = 8,        # Number of mapping layers.
+        embed_features  = None,     # Label embedding dimensionality, None = same as w_dim.
+        layer_features  = None,     # Number of intermediate features in the mapping layers, None = same as w_dim.
+        activation      = 'lrelu',  # Activation function: 'relu', 'lrelu', etc.
+        lr_multiplier   = 0.01,     # Learning rate multiplier for the mapping layers.
+        w_avg_beta      = 0.995,    # Decay for tracking the moving average of W during training, None = do not track.
+    ):
+        super().__init__()
+        self.z_dim = z_dim
+        self.c_dim = c_dim
+        self.w_dim = w_dim
+        self.num_ws = num_ws
+        num_layers = 1
+        self.num_layers = num_layers
+        self.w_avg_beta = w_avg_beta
+
+        if embed_features is None:
+            embed_features = w_dim
+        if c_dim == 0:
+            embed_features = 0
+        if layer_features is None:
+            layer_features = w_dim
+        features_list = [z_dim + embed_features] + [layer_features] * (num_layers - 1) + [w_dim]
+
+        if c_dim > 0:
+            self.embed = FullyConnectedLayer(c_dim, embed_features)
+        for idx in range(num_layers):
+            in_features = features_list[idx]
+            out_features = features_list[idx + 1]
+            layer = FullyConnectedLayer(in_features, out_features, activation=activation, lr_multiplier=lr_multiplier)
+            setattr(self, f'fc{idx}', layer)
+
+        if num_ws is not None and w_avg_beta is not None:
+            self.register_buffer('w_avg', paddle.zeros([w_dim]))
+
+    def forward(self, z, c, truncation_psi=1, truncation_cutoff=None, skip_w_avg_update=False):
+        # Embed, normalize, and concat inputs.
+        x = None
+        if self.z_dim > 0:
+            # temp1 = paddle.cast(z, dtype='float32')
+            x = normalize_2nd_moment(z)
+        if self.c_dim > 0:
+            temp2 = paddle.cast(c, dtype='float32')
+            y = normalize_2nd_moment(self.embed(temp2))
+            x = paddle.concat([x, y], 1) if x is not None else y
+
+        # Main layers.
+        for idx in range(self.num_layers):
+            layer = getattr(self, f'fc{idx}')
+            x = layer(x)
+        # Update moving average of W.
+        if self.w_avg_beta is not None and self.training and not skip_w_avg_update:
+            temp3 = x.detach().mean(axis=0)
+            # temp3 = temp3.lerp(self.w_avg, self.w_avg_beta)
+            temp3 = temp3 + self.w_avg_beta * (self.w_avg - temp3)
+            self.w_avg.set_value(temp3.detach())
+
+        # Broadcast.
+        if self.num_ws is not None:
+            x = x.unsqueeze(1).tile([1, self.num_ws, 1])
+
+        # Apply truncation.
+        if truncation_psi != 1:
+            assert self.w_avg_beta is not None
+            if self.num_ws is None or truncation_cutoff is None:
+                # x = self.w_avg.lerp(x, truncation_psi)
+                x = self.w_avg + truncation_psi * (x - self.w_avg)
+            else:
+                # x[:, :truncation_cutoff] = self.w_avg.lerp(x[:, :truncation_cutoff], truncation_psi)
+                x[:, :truncation_cutoff] = self.w_avg + truncation_psi * (x[:, :truncation_cutoff] - self.w_avg)
+        return x
+
 
 def modulated_conv2d(
     x,                          # Input tensor of shape [batch_size, in_channels, in_height, in_width].
@@ -717,7 +798,7 @@ class ToRGBLayer(nn.Layer):
         return x
 
 
-
+'''
 @GENERATORS.register()
 class StyleGANv2ADA_SynthesisNetwork(nn.Layer):
     def __init__(self,
@@ -866,6 +947,45 @@ class StyleGANv2ADA_SynthesisNetwork(nn.Layer):
                 torgb_i += 1
                 img = img + y if img is not None else y
         return img
+'''
+
+
+@GENERATORS.register()
+class StyleGANv2ADA_SynthesisNetwork(nn.Layer):
+    def __init__(self,
+        w_dim,                      # Intermediate latent (W) dimensionality.
+        img_resolution,             # Output image resolution.
+        img_channels,               # Number of color channels.
+        channel_base    = 32768,    # Overall multiplier for the number of channels.
+        channel_max     = 512,      # Maximum number of channels in any layer.
+        num_fp16_res    = 0,        # 在前N个最高分辨率处使用FP16.
+        **block_kwargs,             # SynthesisBlock的参数.
+    ):
+        assert img_resolution >= 4 and img_resolution & (img_resolution - 1) == 0  # 分辨率是2的n次方
+        super().__init__()
+        self.w_dim = w_dim
+        self.img_resolution = img_resolution
+        self.img_resolution_log2 = int(np.log2(img_resolution))
+        self.img_channels = img_channels
+        self.block_resolutions = [2 ** i for i in range(2, self.img_resolution_log2 + 1)]   # 分辨率从4提高到img_resolution
+        channels_dict = {res: min(channel_base // res, channel_max) for res in self.block_resolutions}
+        fp16_resolution = max(2 ** (self.img_resolution_log2 + 1 - num_fp16_res), 8)   # 开始使用FP16的分辨率
+        self.conv = paddle.nn.Conv2DTranspose(
+            in_channels=512,
+            out_channels=3,
+            kernel_size=32,
+            stride=1,
+            padding=0,
+            groups=1,
+            bias_attr=False)
+        self.num_ws = 8
+
+    def forward(self, ws, **block_kwargs):
+        x = ws.sum(1)
+        x = paddle.unsqueeze(x, 2)
+        x = paddle.unsqueeze(x, 2)
+        x = self.conv(x)
+        return x
 
 
 
