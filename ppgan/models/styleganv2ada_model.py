@@ -612,6 +612,8 @@ class StyleGANv2ADAModel(BaseModel):
 
     def test_iter(self, metrics=None):
         z = self.input['z']
+        seed = self.input['seed']
+        seed = seed.numpy()[0]
 
         class_idx = None
         label = paddle.zeros([1, self.c_dim])
@@ -634,7 +636,7 @@ class StyleGANv2ADAModel(BaseModel):
         img = paddle.cast(img, dtype=paddle.uint8)
         img_rgb = img.numpy()[0]  # pgan是将RGB格式的图片进行保存的。
 
-        self.visual_items['reference'] = img_rgb
+        self.visual_items['seed%.8d'%seed] = img_rgb
 
     @paddle.no_grad()
     def gen_images(self, z, c, truncation_psi=1, truncation_cutoff=None, **synthesis_kwargs):
