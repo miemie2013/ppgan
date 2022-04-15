@@ -139,7 +139,7 @@ python -m paddle.distributed.launch tools/main.py -c configs/stylegan_v2ada_32_c
 
 
 
-python diff_weights.py --cp1 styleganv2ada_32_19.pdparams --cp2 output_dir/stylegan_v2ada_32_custom-2022-04-14-22-44/iter_20_checkpoint.pdparams --d_value 0.0005
+python diff_weights.py --cp1 styleganv2ada_32_19.pdparams --cp2 output_dir/stylegan_v2ada_32_custom-2022-04-15-10-04/iter_20_checkpoint.pdparams --d_value 0.0005
 
 
 

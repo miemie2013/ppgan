@@ -483,7 +483,7 @@ class FullyConnectedLayer(nn.Layer):
 def normalize_2nd_moment(x, dim=1, eps=1e-8):
     return x * (x.square().mean(axis=dim, keepdim=True) + eps).rsqrt()
 
-'''
+
 @GENERATORS.register()
 class StyleGANv2ADA_MappingNetwork(nn.Layer):
     def __init__(self,
@@ -561,8 +561,8 @@ class StyleGANv2ADA_MappingNetwork(nn.Layer):
                 # x[:, :truncation_cutoff] = self.w_avg.lerp(x[:, :truncation_cutoff], truncation_psi)
                 x[:, :truncation_cutoff] = self.w_avg + truncation_psi * (x[:, :truncation_cutoff] - self.w_avg)
         return x
-'''
 
+'''
 @GENERATORS.register()
 class StyleGANv2ADA_MappingNetwork(nn.Layer):
     def __init__(self,
@@ -641,7 +641,7 @@ class StyleGANv2ADA_MappingNetwork(nn.Layer):
                 # x[:, :truncation_cutoff] = self.w_avg.lerp(x[:, :truncation_cutoff], truncation_psi)
                 x[:, :truncation_cutoff] = self.w_avg + truncation_psi * (x[:, :truncation_cutoff] - self.w_avg)
         return x
-
+'''
 
 def modulated_conv2d(
     x,                          # Input tensor of shape [batch_size, in_channels, in_height, in_width].
@@ -722,7 +722,7 @@ class SynthesisLayer(nn.Layer):
         self.resolution = resolution
         self.up = up
         self.use_noise = use_noise
-        self.use_noise = False
+        # self.use_noise = False
         self.activation = activation
         self.conv_clamp = conv_clamp
         self.register_buffer('resample_filter', upfirdn2d_setup_filter(resample_filter))
@@ -798,7 +798,7 @@ class ToRGBLayer(nn.Layer):
         return x
 
 
-'''
+
 @GENERATORS.register()
 class StyleGANv2ADA_SynthesisNetwork(nn.Layer):
     def __init__(self,
@@ -947,9 +947,9 @@ class StyleGANv2ADA_SynthesisNetwork(nn.Layer):
                 torgb_i += 1
                 img = img + y if img is not None else y
         return img
+
+
 '''
-
-
 @GENERATORS.register()
 class StyleGANv2ADA_SynthesisNetwork(nn.Layer):
     def __init__(self,
@@ -986,7 +986,7 @@ class StyleGANv2ADA_SynthesisNetwork(nn.Layer):
         x = paddle.unsqueeze(x, 2)
         x = self.conv(x)
         return x
-
+'''
 
 
 
@@ -1470,6 +1470,7 @@ class StyleGANv2ADA_AugmentPipe(nn.Layer):
         return images
 '''
 
+'''
 @GENERATORS.register()
 class StyleGANv2ADA_AugmentPipe(nn.Layer):
     def __init__(self,
@@ -1538,9 +1539,9 @@ class StyleGANv2ADA_AugmentPipe(nn.Layer):
 
     def forward(self, images, debug_percentile=None):
         return images
+'''
 
-
-
+'''
 class GridSample(nn.Layer):
     def __init__(self, mode='bilinear', padding_mode='zeros', align_corners=True):
         super().__init__()
@@ -1549,12 +1550,6 @@ class GridSample(nn.Layer):
         self.align_corners = align_corners
 
     def gather_nd(self, x, index):
-        '''
-        x:      [N, R, S, T]
-        index:  [M, 3]
-        Return:
-            out:  [M, T]
-        '''
         N, R, S, T = x.shape
         index_0 = index[:, 0]   # [M, ]
         index_1 = index[:, 1]   # [M, ]
@@ -1579,20 +1574,7 @@ class GridSample(nn.Layer):
 
         grid_x = grid[:, :, :, :1]   # [N, out_H, out_W, 1]
         grid_y = grid[:, :, :, 1:]   # [N, out_H, out_W, 1]
-
-        '''
-        看了Paddle的源代码Paddle/paddle/fluid/operators/grid_sampler_op.cu的
-        template <typename T>
-        static __forceinline__ __device__ T _unnormalize(T coord, int size,
-                                                         bool align_corners) {
-          if (align_corners) {
-            return ((coord + 1.f) / 2) * (size - 1);
-          } else {
-            return ((coord + 1.f) * size - 1) / 2;
-          }
-        }
-        其中coord是x或y，是-1到1之间的数值；size是ori_W或者ori_H。
-        '''
+        
         if align_corners:
             _xt = (grid_x + 1.0) * (float(in_W) - 1.0) / 2.0   # [N, out_H, out_W, 1]
             _yt = (grid_y + 1.0) * (float(in_H) - 1.0) / 2.0   # [N, out_H, out_W, 1]
@@ -1657,6 +1639,776 @@ class GridSample(nn.Layer):
         out = w1 * v1 + w2 * v2 + w3 * v3 + w4 * v4  # [N, out_H, out_W, C]
         out = paddle.transpose(out, perm=[0, 3, 1, 2])  # [N, C, out_H, out_W]
         return out
+'''
+
+
+
+@GENERATORS.register()
+class StyleGANv2ADA_AugmentPipe(nn.Layer):
+    def __init__(self,
+        xflip=0, rotate90=0, xint=0, xint_max=0.125,
+        scale=0, rotate=0, aniso=0, xfrac=0, scale_std=0.2, rotate_max=1, aniso_std=0.2, xfrac_std=0.125,
+        brightness=0, contrast=0, lumaflip=0, hue=0, saturation=0, brightness_std=0.2, contrast_std=0.5, hue_max=1, saturation_std=1,
+        imgfilter=0, imgfilter_bands=[1,1,1,1], imgfilter_std=1,
+        noise=0, cutout=0, noise_std=0.1, cutout_size=0.5,
+    ):
+        super().__init__()
+        self.register_buffer('p', paddle.ones([1, ], dtype='float32'))       # Overall multiplier for augmentation probability.
+
+        # Pixel blitting.
+        self.xflip            = float(xflip)            # Probability multiplier for x-flip.
+        self.rotate90         = float(rotate90)         # Probability multiplier for 90 degree rotations.
+        self.xint             = float(xint)             # Probability multiplier for integer translation.
+        self.xint_max         = float(xint_max)         # Range of integer translation, relative to image dimensions.
+
+        # General geometric transformations.
+        self.scale            = float(scale)            # Probability multiplier for isotropic scaling.
+        self.rotate           = float(rotate)           # Probability multiplier for arbitrary rotation.
+        self.aniso            = float(aniso)            # Probability multiplier for anisotropic scaling.
+        self.xfrac            = float(xfrac)            # Probability multiplier for fractional translation.
+        self.scale_std        = float(scale_std)        # Log2 standard deviation of isotropic scaling.
+        self.rotate_max       = float(rotate_max)       # Range of arbitrary rotation, 1 = full circle.
+        self.aniso_std        = float(aniso_std)        # Log2 standard deviation of anisotropic scaling.
+        self.xfrac_std        = float(xfrac_std)        # Standard deviation of frational translation, relative to image dimensions.
+
+        # Color transformations.
+        self.brightness       = float(brightness)       # Probability multiplier for brightness.
+        self.contrast         = float(contrast)         # Probability multiplier for contrast.
+        self.lumaflip         = float(lumaflip)         # Probability multiplier for luma flip.
+        self.hue              = float(hue)              # Probability multiplier for hue rotation.
+        self.saturation       = float(saturation)       # Probability multiplier for saturation.
+        self.brightness_std   = float(brightness_std)   # Standard deviation of brightness.
+        self.contrast_std     = float(contrast_std)     # Log2 standard deviation of contrast.
+        self.hue_max          = float(hue_max)          # Range of hue rotation, 1 = full circle.
+        self.saturation_std   = float(saturation_std)   # Log2 standard deviation of saturation.
+
+        # Image-space filtering.
+        self.imgfilter        = float(imgfilter)        # Probability multiplier for image-space filtering.
+        self.imgfilter_bands  = list(imgfilter_bands)   # Probability multipliers for individual frequency bands.
+        self.imgfilter_std    = float(imgfilter_std)    # Log2 standard deviation of image-space filter amplification.
+
+        # Image-space corruptions.
+        self.noise            = float(noise)            # Probability multiplier for additive RGB noise.
+        self.cutout           = float(cutout)           # Probability multiplier for cutout.
+        self.noise_std        = float(noise_std)        # Standard deviation of additive RGB noise.
+        self.cutout_size      = float(cutout_size)      # Size of the cutout rectangle, relative to image dimensions.
+
+        # Setup orthogonal lowpass filter for geometric augmentations.
+        self.register_buffer('Hz_geom', upfirdn2d_setup_filter(wavelets['sym6']))
+
+        # Construct filter bank for image-space filtering.
+        Hz_lo = np.asarray(wavelets['sym2'])            # H(z)
+        Hz_hi = Hz_lo * ((-1) ** np.arange(Hz_lo.size)) # H(-z)
+        Hz_lo2 = np.convolve(Hz_lo, Hz_lo[::-1]) / 2    # H(z) * H(z^-1) / 2
+        Hz_hi2 = np.convolve(Hz_hi, Hz_hi[::-1]) / 2    # H(-z) * H(-z^-1) / 2
+        Hz_fbank = np.eye(4, 1)                         # Bandpass(H(z), b_i)
+        for i in range(1, Hz_fbank.shape[0]):
+            Hz_fbank = np.dstack([Hz_fbank, np.zeros_like(Hz_fbank)]).reshape(Hz_fbank.shape[0], -1)[:, :-1]
+            Hz_fbank = scipy.signal.convolve(Hz_fbank, [Hz_lo2])
+            Hz_fbank[i, (Hz_fbank.shape[1] - Hz_hi2.size) // 2 : (Hz_fbank.shape[1] + Hz_hi2.size) // 2] += Hz_hi2
+        self.register_buffer('Hz_fbank', paddle.to_tensor(Hz_fbank, dtype=paddle.float32))
+        self.grad_layer = StyleGANv2ADA_AugmentPipe_Grad()
+        self.grid_sample = GridSample(mode='bilinear', padding_mode='zeros', align_corners=False)
+        self.grad_layer.grid_sample = self.grid_sample
+        self.grad_layer.cutout = self.cutout
+        self.grad_layer.imgfilter = self.imgfilter
+
+    def forward(self, images, debug_percentile=None):
+        assert images.ndim == 4
+        self.grad_layer.images = images
+        batch_size, num_channels, height, width = images.shape
+        if debug_percentile is not None:
+            debug_percentile = paddle.to_tensor(debug_percentile, dtype=paddle.float32)
+
+        # -------------------------------------
+        # Select parameters for pixel blitting.
+        # -------------------------------------
+
+        # Initialize inverse homogeneous 2D transform: G_inv @ pixel_out ==> pixel_in
+        I_3 = paddle.eye(3)
+        G_inv = I_3
+
+        # Apply x-flip with probability (xflip * strength).
+        if self.xflip > 0:
+            i = paddle.floor(paddle.rand([batch_size], dtype=paddle.float32) * 2)
+            i = paddle.where(paddle.rand([batch_size], dtype=paddle.float32) < self.xflip * self.p, i, paddle.zeros_like(i))
+            if debug_percentile is not None:
+                i = paddle.full_like(i, paddle.floor(debug_percentile * 2))
+            matri_ = scale2d_inv(1 - 2 * i, 1)
+            G_inv = G_inv @ matri_
+
+        # Apply 90 degree rotations with probability (rotate90 * strength).
+        if self.rotate90 > 0:
+            i = paddle.floor(paddle.rand([batch_size], dtype=paddle.float32) * 4)
+            i = paddle.where(paddle.rand([batch_size], dtype=paddle.float32) < self.rotate90 * self.p, i, paddle.zeros_like(i))
+            if debug_percentile is not None:
+                i = paddle.full_like(i, paddle.floor(debug_percentile * 4))
+            G_inv = G_inv @ rotate2d_inv(-np.pi / 2 * i)
+
+        # Apply integer translation with probability (xint * strength).
+        if self.xint > 0:
+            t = (paddle.rand([batch_size, 2], dtype=paddle.float32) * 2 - 1) * self.xint_max
+            t = paddle.where(paddle.rand([batch_size, 1], dtype=paddle.float32) < self.xint * self.p, t, paddle.zeros_like(t))
+            if debug_percentile is not None:
+                t = paddle.full_like(t, (debug_percentile * 2 - 1) * self.xint_max)
+            G_inv = G_inv @ translate2d_inv(paddle.round(t[:,0] * width), paddle.round(t[:,1] * height))
+
+        # --------------------------------------------------------
+        # Select parameters for general geometric transformations.
+        # --------------------------------------------------------
+
+        # Apply isotropic scaling with probability (scale * strength).
+        if self.scale > 0:
+            zhishu = paddle.randn([batch_size], dtype=paddle.float32) * self.scale_std
+            s = paddle.pow(paddle.zeros_like(zhishu, dtype=zhishu.dtype) + 2.0, zhishu)
+            s = paddle.where(paddle.rand([batch_size], dtype=paddle.float32) < self.scale * self.p, s, paddle.ones_like(s))
+            if debug_percentile is not None:
+                # zhishu = torch.erfinv(debug_percentile * 2 - 1) * self.scale_std
+                zhishu = paddle.to_tensor(0.0742, dtype=paddle.float32)
+                temp = paddle.pow(paddle.zeros_like(zhishu, dtype=zhishu.dtype) + 2.0, zhishu)
+                s = paddle.full_like(s, temp)
+            G_inv = G_inv @ scale2d_inv(s, s)
+
+        # Apply pre-rotation with probability p_rot.
+        p_rot = (1 - self.rotate * self.p)
+        p_rot = paddle.clip(p_rot, 0, 1)
+        p_rot = 1 - paddle.sqrt(p_rot) # P(pre OR post) = p
+        if self.rotate > 0:
+            theta = (paddle.rand([batch_size], dtype=paddle.float32) * 2 - 1) * np.pi * self.rotate_max
+            theta = paddle.where(paddle.rand([batch_size], dtype=paddle.float32) < p_rot, theta, paddle.zeros_like(theta))
+            if debug_percentile is not None:
+                theta = paddle.full_like(theta, (debug_percentile * 2 - 1) * np.pi * self.rotate_max)
+            G_inv = G_inv @ rotate2d_inv(-theta) # Before anisotropic scaling.
+
+        # Apply anisotropic scaling with probability (aniso * strength).
+        if self.aniso > 0:
+            zhishu = paddle.randn([batch_size], dtype=paddle.float32) * self.aniso_std
+            s = paddle.pow(paddle.zeros_like(zhishu, dtype=zhishu.dtype) + 2.0, zhishu)
+            s = paddle.where(paddle.rand([batch_size], dtype=paddle.float32) < self.aniso * self.p, s, paddle.ones_like(s))
+            if debug_percentile is not None:
+                # zhishu = torch.erfinv(debug_percentile * 2 - 1) * self.aniso_std
+                zhishu = paddle.to_tensor(0.0742, dtype=paddle.float32)
+                s = paddle.full_like(s, paddle.pow(paddle.zeros_like(zhishu, dtype=zhishu.dtype) + 2.0, zhishu))
+            G_inv = G_inv @ scale2d_inv(s, 1 / s)
+
+        # Apply post-rotation with probability p_rot.
+        if self.rotate > 0:
+            theta = (paddle.rand([batch_size], dtype=paddle.float32) * 2 - 1) * np.pi * self.rotate_max
+            theta = paddle.where(paddle.rand([batch_size], dtype=paddle.float32) < p_rot, theta, paddle.zeros_like(theta))
+            if debug_percentile is not None:
+                theta = paddle.zeros_like(theta)
+            G_inv = G_inv @ rotate2d_inv(-theta) # After anisotropic scaling.
+
+        # Apply fractional translation with probability (xfrac * strength).
+        if self.xfrac > 0:
+            t = paddle.randn([batch_size, 2], dtype=paddle.float32) * self.xfrac_std
+            t = paddle.where(paddle.rand([batch_size, 1], dtype=paddle.float32) < self.xfrac * self.p, t, paddle.zeros_like(t))
+            if debug_percentile is not None:
+                # zhishu = torch.erfinv(debug_percentile * 2 - 1) * self.xfrac_std
+                zhishu = paddle.to_tensor(0.0464, dtype=paddle.float32)
+                t = paddle.full_like(t, zhishu)
+            G_inv = G_inv @ translate2d_inv(t[:,0] * width, t[:,1] * height)
+
+        # ----------------------------------
+        # Execute geometric transformations.
+        # ----------------------------------
+
+        # Execute if the transform is not identity.
+        self.grad_layer.G_inv_is_not_I_3 = False
+        if G_inv is not I_3:
+            self.grad_layer.G_inv_is_not_I_3 = True
+
+            # Calculate padding.
+            cx = (width - 1) / 2
+            cy = (height - 1) / 2
+            cp = matrix([-cx, -cy, 1], [cx, -cy, 1], [cx, cy, 1], [-cx, cy, 1]) # [idx, xyz]
+            cp = G_inv @ cp.t() # [batch, xyz, idx]
+            Hz_pad = self.Hz_geom.shape[0] // 4
+            # margin = cp[:, :2, :].permute(1, 0, 2).flatten(1) # [xy, batch * idx]
+            margin = cp[:, :2, :]
+            margin = paddle.transpose(margin, perm=[1, 0, 2])
+            margin = paddle.flatten(margin, 1)
+            margin = paddle.concat([-margin, margin])
+            margin = margin.max(1) # [x0, y0, x1, y1]
+            margin = margin + constant([Hz_pad * 2 - cx, Hz_pad * 2 - cy] * 2)
+            margin = paddle.maximum(margin, constant([0, 0] * 2))
+            margin = paddle.minimum(margin, constant([width-1, height-1] * 2))
+            margin = margin.ceil()  # 向上取整
+            margin = paddle.cast(margin, dtype=paddle.int32)
+            mx0, my0, mx1, my1 = margin
+
+            self.grad_layer.mx0 = mx0
+            self.grad_layer.my0 = my0
+            self.grad_layer.mx1 = mx1
+            self.grad_layer.my1 = my1
+
+            # Pad image and adjust origin.
+            images1 = paddle.nn.functional.pad(images, pad=[mx0, mx1, my0, my1], mode='reflect')
+            self.grad_layer.images1 = images1
+            G_inv = translate2d((mx0 - mx1) / 2, (my0 - my1) / 2) @ G_inv
+
+            # Upsample.
+            images2 = upsample2d(x=images1, f=self.Hz_geom, up=2)
+            G_inv = scale2d(2, 2) @ G_inv @ scale2d_inv(2, 2)
+            G_inv = translate2d(-0.5, -0.5) @ G_inv @ translate2d_inv(-0.5, -0.5)
+
+            # Execute transformation.
+            shape = [batch_size, num_channels, (height + Hz_pad * 2) * 2, (width + Hz_pad * 2) * 2]
+            G_inv = scale2d(2 / images2.shape[3], 2 / images2.shape[2]) @ G_inv @ scale2d_inv(2 / shape[3], 2 / shape[2])
+
+            grid = paddle.nn.functional.affine_grid(theta=G_inv[:, :2, :], out_shape=shape, align_corners=False)
+            images3 = self.grid_sample(images2, grid=grid)
+            self.grad_layer.images3 = images3
+
+            # Downsample and crop.
+            self.grad_layer.Hz_pad = Hz_pad
+            self.grad_layer.Hz_geom = self.Hz_geom
+            images4 = downsample2d(x=images3, f=self.Hz_geom, down=2, padding=-Hz_pad*2, flip_filter=True)
+            images = images4
+
+        # --------------------------------------------
+        # Select parameters for color transformations.
+        # --------------------------------------------
+
+        # Initialize homogeneous 3D transformation matrix: C @ color_in ==> color_out
+        I_4 = paddle.eye(4)
+        C = I_4
+
+        # Apply brightness with probability (brightness * strength).
+        if self.brightness > 0:
+            b = paddle.randn([batch_size], dtype=paddle.float32) * self.brightness_std
+            b = paddle.where(paddle.rand([batch_size], dtype=paddle.float32) < self.brightness * self.p, b, paddle.zeros_like(b))
+            if debug_percentile is not None:
+                # zhishu = torch.erfinv(debug_percentile * 2 - 1) * self.brightness_std
+                zhishu = paddle.to_tensor(0.0742, dtype=paddle.float32)
+                b = paddle.full_like(b, zhishu)
+            C = translate3d(b, b, b) @ C
+
+        # Apply contrast with probability (contrast * strength).
+        if self.contrast > 0:
+            zhishu = paddle.randn([batch_size], dtype=paddle.float32) * self.contrast_std
+            c = paddle.pow(paddle.zeros_like(zhishu, dtype=zhishu.dtype) + 2.0, zhishu)
+            c = paddle.where(paddle.rand([batch_size], dtype=paddle.float32) < self.contrast * self.p, c, paddle.ones_like(c))
+            if debug_percentile is not None:
+                # zhishu = torch.erfinv(debug_percentile * 2 - 1) * self.contrast_std
+                zhishu = paddle.to_tensor(0.1854, dtype=paddle.float32)
+                c = paddle.full_like(c, paddle.pow(paddle.zeros_like(zhishu, dtype=zhishu.dtype) + 2.0, zhishu))
+            C = scale3d(c, c, c) @ C
+
+        # Apply luma flip with probability (lumaflip * strength).
+        v = constant(np.asarray([1, 1, 1, 0]) / np.sqrt(3)) # Luma axis.
+        if self.lumaflip > 0:
+            i = paddle.floor(paddle.rand([batch_size, 1, 1], dtype=paddle.float32) * 2)
+            i = paddle.where(paddle.rand([batch_size, 1, 1], dtype=paddle.float32) < self.lumaflip * self.p, i, paddle.zeros_like(i))
+            if debug_percentile is not None:
+                i = paddle.full_like(i, paddle.floor(debug_percentile * 2))
+            v2 = paddle.unsqueeze(v, 1)  # [n, 1]
+            C = (I_4 - 2 * paddle.matmul(v2, v2.transpose((1, 0))) * i) @ C # Householder reflection.
+
+        # Apply hue rotation with probability (hue * strength).
+        if self.hue > 0 and num_channels > 1:
+            theta = (paddle.rand([batch_size], dtype=paddle.float32) * 2 - 1) * np.pi * self.hue_max
+            theta = paddle.where(paddle.rand([batch_size], dtype=paddle.float32) < self.hue * self.p, theta, paddle.zeros_like(theta))
+            if debug_percentile is not None:
+                theta = paddle.full_like(theta, (debug_percentile * 2 - 1) * np.pi * self.hue_max)
+            C = rotate3d(v, theta) @ C # Rotate around v.
+
+        # Apply saturation with probability (saturation * strength).
+        if self.saturation > 0 and num_channels > 1:
+            zhishu = paddle.randn([batch_size, 1, 1], dtype=paddle.float32) * self.saturation_std
+            s = paddle.pow(paddle.zeros_like(zhishu, dtype=zhishu.dtype) + 2.0, zhishu)
+            s = paddle.where(paddle.rand([batch_size, 1, 1], dtype=paddle.float32) < self.saturation * self.p, s, paddle.ones_like(s))
+            if debug_percentile is not None:
+                # zhishu = torch.erfinv(debug_percentile * 2 - 1) * self.saturation_std
+                zhishu = paddle.to_tensor(0.3708, dtype=paddle.float32)
+                s = paddle.full_like(s, paddle.pow(paddle.zeros_like(zhishu, dtype=zhishu.dtype) + 2.0, zhishu))
+            v2 = paddle.unsqueeze(v, 1)  # [n, 1]
+            C = (paddle.matmul(v2, v2.transpose((1, 0))) + (I_4 - paddle.matmul(v2, v2.transpose((1, 0)))) * s) @ C
+
+        # ------------------------------
+        # Execute color transformations.
+        # ------------------------------
+
+        # Execute if the transform is not identity.
+        self.grad_layer.C_is_not_I_4 = False
+        if C is not I_4:
+            self.grad_layer.C_is_not_I_4 = True
+            images5 = images.reshape([batch_size, num_channels, height * width])
+            self.grad_layer.C = C
+            if num_channels == 3:
+                images6 = C[:, :3, :3] @ images5 + C[:, :3, 3:]
+            elif num_channels == 1:
+                C2 = paddle.mean(C[:, :3, :], axis=1, keepdim=True)
+                self.grad_layer.C2 = C2
+                images6 = images5 * paddle.sum(C2[:, :, :3], axis=2, keepdim=True) + C2[:, :, 3:]
+            else:
+                raise ValueError('Image must be RGB (3 channels) or L (1 channel)')
+            self.grad_layer.images6 = images6
+            images7 = images6.reshape([batch_size, num_channels, height, width])
+            images = images7
+
+        # ----------------------
+        # Image-space filtering.
+        # ----------------------
+
+        if self.imgfilter > 0:
+            num_bands = self.Hz_fbank.shape[0]
+            assert len(self.imgfilter_bands) == num_bands
+            expected_power = constant(np.array([10, 1, 1, 1]) / 13) # Expected power spectrum (1/f).
+
+            # Apply amplification for each band with probability (imgfilter * strength * band_strength).
+            g = paddle.ones([batch_size, num_bands], dtype=paddle.float32) # Global gain vector (identity).
+            for i, band_strength in enumerate(self.imgfilter_bands):
+                zhishu = paddle.randn([batch_size], dtype=paddle.float32) * self.imgfilter_std
+                t_i = paddle.pow(paddle.zeros_like(zhishu, dtype=zhishu.dtype) + 2.0, zhishu)
+                t_i = paddle.where(paddle.rand([batch_size], dtype=paddle.float32) < self.imgfilter * self.p * band_strength, t_i, paddle.ones_like(t_i))
+                if debug_percentile is not None:
+                    # zhishu = torch.erfinv(debug_percentile * 2 - 1) * self.imgfilter_std
+                    zhishu = paddle.to_tensor(0.3708, dtype=paddle.float32)
+                    t_i = paddle.full_like(t_i, paddle.pow(paddle.zeros_like(zhishu, dtype=zhishu.dtype) + 2.0, zhishu)) if band_strength > 0 else paddle.ones_like(t_i)
+                t = paddle.ones([batch_size, num_bands], dtype=paddle.float32)          # Temporary gain vector.
+                t[:, i] = t_i                                                           # Replace i'th element.
+                t = t / paddle.sum(expected_power * t.square(), axis=-1, keepdim=True).sqrt() # Normalize power.
+                g = g * t                                                               # Accumulate into global gain.
+
+            # Construct combined amplification filter.
+            Hz_prime = g @ self.Hz_fbank                                    # [batch, tap]
+            Hz_prime = Hz_prime.unsqueeze(1).tile([1, num_channels, 1])     # [batch, channels, tap]
+            Hz_prime = Hz_prime.reshape([batch_size * num_channels, 1, -1]) # [batch * channels, 1, tap]
+            self.grad_layer.Hz_prime = Hz_prime
+
+            # Apply filter.
+            p = self.Hz_fbank.shape[1] // 2
+            self.grad_layer.p = p
+            images8 = images.reshape([1, batch_size * num_channels, height, width])
+            images9 = paddle.nn.functional.pad(images8, pad=[p, p, p, p], mode='reflect')
+            images10 = F.conv2d(images9, weight=Hz_prime.unsqueeze(2), groups=batch_size*num_channels)
+            images11 = F.conv2d(images10, weight=Hz_prime.unsqueeze(3), groups=batch_size*num_channels)
+            images12 = images11.reshape([batch_size, num_channels, height, width])
+            images = images12
+            self.grad_layer.images11 = images11
+
+        # ------------------------
+        # Image-space corruptions.
+        # ------------------------
+
+        # Apply additive RGB noise with probability (noise * strength).
+        if self.noise > 0:
+            sigma = paddle.randn([batch_size, 1, 1, 1], dtype=paddle.float32).abs() * self.noise_std
+            sigma = paddle.where(paddle.rand([batch_size, 1, 1, 1], dtype=paddle.float32) < self.noise * self.p, sigma, paddle.zeros_like(sigma))
+            if debug_percentile is not None:
+                # zhishu = torch.erfinv(debug_percentile) * self.noise_std
+                zhishu = paddle.to_tensor(0.3708, dtype=paddle.float32)
+                sigma = paddle.full_like(sigma, zhishu)
+            images13 = images + paddle.randn([batch_size, num_channels, height, width], dtype=paddle.float32) * sigma
+            images = images13
+
+        # Apply cutout with probability (cutout * strength).
+        if self.cutout > 0:
+            size = paddle.full([batch_size, 2, 1, 1, 1], self.cutout_size, dtype=paddle.float32)
+            size = paddle.where(paddle.rand([batch_size, 1, 1, 1, 1], dtype=paddle.float32) < self.cutout * self.p, size, paddle.zeros_like(size))
+            center = paddle.rand([batch_size, 2, 1, 1, 1], dtype=paddle.float32)
+            if debug_percentile is not None:
+                size = paddle.full_like(size, self.cutout_size)
+                center = paddle.full_like(center, debug_percentile)
+            coord_x = paddle.arange(width).reshape([1, 1, 1, -1])
+            coord_y = paddle.arange(height).reshape([1, 1, -1, 1])
+            mask_x = (((coord_x + 0.5) / width - center[:, 0]).abs() >= size[:, 0] / 2)
+            mask_y = (((coord_y + 0.5) / height - center[:, 1]).abs() >= size[:, 1] / 2)
+            mask = paddle.cast(paddle.logical_or(mask_x, mask_y), dtype=paddle.float32)
+            self.grad_layer.mask = mask
+            images14 = images * mask
+            images = images14
+
+        return images
+
+
+def pad_reflect_grad(dloss_dout, mx0, mx1, my0, my1):
+    dloss_dx = dloss_dout[:, :, my0:-my1, mx0:-mx1]
+
+    if mx0 > 0:
+        left_up = dloss_dout[:, :, :my0, :mx0]
+        left_ = dloss_dout[:, :, my0:-my1, :mx0]
+        left_down = dloss_dout[:, :, -my1:, :mx0]
+        dloss_dx[:, :, 1:1 + my0, 1:1 + mx0] += left_up[:, :, ::-1, ::-1]
+        dloss_dx[:, :, :, 1:1 + mx0] += left_[:, :, :, ::-1]
+        dloss_dx[:, :, -1 - my1:-1, 1:1 + mx0] += left_down[:, :, ::-1, ::-1]
+
+    right_up = dloss_dout[:, :, :my0, -mx1:]
+    right_ = dloss_dout[:, :, my0:-my1, -mx1:]
+    right_down = dloss_dout[:, :, -my1:, -mx1:]
+
+    up_ = dloss_dout[:, :, :my0, mx0:-mx1]
+    down_ = dloss_dout[:, :, -my1:, mx0:-mx1]
+
+
+    dloss_dx[:, :, 1:1 + my0, -1 - mx1:-1] += right_up[:, :, ::-1, ::-1]
+    dloss_dx[:, :, :, -1 - mx1:-1] += right_[:, :, :, ::-1]
+    dloss_dx[:, :, -1 - my1:-1, -1 - mx1:-1] += right_down[:, :, ::-1, ::-1]
+
+    dloss_dx[:, :, 1:1 + my0, :] += up_[:, :, ::-1, :]
+    dloss_dx[:, :, -1 - my1:-1, :] += down_[:, :, ::-1, :]
+    return dloss_dx
+
+
+def upfirdn2d_grad(dloss_dout, x, filter, up=1, down=1, padding=0, flip_filter=False, gain=1):
+    if filter is None:
+        filter = paddle.ones([1, 1], dtype=paddle.float32)
+    batch_size, num_channels, in_height, in_width = x.shape
+    upx, upy = _parse_scaling(up)        # scaling 一变二
+    downx, downy = _parse_scaling(down)  # scaling 一变二
+    padx0, padx1, pady0, pady1 = _parse_padding(padding)
+
+    # Downsample by throwing away pixels.
+    assert downy == downx
+    if downy == 1:
+        dloss_dx = dloss_dout
+    elif downy == 2:
+        N, C, H, W = dloss_dout.shape
+        # Upsample by inserting zeros.
+        # paddle最多支持5维张量，所以分开2次pad。
+        # 根据data_format指定的意义填充(pad_left, pad_right, pad_top, pad_bottom, pad_front, pad_back)
+        dloss_dx = dloss_dout.reshape([N, C, H, 1, W])
+        dloss_dx = paddle.nn.functional.pad(dloss_dx, [0, 0, 0, 1, 0, 0], data_format="NCDHW")
+        dloss_dx = dloss_dx.reshape([N, C, H * 2, W, 1])
+        dloss_dx = paddle.nn.functional.pad(dloss_dx, [0, 1, 0, 0, 0, 0], data_format="NCDHW")
+        dloss_dx = dloss_dx.reshape([N, C, H * 2, W * 2])
+        dloss_dx = dloss_dx[:, :, :-1, :-1]   # down == 2时，切片之前的形状是这个。Discriminator里有down == 2的情况
+    else:
+        raise NotImplementedError("downy \'{}\' is not implemented.".format(downy))
+
+    # Setup filter.
+    filter = filter * (gain ** (filter.ndim / 2))
+    assert filter.dtype == x.dtype
+    # filter = paddle.cast(filter, dtype=x.dtype)
+    if not flip_filter:
+        filter = filter.flip(list(range(filter.ndim)))
+
+    # Convolve with the filter.
+    filter = paddle.unsqueeze(filter, [0, 1]).tile([num_channels, 1] + [1] * filter.ndim)
+    if filter.ndim == 4:
+        dloss_dx = F.conv2d_transpose(x=dloss_dx, weight=filter, groups=num_channels, output_padding=0)
+    else:
+        dloss_dx = F.conv2d_transpose(x=dloss_dx, weight=filter.unsqueeze(3), groups=num_channels, output_padding=0)
+        dloss_dx = F.conv2d_transpose(x=dloss_dx, weight=filter.unsqueeze(2), groups=num_channels, output_padding=0)
+
+    # Pad or crop.
+    dloss_dx = F.pad(dloss_dx, [max(-padx0, 0), max(-padx1, 0), max(-pady0, 0), max(-pady1, 0)])
+    dloss_dx = dloss_dx[:, :, max(pady0, 0) : dloss_dx.shape[2]-max(pady1, 0), max(padx0, 0) : dloss_dx.shape[3]-max(padx1, 0)]
+
+    # Upsample by inserting zeros.
+    dloss_dx = dloss_dx.reshape([batch_size, num_channels, in_height, upy, in_width, upx])
+    dloss_dx = dloss_dx[:, :, :, :1, :, :1]
+    dloss_dx = dloss_dx.reshape([batch_size, num_channels, in_height, in_width])
+
+    return dloss_dx
+
+
+
+def downsample2d_grad(dloss_dout, x, f, down=2, padding=0, flip_filter=False, gain=1):
+    downx, downy = _parse_scaling(down)
+    padx0, padx1, pady0, pady1 = _parse_padding(padding)
+    fw, fh = _get_filter_size(f)
+    p = [
+        padx0 + (fw - downx + 1) // 2,
+        padx1 + (fw - downx) // 2,
+        pady0 + (fh - downy + 1) // 2,
+        pady1 + (fh - downy) // 2,
+    ]
+    return upfirdn2d_grad(dloss_dout, x, f, down=down, padding=p, flip_filter=flip_filter, gain=gain)
+
+
+def upsample2d_grad(dloss_dout, x, f, up=2, padding=0, flip_filter=False, gain=1):
+    upx, upy = _parse_scaling(up)
+    padx0, padx1, pady0, pady1 = _parse_padding(padding)
+    fw, fh = _get_filter_size(f)
+    p = [
+        padx0 + (fw + upx - 1) // 2,
+        padx1 + (fw - upx) // 2,
+        pady0 + (fh + upy - 1) // 2,
+        pady1 + (fh - upy) // 2,
+    ]
+    return upfirdn2d_grad(dloss_dout, x, f, up=up, padding=p, flip_filter=flip_filter, gain=gain*upx*upy)
+
+
+class StyleGANv2ADA_AugmentPipe_Grad(object):
+    def __init__(self):
+        super().__init__()
+
+    def __call__(self, dloss_dout):
+        images = self.images
+        batch_size, num_channels, height, width = images.shape
+
+        # Apply cutout with probability (cutout * strength).
+        if self.cutout > 0:
+            mask = self.mask
+            dloss_dimages14 = dloss_dout
+            dloss_dimages13 = dloss_dimages14 * mask
+        else:
+            dloss_dimages13 = dloss_dout
+
+
+        # ------------------------
+        # Image-space corruptions.
+        # ------------------------
+
+        # Apply additive RGB noise with probability (noise * strength).
+        # if self.noise > 0:
+        #     dloss_dimages12 = dloss_dimages13
+        # else:
+        #     dloss_dimages12 = dloss_dimages13
+        dloss_dimages12 = dloss_dimages13
+
+
+
+        # ----------------------
+        # Image-space filtering.
+        # ----------------------
+
+        if self.imgfilter > 0:
+            Hz_prime = self.Hz_prime
+            p = self.p
+
+            images11 = self.images11
+
+            dloss_dimages11 = dloss_dimages12.reshape(images11.shape)
+            dloss_dimages10 = F.conv2d_transpose(dloss_dimages11, weight=Hz_prime.unsqueeze(3), groups=batch_size*num_channels, output_padding=0)
+            dloss_dimages9 = F.conv2d_transpose(dloss_dimages10, weight=Hz_prime.unsqueeze(2), groups=batch_size*num_channels, output_padding=0)
+
+            # images9 = paddle.nn.functional.pad(images8, pad=[p, p, p, p], mode='reflect') 挺麻烦的。做多个轴对称。
+            dloss_dimages8 = pad_reflect_grad(dloss_dimages9, p, p, p, p)
+            dloss_dimages7 = dloss_dimages8.reshape([batch_size, num_channels, height, width])
+        else:
+            dloss_dimages7 = dloss_dimages12
+
+
+        # ------------------------------
+        # Execute color transformations.
+        # ------------------------------
+
+        # Execute if the transform is not identity.
+        if self.C_is_not_I_4:
+            images6 = self.images6
+            C = self.C
+
+            dloss_dimages6 = dloss_dimages7.reshape(images6.shape)
+
+
+            if num_channels == 3:
+                dloss_dimages6 = paddle.unsqueeze(dloss_dimages6, 2)  # [N, A, 1, C]
+                dimages6_dimages5 = C[:, :3, :3]  # [N, A, B]
+                dimages6_dimages5 = paddle.unsqueeze(dimages6_dimages5, 3)  # [N, A, B, 1]
+                dloss_dimages5 = dloss_dimages6 * dimages6_dimages5  # [N, A, B, C]
+                dloss_dimages5 = paddle.sum(dloss_dimages5, axis=1)  # [N, B, C]
+            elif num_channels == 1:
+                C2 = self.C2
+                dloss_dimages5 = dloss_dimages6 * paddle.sum(C2[:, :, :3], axis=2, keepdim=True)
+            else:
+                raise ValueError('Image must be RGB (3 channels) or L (1 channel)')
+
+            dloss_dimages4 = dloss_dimages5.reshape((batch_size, num_channels, height, width))
+        else:
+            dloss_dimages4 = dloss_dout
+
+
+        # ----------------------------------
+        # Execute geometric transformations.
+        # ----------------------------------
+
+        # Execute if the transform is not identity.
+        if self.G_inv_is_not_I_3:
+            Hz_pad = self.Hz_pad
+            images3 = self.images3
+            images1 = self.images1
+            dloss_dimages3 = downsample2d_grad(dloss_dimages4, x=images3, f=self.Hz_geom, down=2, padding=-Hz_pad*2, flip_filter=True)
+            dloss_dimages2 = self.grid_sample.grad_layer(dloss_dimages3)
+            dloss_dimages1 = upsample2d_grad(dloss_dimages2, x=images1, f=self.Hz_geom, up=2)
+
+            mx0 = self.mx0
+            my0 = self.my0
+            mx1 = self.mx1
+            my1 = self.my1
+            # images1 = paddle.nn.functional.pad(images, pad=[mx0, mx1, my0, my1], mode='reflect') 挺麻烦的。做多个轴对称。
+            dloss_dimages = pad_reflect_grad(dloss_dimages1, mx0, mx1, my0, my1)
+        else:
+            dloss_dimages = dloss_dimages4
+
+        return dloss_dimages
+
+
+class GridSample(nn.Layer):
+    def __init__(self, mode='bilinear', padding_mode='zeros', align_corners=True):
+        super().__init__()
+        self.mode = mode
+        self.padding_mode = padding_mode
+        self.align_corners = align_corners
+        self.grad_layer = GridSample_Grad(
+            mode,
+            padding_mode,
+            align_corners,
+        )
+
+    def forward(self, images, grid):
+        mode = self.mode
+        padding_mode = self.padding_mode
+        align_corners = self.align_corners
+
+        self.grad_layer.images = images
+        self.grad_layer.grid = grid
+
+        N, C, in_H, in_W = images.shape
+        N, out_H, out_W, _ = grid.shape
+
+        grid_x = grid[:, :, :, :1]   # [N, out_H, out_W, 1]
+        grid_y = grid[:, :, :, 1:]   # [N, out_H, out_W, 1]
+
+        '''
+        看了Paddle的源代码Paddle/paddle/fluid/operators/grid_sampler_op.cu的
+        template <typename T>
+        static __forceinline__ __device__ T _unnormalize(T coord, int size,
+                                                         bool align_corners) {
+          if (align_corners) {
+            return ((coord + 1.f) / 2) * (size - 1);
+          } else {
+            return ((coord + 1.f) * size - 1) / 2;
+          }
+        }
+        其中coord是x或y，是-1到1之间的数值；size是ori_W或者ori_H。
+        '''
+        if align_corners:
+            _xt = (grid_x + 1.0) * (float(in_W) - 1.0) / 2.0   # [N, out_H, out_W, 1]
+            _yt = (grid_y + 1.0) * (float(in_H) - 1.0) / 2.0   # [N, out_H, out_W, 1]
+            padding = 0
+            pad_images = images
+        else:
+            _xt = ((grid_x + 1.0) * float(in_W) - 1.0) / 2.0   # [N, out_H, out_W, 1]
+            _yt = ((grid_y + 1.0) * float(in_H) - 1.0) / 2.0   # [N, out_H, out_W, 1]
+            padding = 2
+            pad_images = F.pad(images, [padding, padding, padding, padding])  # [N, C, pad_H, pad_W]
+            _xt += padding
+            _yt += padding
+        _, _, pad_H, pad_W = pad_images.shape
+        self.grad_layer.padding = padding
+        self.grad_layer.pad_images = pad_images
+
+        _y1 = paddle.floor(_yt)   # [N, out_H, out_W, 1]
+        _x1 = paddle.floor(_xt)   # [N, out_H, out_W, 1]
+        _y2 = _y1 + 1.0           # [N, out_H, out_W, 1]
+        _x2 = _x1 + 1.0           # [N, out_H, out_W, 1]
+
+        lh = _yt - _y1   # [N, out_H, out_W, 1]
+        lw = _xt - _x1   # [N, out_H, out_W, 1]
+        hh = 1 - lh      # [N, out_H, out_W, 1]
+        hw = 1 - lw      # [N, out_H, out_W, 1]
+        w1 = hh * hw     # [N, out_H, out_W, 1]
+        w2 = hh * lw     # [N, out_H, out_W, 1]
+        w3 = lh * hw     # [N, out_H, out_W, 1]
+        w4 = lh * lw     # [N, out_H, out_W, 1]
+
+        sample_idx = paddle.arange(start=0, end=N - 1e-3, step=1, dtype=_x1.dtype)
+        sample_idx = paddle.reshape(sample_idx, (N, 1, 1, 1))
+        sample_idx = paddle.tile(sample_idx, [1, out_H, out_W, 1])   # [N, out_H, out_W, 1]
+
+        _y1x1 = paddle.concat([sample_idx, _y1, _x1], -1)   # [N, out_H, out_W, 3]
+        _y1x2 = paddle.concat([sample_idx, _y1, _x2], -1)   # [N, out_H, out_W, 3]
+        _y2x1 = paddle.concat([sample_idx, _y2, _x1], -1)   # [N, out_H, out_W, 3]
+        _y2x2 = paddle.concat([sample_idx, _y2, _x2], -1)   # [N, out_H, out_W, 3]
+
+        _y1x1 = paddle.cast(paddle.reshape(_y1x1, (-1, 3)), dtype=paddle.int32)   # [N*out_H*out_W, 3]
+        _y1x2 = paddle.cast(paddle.reshape(_y1x2, (-1, 3)), dtype=paddle.int32)   # [N*out_H*out_W, 3]
+        _y2x1 = paddle.cast(paddle.reshape(_y2x1, (-1, 3)), dtype=paddle.int32)   # [N*out_H*out_W, 3]
+        _y2x2 = paddle.cast(paddle.reshape(_y2x2, (-1, 3)), dtype=paddle.int32)   # [N*out_H*out_W, 3]
+        _y1x1.stop_gradient = True
+        _y1x2.stop_gradient = True
+        _y2x1.stop_gradient = True
+        _y2x2.stop_gradient = True
+        self.grad_layer._y1x1 = _y1x1
+        self.grad_layer._y1x2 = _y1x2
+        self.grad_layer._y2x1 = _y2x1
+        self.grad_layer._y2x2 = _y2x2
+
+        pad_images_t = paddle.transpose(pad_images, perm=[0, 2, 3, 1])   # [N, C, pad_H, pad_W] -> [N, pad_H, pad_W, C]
+        self.grad_layer.pad_images_t = pad_images_t
+        v1 = paddle.gather_nd(pad_images_t, _y1x1)  # [N, pad_H, pad_W, C] -> [N*out_H*out_W, C]
+        v2 = paddle.gather_nd(pad_images_t, _y1x2)  # [N, pad_H, pad_W, C] -> [N*out_H*out_W, C]
+        v3 = paddle.gather_nd(pad_images_t, _y2x1)  # [N, pad_H, pad_W, C] -> [N*out_H*out_W, C]
+        v4 = paddle.gather_nd(pad_images_t, _y2x2)  # [N, pad_H, pad_W, C] -> [N*out_H*out_W, C]
+
+        v1 = paddle.reshape(v1, (N, out_H, out_W, C))
+        v2 = paddle.reshape(v2, (N, out_H, out_W, C))
+        v3 = paddle.reshape(v3, (N, out_H, out_W, C))
+        v4 = paddle.reshape(v4, (N, out_H, out_W, C))
+
+        self.grad_layer.w1 = w1
+        self.grad_layer.w2 = w2
+        self.grad_layer.w3 = w3
+        self.grad_layer.w4 = w4
+        out = w1 * v1 + w2 * v2 + w3 * v3 + w4 * v4  # [N, out_H, out_W, C]
+        out = paddle.transpose(out, perm=[0, 3, 1, 2])  # [N, C, out_H, out_W]
+        return out
+
+
+
+
+class GridSample_Grad(object):
+    def __init__(self, mode='bilinear', padding_mode='zeros', align_corners=True):
+        super().__init__()
+        self.mode = mode
+        self.padding_mode = padding_mode
+        self.align_corners = align_corners
+
+    def __call__(self, dloss_dout):
+        mode = self.mode
+        padding_mode = self.padding_mode
+        align_corners = self.align_corners
+
+        images = self.images
+        grid = self.grid
+        pad_images = self.pad_images
+        pad_images_t = self.pad_images_t
+        padding = self.padding
+
+        N, C, in_H, in_W = images.shape
+        N, out_H, out_W, _ = grid.shape
+
+        dloss_dout = paddle.transpose(dloss_dout, perm=[0, 2, 3, 1])  # [N, out_H, out_W, C]
+
+        w1 = self.w1
+        w2 = self.w2
+        w3 = self.w3
+        w4 = self.w4
+        dloss_dv1 = dloss_dout * w1
+        dloss_dv2 = dloss_dout * w2
+        dloss_dv3 = dloss_dout * w3
+        dloss_dv4 = dloss_dout * w4
+
+        dloss_dv4 = paddle.reshape(dloss_dv4, (N*out_H*out_W, C))   # [N*out_H*out_W, C]
+        dloss_dv3 = paddle.reshape(dloss_dv3, (N*out_H*out_W, C))   # [N*out_H*out_W, C]
+        dloss_dv2 = paddle.reshape(dloss_dv2, (N*out_H*out_W, C))   # [N*out_H*out_W, C]
+        dloss_dv1 = paddle.reshape(dloss_dv1, (N*out_H*out_W, C))   # [N*out_H*out_W, C]
+
+        _y1x1 = self._y1x1   # [N*out_H*out_W, 3]
+        _y1x2 = self._y1x2   # [N*out_H*out_W, 3]
+        _y2x1 = self._y2x1   # [N*out_H*out_W, 3]
+        _y2x2 = self._y2x2   # [N*out_H*out_W, 3]
+
+        dloss_dpad_images_t = paddle.zeros(pad_images_t.shape, dtype=paddle.float32)   # [N, pad_H, pad_W, C]
+        dloss_dpad_images_t = paddle.scatter_nd_add(dloss_dpad_images_t, _y1x1, dloss_dv1)
+        dloss_dpad_images_t = paddle.scatter_nd_add(dloss_dpad_images_t, _y1x2, dloss_dv2)
+        dloss_dpad_images_t = paddle.scatter_nd_add(dloss_dpad_images_t, _y2x1, dloss_dv3)
+        dloss_dpad_images_t = paddle.scatter_nd_add(dloss_dpad_images_t, _y2x2, dloss_dv4)
+
+
+        dloss_dpad_images = paddle.transpose(dloss_dpad_images_t, perm=[0, 3, 1, 2])   # [N, pad_H, pad_W, C] -> [N, C, pad_H, pad_W]
+
+        if padding > 0:
+            dloss_dimages = dloss_dpad_images[:, :, padding:-padding, padding:-padding]
+        else:
+            dloss_dimages = dloss_dpad_images
+        return dloss_dimages
+
+
+
 
 
 

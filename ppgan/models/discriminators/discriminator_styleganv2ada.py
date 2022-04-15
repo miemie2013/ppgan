@@ -170,7 +170,7 @@ class DiscriminatorEpilogue(nn.Layer):
         return x
 
 
-'''
+
 @DISCRIMINATORS.register()
 class StyleGANv2ADA_Discriminator(nn.Layer):
     def __init__(self,
@@ -228,10 +228,10 @@ class StyleGANv2ADA_Discriminator(nn.Layer):
             cmap = self.mapping(None, c)
         x = self.b4(x, img, cmap)
         return x
+
+
+
 '''
-
-
-
 @DISCRIMINATORS.register()
 class StyleGANv2ADA_Discriminator(nn.Layer):
     def __init__(self,
@@ -262,5 +262,5 @@ class StyleGANv2ADA_Discriminator(nn.Layer):
         x = self.conv(img)
         x = x.mean([2, 3])
         return x
-
+'''
 

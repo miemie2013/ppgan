@@ -153,7 +153,7 @@ class StyleGANv2ADAModel(BaseModel):
             self.augment_pipe = build_generator(augment_pipe)
         self.style_mixing_prob = style_mixing_prob
         # self.augment_pipe = None
-        self.style_mixing_prob = -1.0
+        # self.style_mixing_prob = -1.0
         self.r1_gamma = r1_gamma
         self.pl_batch_shrink = pl_batch_shrink
         self.pl_decay = pl_decay
@@ -180,7 +180,7 @@ class StyleGANv2ADAModel(BaseModel):
             self.ada_stats = training_stats.Collector(regex='Loss/signs/real')
 
         self.align_grad = False
-        self.align_grad = True
+        # self.align_grad = True
 
 
 
@@ -221,18 +221,31 @@ class StyleGANv2ADAModel(BaseModel):
             img = self.nets['synthesis'](ws)
         return img, ws
 
-    def run_D(self, img, c, sync):
+    def run_D(self, img, c, sync, return_aug_x=False):
         '''
         除了self.augment_pipe，其它3个 self.G_mapping、self.G_synthesis、self.D 都是DDP模型。
         只有DDP模型才能使用with module.no_sync():
         '''
         if self.augment_pipe is not None:
-            # img = self.augment_pipe(img)
-            debug_percentile = 0.7
-            img = self.augment_pipe(img, debug_percentile)
+            aug_x = self.augment_pipe(img)
+            # debug_percentile = 0.7
+            # aug_x = self.augment_pipe(img, debug_percentile)
+        else:
+            aug_x = img
         with ddp_sync(self.nets['discriminator'], sync):
-            logits = self.nets['discriminator'](img, c)
-        return logits
+            logits = self.nets['discriminator'](aug_x, c)
+        if return_aug_x:
+            return logits, aug_x
+        else:
+            return logits
+
+    def run_D_grad(self, real_logits, aug_x):
+        dy_daug_x = paddle.grad(outputs=[real_logits.sum()], inputs=[aug_x], create_graph=True, only_inputs=True)[0]
+        if self.augment_pipe is not None:
+            dy_dx = self.augment_pipe.grad_layer(dy_daug_x)
+        else:
+            dy_dx = dy_daug_x
+        return dy_dx
 
     def get_bare_model(self, net):
         """Get bare model, especially under wrapping with DataParallel.
@@ -257,13 +270,13 @@ class StyleGANv2ADAModel(BaseModel):
             # 训练生成器，判别器应该冻结，而且希望fake_img的gen_logits越大越好（愚弄D，使其判断是真图片），所以损失是-log(sigmoid(gen_logits))
             # 每个step都做1次
             gen_img, _gen_ws = self.run_G(gen_z, gen_c, sync=(sync and not do_Gpl)) # May get synced by Gpl.
-            if self.align_grad:
-                print_diff(dic, phase + ' gen_img', gen_img)
-                print_diff(dic, phase + ' _gen_ws', _gen_ws)
+            # if self.align_grad:
+            #     print_diff(dic, phase + ' gen_img', gen_img)
+            #     print_diff(dic, phase + ' _gen_ws', _gen_ws)
 
             gen_logits = self.run_D(gen_img, gen_c, sync=False)
-            if self.align_grad:
-                print_diff(dic, phase + ' gen_logits', gen_logits)
+            # if self.align_grad:
+            #     print_diff(dic, phase + ' gen_logits', gen_logits)
 
             training_stats.report('Loss/scores/fake', gen_logits)
             training_stats.report('Loss/signs/fake', gen_logits.sign())
@@ -300,16 +313,16 @@ class StyleGANv2ADAModel(BaseModel):
                 gen_c_ = gen_c[:batch_size]
 
             gen_img, gen_ws = self.run_G(gen_z[:batch_size], gen_c_, sync=sync)
-            if self.align_grad:
-                print_diff(dic, phase + ' gen_img', gen_img)
-                print_diff(dic, phase + ' gen_ws', gen_ws)
-            # pl_noise = paddle.randn(gen_img.shape) / np.sqrt(gen_img.shape[2] * gen_img.shape[3])
-            pl_noise = paddle.ones(gen_img.shape) / np.sqrt(gen_img.shape[2] * gen_img.shape[3])
+            # if self.align_grad:
+            #     print_diff(dic, phase + ' gen_img', gen_img)
+            #     print_diff(dic, phase + ' gen_ws', gen_ws)
+            pl_noise = paddle.randn(gen_img.shape) / np.sqrt(gen_img.shape[2] * gen_img.shape[3])
+            # pl_noise = paddle.ones(gen_img.shape) / np.sqrt(gen_img.shape[2] * gen_img.shape[3])
             pl_grads = paddle.grad(outputs=[(gen_img * pl_noise).sum()], inputs=[gen_ws], create_graph=True, only_inputs=True)[0]
 
             pl_lengths = pl_grads.square().sum(2).mean(1).sqrt()
-            if self.align_grad:
-                print_diff(dic, phase + ' pl_grads', pl_grads)
+            # if self.align_grad:
+            #     print_diff(dic, phase + ' pl_grads', pl_grads)
 
             pl_mean = self.pl_mean + self.pl_decay * (pl_lengths.mean() - self.pl_mean)
             self.pl_mean.set_value(pl_mean.detach())
@@ -332,12 +345,12 @@ class StyleGANv2ADAModel(BaseModel):
             # 每个step都做1次
             gen_img, _gen_ws = self.run_G(gen_z, gen_c, sync=False)
             gen_img.stop_gradient = True   # 训练判别器时，假图片要停止梯度，不能更新生成器的参数。
-            if self.align_grad:
-                print_diff(dic, phase + ' gen_img', gen_img)
-                print_diff(dic, phase + ' _gen_ws', _gen_ws)
+            # if self.align_grad:
+            #     print_diff(dic, phase + ' gen_img', gen_img)
+            #     print_diff(dic, phase + ' _gen_ws', _gen_ws)
             gen_logits = self.run_D(gen_img, gen_c, sync=False) # Gets synced by loss_Dreal.
-            if self.align_grad:
-                print_diff(dic, phase + ' gen_logits', gen_logits)
+            # if self.align_grad:
+            #     print_diff(dic, phase + ' gen_logits', gen_logits)
             training_stats.report('Loss/scores/fake', gen_logits)
             training_stats.report('Loss/signs/fake', gen_logits.sign())
 
@@ -353,19 +366,19 @@ class StyleGANv2ADAModel(BaseModel):
         if do_Dmain or do_Dr1:
             real_img_tmp = real_img.detach()
             real_img_tmp.stop_gradient = not do_Dr1
-            real_logits = self.run_D(real_img_tmp, real_c, sync=sync)
+            real_logits, aug_x = self.run_D(real_img_tmp, real_c, sync=sync, return_aug_x=True)
             training_stats.report('Loss/scores/real', real_logits)
             training_stats.report('Loss/signs/real', real_logits.sign())
-            if self.align_grad:
-                print_diff(dic, phase + ' real_logits', real_logits)
+            # if self.align_grad:
+            #     print_diff(dic, phase + ' real_logits', real_logits)
 
             loss_Dreal = 0
             if do_Dmain:
                 # 训练判别器，生成器应该冻结，而且希望real_img的gen_logits越大越好（判断是真图片），所以损失是-log(sigmoid(real_logits))
                 # 每个step都做1次
                 loss_Dreal = paddle.nn.functional.softplus(-real_logits) # -log(sigmoid(real_logits))
-                if self.align_grad:
-                    print_diff(dic, phase + ' loss_Dreal', loss_Dreal)
+                # if self.align_grad:
+                #     print_diff(dic, phase + ' loss_Dreal', loss_Dreal)
                 loss_numpy['loss_Dreal'] = loss_Dreal.numpy().mean()
                 training_stats.report('Loss/D/loss', loss_Dgen + loss_Dreal)
 
@@ -373,9 +386,10 @@ class StyleGANv2ADAModel(BaseModel):
             if do_Dr1:
                 # 训练判别器，生成器应该冻结（其实也没有跑判别器），是判别器的梯度惩罚损失（一种高级一点的梯度裁剪）
                 # 每16个step做1次
-                r1_grads = paddle.grad(outputs=[real_logits.sum()], inputs=[real_img_tmp], create_graph=True, only_inputs=True)[0]
-                if self.align_grad:
-                    print_diff(dic, phase + ' r1_grads', r1_grads)
+                # r1_grads = paddle.grad(outputs=[real_logits.sum()], inputs=[real_img_tmp], create_graph=True, only_inputs=True)[0]
+                r1_grads = self.run_D_grad(real_logits, aug_x)
+                # if self.align_grad:
+                #     print_diff(dic, phase + ' r1_grads', r1_grads)
                 r1_penalty = r1_grads.square().sum([1, 2, 3])
                 loss_Dr1 = r1_penalty * (self.r1_gamma / 2)
                 loss_numpy['loss_Dr1'] = loss_Dr1.numpy().mean()
@@ -395,32 +409,32 @@ class StyleGANv2ADAModel(BaseModel):
         phase_real_c = self.input[1]
         phases_all_gen_c = self.input[2]
 
-        if self.align_grad:
-            if self.batch_idx == 0:
-                '''
-                假如训练命令的命令行参数是 --gpus=2 --batch 8 --cfg my32
-                即总的批大小是8，每卡批大小是4，那么这里
-                phase_real_img.shape = [4, 3, 32, 32]
-                phase_real_c.shape   = [4, 0]
-                batch_gpu            = 4
-                即拿到的phase_real_img和phase_real_c是一张卡（一个进程）上的训练样本，（每张卡）批大小是4
-                '''
-                print('rank =', rank)
-                print('world_size =', world_size)
-                print('phase_real_img.shape =', phase_real_img.shape)
-                print('phase_real_c.shape =', phase_real_c.shape)
+        # if self.align_grad:
+        #     if self.batch_idx == 0:
+        #         '''
+        #         假如训练命令的命令行参数是 --gpus=2 --batch 8 --cfg my32
+        #         即总的批大小是8，每卡批大小是4，那么这里
+        #         phase_real_img.shape = [4, 3, 32, 32]
+        #         phase_real_c.shape   = [4, 0]
+        #         batch_gpu            = 4
+        #         即拿到的phase_real_img和phase_real_c是一张卡（一个进程）上的训练样本，（每张卡）批大小是4
+        #         '''
+        #         print('rank =', rank)
+        #         print('world_size =', world_size)
+        #         print('phase_real_img.shape =', phase_real_img.shape)
+        #         print('phase_real_c.shape =', phase_real_c.shape)
 
         # 对齐梯度用
         dic2 = None
-        if self.align_grad:
-            print('======================== batch%.5d.npz ========================'%self.batch_idx)
-            npz_path = 'batch%.5d_rank%.2d.npz'%(self.batch_idx, rank)
-            isDebug = True if sys.gettrace() else False
-            if isDebug:
-                npz_path = '../batch%.5d_rank%.2d.npz'%(self.batch_idx, rank)
-            dic2 = np.load(npz_path)
-            aaaaaaaaa = dic2['phase_real_img']
-            phase_real_img = paddle.to_tensor(aaaaaaaaa, dtype=paddle.float32, place=place)
+        # if self.align_grad:
+        #     print('======================== batch%.5d.npz ========================'%self.batch_idx)
+        #     npz_path = 'batch%.5d_rank%.2d.npz'%(self.batch_idx, rank)
+        #     isDebug = True if sys.gettrace() else False
+        #     if isDebug:
+        #         npz_path = '../batch%.5d_rank%.2d.npz'%(self.batch_idx, rank)
+        #     dic2 = np.load(npz_path)
+        #     aaaaaaaaa = dic2['phase_real_img']
+        #     phase_real_img = paddle.to_tensor(aaaaaaaaa, dtype=paddle.float32, place=place)
 
 
         phase_real_img = paddle.cast(phase_real_img, dtype=paddle.float32) / 127.5 - 1
@@ -430,51 +444,54 @@ class StyleGANv2ADAModel(BaseModel):
         batch_gpu = phase_real_img.shape[0]  # 一张显卡上的批大小
 
         batch_idx = self.batch_idx
-        # if batch_idx == 0:
-        #     '''
-        #     假如训练命令的命令行参数是 --gpus=2 --batch 8 --cfg my32
-        #     即总的批大小是8，每卡批大小是4，那么这里
-        #     phase_real_img.shape = [4, 3, 32, 32]
-        #     phase_real_c.shape   = [4, 0]
-        #     batch_gpu            = 4
-        #     即拿到的phase_real_img和phase_real_c是一张卡（一个进程）上的训练样本，（每张卡）批大小是4
-        #     '''
-        #     print('phase_real_img.shape =', phase_real_img.shape)
-        #     print('phase_real_c.shape =', phase_real_c.shape)
-        #     print('batch_gpu =', batch_gpu)
+        # if self.align_grad:
+        #     if batch_idx == 0:
+        #         '''
+        #         假如训练命令的命令行参数是 --gpus=2 --batch 8 --cfg my32
+        #         即总的批大小是8，每卡批大小是4，那么这里
+        #         phase_real_img.shape = [4, 3, 32, 32]
+        #         phase_real_c.shape   = [4, 0]
+        #         batch_gpu            = 4
+        #         即拿到的phase_real_img和phase_real_c是一张卡（一个进程）上的训练样本，（每张卡）批大小是4
+        #         '''
+        #         print('phase_real_img.shape =', phase_real_img.shape)
+        #         print('phase_real_c.shape =', phase_real_c.shape)
+        #         print('batch_gpu =', batch_gpu)
 
         all_gen_z = None
         num_gpus = world_size  # 显卡数量
         batch_size = batch_gpu * num_gpus
         if self.z_dim > 0:
             all_gen_z = paddle.randn([len(phases) * batch_size, self.z_dim])  # 咩酱：训练的4个阶段每个gpu的噪声
-            if self.align_grad:
-                all_gen_z = paddle.to_tensor(dic2['all_gen_z'], dtype=all_gen_z.dtype)
+            # if self.align_grad:
+            #     all_gen_z = paddle.to_tensor(dic2['all_gen_z'], dtype=all_gen_z.dtype)
         else:
             all_gen_z = paddle.randn([len(phases) * batch_size, 1])  # 咩酱：训练的4个阶段每个gpu的噪声
-        # if batch_idx == 0:
-        #     '''
-        #     假如训练命令的命令行参数是 --gpus=2 --batch 8 --cfg my32
-        #     all_gen_z.shape = [4*8, 512]
-        #     '''
-        #     print('all_gen_z.shape =', all_gen_z.shape)
+        # if self.align_grad:
+        #     if batch_idx == 0:
+        #         '''
+        #         假如训练命令的命令行参数是 --gpus=2 --batch 8 --cfg my32
+        #         all_gen_z.shape = [4*8, 512]
+        #         '''
+        #         print('all_gen_z.shape =', all_gen_z.shape)
         phases_all_gen_z = paddle.split(all_gen_z, num_or_sections=len(phases))  # 咩酱：训练的4个阶段的噪声
         all_gen_z = [paddle.split(phase_gen_z, num_or_sections=num_gpus) for phase_gen_z in phases_all_gen_z]  # 咩酱：训练的4个阶段每个gpu的噪声
-        # if batch_idx == 0:
-        #     '''
-        #     all_gen_z.split(batch_size)的意思是，
-        #     把 all_gen_z 分成 all_gen_z.shape[0] // batch_size 份， 每一份的大小是 batch_size。这里份数即 阶段phases 数4.
+        # if self.align_grad:
+        #     if batch_idx == 0:
+        #         '''
+        #         all_gen_z.split(batch_size)的意思是，
+        #         把 all_gen_z 分成 all_gen_z.shape[0] // batch_size 份， 每一份的大小是 batch_size。这里份数即 阶段phases 数4.
         #
-        #     phase_gen_z.split(batch_gpu)的意思是，
-        #     把 phase_gen_z 分成 phase_gen_z.shape[0] // batch_gpu 份， 每一份的大小是 batch_gpu。这里份数即 显卡 数2.
+        #         phase_gen_z.split(batch_gpu)的意思是，
+        #         把 phase_gen_z 分成 phase_gen_z.shape[0] // batch_gpu 份， 每一份的大小是 batch_gpu。这里份数即 显卡 数2.
         #
-        #     len(all_gen_z)        = 4
-        #     len(all_gen_z[0])     = 2
-        #     all_gen_z[0][0].shape = [4, 512]
-        #     '''
-        #     print('len(all_gen_z) =', len(all_gen_z))
-        #     print('len(all_gen_z[0]) =', len(all_gen_z[0]))
-        #     print('all_gen_z[0][0].shape =', all_gen_z[0][0].shape)
+        #         len(all_gen_z)        = 4
+        #         len(all_gen_z[0])     = 2
+        #         all_gen_z[0][0].shape = [4, 512]
+        #         '''
+        #         print('len(all_gen_z) =', len(all_gen_z))
+        #         print('len(all_gen_z[0]) =', len(all_gen_z[0]))
+        #         print('all_gen_z[0][0].shape =', all_gen_z[0][0].shape)
 
         c_dim = phases_all_gen_c[0].shape[1]
         all_gen_c = None
@@ -560,12 +577,12 @@ class StyleGANv2ADAModel(BaseModel):
         self.cur_nimg += batch_size
         self.batch_idx += 1
 
-        if self.align_grad:
-            if isinstance(self.nets['mapping'], (paddle.DataParallel)):
-                w_avg = self.nets['mapping']._layers.w_avg
-            else:
-                w_avg = self.nets['mapping'].w_avg
-            print_diff(dic2, 'w_avg', w_avg)
+        # if self.align_grad:
+        #     if isinstance(self.nets['mapping'], (paddle.DataParallel)):
+        #         w_avg = self.nets['mapping']._layers.w_avg
+        #     else:
+        #         w_avg = self.nets['mapping'].w_avg
+        #     print_diff(dic2, 'w_avg', w_avg)
 
         # Execute ADA heuristic.
         if self.adjust_p and self.augment_pipe is not None and (self.batch_idx % self.ada_interval == 0):
@@ -575,10 +592,10 @@ class StyleGANv2ADAModel(BaseModel):
 
             diff = Loss_signs_real_mean - self.ada_target
             adjust = np.sign(diff)
-            if self.align_grad:
-                print_diff(dic2, 'augment_pipe_p', self.augment_pipe.p)
-                kkk = 'aaaaaaaaaa1'; ddd = np.sum((dic2[kkk] - np.array(Loss_signs_real_mean)) ** 2)
-                print('diff=%.6f (%s)' % (ddd, kkk))
+            # if self.align_grad:
+            #     print_diff(dic2, 'augment_pipe_p', self.augment_pipe.p)
+            #     kkk = 'aaaaaaaaaa1'; ddd = np.sum((dic2[kkk] - np.array(Loss_signs_real_mean)) ** 2)
+            #     print('diff=%.6f (%s)' % (ddd, kkk))
             adjust = adjust * (batch_size * self.ada_interval) / (self.ada_kimg * 1000)
             new_p = self.augment_pipe.p + adjust
             new_p = paddle.clip(new_p, min=0)
