@@ -636,6 +636,7 @@ class StyleGANv2ADAModel(BaseModel):
         img = paddle.cast(img, dtype=paddle.uint8)
         img_rgb = img.numpy()[0]  # pgan是将RGB格式的图片进行保存的。
 
+        self.visual_items = OrderedDict()
         self.visual_items['seed%.8d'%seed] = img_rgb
 
     @paddle.no_grad()
