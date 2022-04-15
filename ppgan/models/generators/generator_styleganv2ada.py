@@ -2283,7 +2283,7 @@ class GridSample(nn.Layer):
         else:
             _xt = ((grid_x + 1.0) * float(in_W) - 1.0) / 2.0   # [N, out_H, out_W, 1]
             _yt = ((grid_y + 1.0) * float(in_H) - 1.0) / 2.0   # [N, out_H, out_W, 1]
-            padding = 2
+            padding = 22
             pad_images = F.pad(images, [padding, padding, padding, padding])  # [N, C, pad_H, pad_W]
             _xt += padding
             _yt += padding
