@@ -1,7 +1,19 @@
 
 
+目前只有develop分支支持二阶导数：
+python -m pip install paddlepaddle-gpu==0.0.0.post101 -f https://www.paddlepaddle.org.cn/whl/linux/gpu/develop.html
 
 
+pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
+
+
+cd ~/ppgan/custom_ops/gather
+python setup.py install
+
+
+cd custom_ops/gather
+python setup.py install
+cd ../../
 
 
 
