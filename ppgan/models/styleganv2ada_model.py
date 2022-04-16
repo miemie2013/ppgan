@@ -124,6 +124,12 @@ class StyleGANv2ADAModel(BaseModel):
         self.nets_ema['mapping'] = build_generator(mapping)
         if discriminator:
             self.nets['discriminator'] = build_discriminator(discriminator)
+        soft_update(self.nets['synthesis'],
+                    self.nets_ema['synthesis'],
+                    beta=0.0)
+        soft_update(self.nets['mapping'],
+                    self.nets_ema['mapping'],
+                    beta=0.0)
         self.nets['synthesis'].train()
         self.nets['mapping'].train()
         self.nets['discriminator'].train()
