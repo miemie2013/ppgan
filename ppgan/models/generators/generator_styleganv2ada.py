@@ -205,8 +205,7 @@ def upfirdn2d(x, filter, up=1, down=1, padding=0, flip_filter=False, gain=1):
 
     # Setup filter.
     filter = filter * (gain ** (filter.ndim / 2))
-    assert filter.dtype == x.dtype
-    # filter = paddle.cast(filter, dtype=x.dtype)
+    filter = paddle.cast(filter, dtype=x.dtype)
     if not flip_filter:
         filter = filter.flip(list(range(filter.ndim)))
 
