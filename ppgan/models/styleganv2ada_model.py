@@ -184,6 +184,7 @@ class StyleGANv2ADAModel(BaseModel):
         self.ada_stats = None
         if self.adjust_p:
             self.ada_stats = training_stats.Collector(regex='Loss/signs/real')
+        self.Loss_signs_real = []
 
         self.align_grad = False
         # self.align_grad = True
@@ -373,6 +374,8 @@ class StyleGANv2ADAModel(BaseModel):
             real_img_tmp = real_img.detach()
             real_img_tmp.stop_gradient = not do_Dr1
             real_logits, aug_x = self.run_D(real_img_tmp, real_c, sync=sync, return_aug_x=True)
+            if self.adjust_p and self.augment_pipe is not None:
+                self.Loss_signs_real.append(real_logits.sign().numpy())
             training_stats.report('Loss/scores/real', real_logits)
             training_stats.report('Loss/signs/real', real_logits.sign())
             # if self.align_grad:
@@ -593,8 +596,13 @@ class StyleGANv2ADAModel(BaseModel):
         # Execute ADA heuristic.
         if self.adjust_p and self.augment_pipe is not None and (self.batch_idx % self.ada_interval == 0):
             # self.ada_interval个迭代中，real_logits.sign()的平均值。
+            Loss_signs_real_mean2 = np.mean(np.concatenate(self.Loss_signs_real, 0))
             self.ada_stats.update()
             Loss_signs_real_mean = self.ada_stats['Loss/signs/real']
+            # kkk = 'Loss_signs_real_mean'; ddd = (Loss_signs_real_mean2 - Loss_signs_real_mean) ** 2
+            # print('diff=%.6f (%s)' % (ddd, kkk))
+            # assert ddd < 0.000001
+
 
             diff = Loss_signs_real_mean - self.ada_target
             adjust = np.sign(diff)
@@ -606,6 +614,7 @@ class StyleGANv2ADAModel(BaseModel):
             new_p = self.augment_pipe.p + adjust
             new_p = paddle.clip(new_p, min=0)
             self.augment_pipe.p.set_value(new_p)
+            self.Loss_signs_real = []
 
         self.losses = OrderedDict()
         for loss_dict in loss_numpys:
