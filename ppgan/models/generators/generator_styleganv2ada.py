@@ -1,5 +1,5 @@
 # code was heavily based on https://github.com/NVlabs/stylegan2-ada-pytorch
-# from custom_gather import gather_op
+from custom_gather import gather_op
 import paddle
 from paddle import nn
 import paddle.nn.functional as F
@@ -1037,7 +1037,7 @@ def rotate2d_inv(theta, **kwargs):
 # All augmentations are disabled by default; individual augmentations can
 # be enabled by setting their probability multipliers to 1.
 
-'''
+
 @GENERATORS.register()
 class StyleGANv2ADA_AugmentPipe(nn.Layer):
     def __init__(self,
@@ -1505,6 +1505,10 @@ class GridSample(nn.Layer):
         v3 = paddle.reshape(v3, (N, out_H, out_W, C))
         v4 = paddle.reshape(v4, (N, out_H, out_W, C))
 
+        w1.stop_gradient = False
+        w2.stop_gradient = False
+        w3.stop_gradient = False
+        w4.stop_gradient = False
         out = w1 * v1 + w2 * v2 + w3 * v3 + w4 * v4  # [N, out_H, out_W, C]
         out = paddle.transpose(out, perm=[0, 3, 1, 2])  # [N, C, out_H, out_W]
         return out
@@ -2263,7 +2267,7 @@ class GridSample_Grad(object):
         else:
             dloss_dimages = dloss_dpad_images
         return dloss_dimages
-
+'''
 
 
 
