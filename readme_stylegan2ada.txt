@@ -22,7 +22,7 @@ watch -n 0.1 nvidia-smi
 
 
 训练模型（迁移学习）:
-cd ~/w*
+cd ~/ppgan
 python tools/main.py -c configs/stylegan_v2ada_256_custom.yaml --load styleganv2ada_512_afhqcat.pdparams
 
 
@@ -31,14 +31,14 @@ nohup python tools/main.py -c configs/stylegan_v2ada_256_custom.yaml --load styl
 
 
 单机双卡训练：
-cd ~/w*
+cd ~/ppgan
 CUDA_VISIBLE_DEVICES=0,1
 python -m paddle.distributed.launch --gpus 0,1 tools/main.py -c configs/stylegan_v2ada_256_custom_2_gpu.yaml --load styleganv2ada_512_afhqcat.pdparams
 
 
 
 ------------------------ 恢复训练 ------------------------
-cd ~/w*
+cd ~/ppgan
 python tools/main.py -c configs/stylegan_v2ada_256_custom.yaml --resume output_dir/stylegan_v2ada_256_custom-2022-03-18-17-02/iter_30000_checkpoint.pdparams
 
 
@@ -46,10 +46,42 @@ nohup python tools/main.py -c configs/stylegan_v2ada_256_custom.yaml --resume ou
 
 
 
-cd ~/w*
+cd ~/ppgan
 CUDA_VISIBLE_DEVICES=0,1
 python -m paddle.distributed.launch --gpus 0,1 tools/main.py -c configs/stylegan_v2ada_256_custom_2_gpu.yaml --resume output_dir/stylegan_v2ada_256_custom_2_gpu-2022-03-18-17-02/iter_30000_checkpoint.pdparams
 
+
+
+
+------------------------ 预测 ------------------------
+
+
+
+
+------------------------ style-mixing ------------------------
+
+
+
+
+------------------------ 计算指标 ------------------------
+转换inceptionv3的权重：
+cd convert_weights
+wget https://nvlabs-fi-cdn.nvidia.com/stylegan2-ada-pytorch/pretrained/metrics/inception-2015-12-05.pt
+python inception_convert_weights.py
+cd ..
+
+
+
+cd ~/ppgan
+python tools/calc_metrics.py -c configs/stylegan_v2ada_512_afhqcat.yaml --load styleganv2ada_512_afhqcat.pdparams -b 2 -n 50000 --inceptionv3_path inception-2015-12-05.pdparams
+
+
+论文中 afhqcat 的结果为3.55
+
+
+用从头训练 afhqcat 的保存的模型：
+cd ~/ppgan
+python tools/calc_metrics.py -c configs/stylegan_v2ada_512_afhqcat.yaml --load output_dir/stylegan_v2ada_512_afhqcat-2022-03-18-17-02/iter_30000_checkpoint.pdparams -b 2 -n 50000 --inceptionv3_path inception-2015-12-05.pdparams
 
 
 
