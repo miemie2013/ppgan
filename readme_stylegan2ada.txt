@@ -59,6 +59,12 @@ python -m paddle.distributed.launch --gpus 0,1 tools/main.py -c configs/stylegan
 
 
 ------------------------ style-mixing ------------------------
+cd ~/ppgan
+python tools/main.py -c configs/stylegan_v2ada_256_custom.yaml --style-mixing --load output_dir/stylegan_v2ada_256_custom-2022-04-20-10-08/iter_5000_checkpoint.pdparams --row_seeds 85,100,75,458,1500 --col_seeds 55,821,1789,293 --col_styles 0,1,2,3,4,5,6
+
+
+python tools/main.py -c configs/stylegan_v2ada_256_custom.yaml --style-mixing --load output_dir/stylegan_v2ada_256_custom-2022-04-20-10-08/iter_5000_checkpoint.pdparams --row_seeds 85,100 --col_seeds 55,821 --col_styles 0,1,2,3,4,5,6
+
 
 
 
