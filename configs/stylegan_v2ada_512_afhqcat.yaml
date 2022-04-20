@@ -67,7 +67,7 @@ dataset:
     use_labels: False
     xflip: False
     num_workers: 0
-    batch_size: 1
+    batch_size: 8
     len_phases: 4
     preprocess: None
 
@@ -78,13 +78,13 @@ dataset:
 
 lr_scheduler_G:
   name: MultiStepDecay
-  learning_rate: 0.0025
+  learning_rate: 0.0003125  # 0.0025 / 64.0 per image; 0.0003125 if batch_size is 8;
   milestones: [99999000]
   gamma: 0.5
 
 lr_scheduler_D:
   name: MultiStepDecay
-  learning_rate: 0.0025
+  learning_rate: 0.0003125  # 0.0025 / 64.0 per image; 0.0003125 if batch_size is 8;
   milestones: [99999000]
   gamma: 0.5
 

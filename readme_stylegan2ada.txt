@@ -37,6 +37,16 @@ python -m paddle.distributed.launch --gpus 0,1 tools/main.py -c configs/stylegan
 
 
 
+
+用从头训练 afhqcat ：
+cd ~/ppgan
+python tools/main.py -c configs/stylegan_v2ada_512_afhqcat.yaml
+
+
+nohup python tools/main.py -c configs/stylegan_v2ada_512_afhqcat.yaml > stylegan2ada.log 2>&1 &
+
+
+
 ------------------------ 恢复训练 ------------------------
 cd ~/ppgan
 python tools/main.py -c configs/stylegan_v2ada_256_custom.yaml --resume output_dir/stylegan_v2ada_256_custom-2022-03-18-17-02/iter_30000_checkpoint.pdparams
@@ -83,7 +93,7 @@ python tools/calc_metrics.py -c configs/stylegan_v2ada_512_afhqcat.yaml --load s
 
 
 论文中 afhqcat 的结果为3.55
-
+实际可以跑得3.047967
 
 用从头训练 afhqcat 的保存的模型：
 cd ~/ppgan
