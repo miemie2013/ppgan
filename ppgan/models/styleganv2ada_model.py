@@ -395,8 +395,8 @@ class StyleGANv2ADAModel(BaseModel):
             if do_Dr1:
                 # 训练判别器，生成器应该冻结（其实也没有跑判别器），是判别器的梯度惩罚损失（一种高级一点的梯度裁剪）
                 # 每16个step做1次
-                # r1_grads = paddle.grad(outputs=[real_logits.sum()], inputs=[real_img_tmp], create_graph=True, only_inputs=True)[0]
-                r1_grads = self.run_D_grad(real_logits, aug_x)
+                r1_grads = paddle.grad(outputs=[real_logits.sum()], inputs=[real_img_tmp], create_graph=True, only_inputs=True)[0]
+                # r1_grads = self.run_D_grad(real_logits, aug_x)
                 # if self.align_grad:
                 #     print_diff(dic, phase + ' r1_grads', r1_grads)
                 r1_penalty = r1_grads.square().sum([1, 2, 3])

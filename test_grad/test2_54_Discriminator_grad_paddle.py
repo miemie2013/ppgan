@@ -96,9 +96,9 @@ for batch_idx in range(8):
     aug_x = augment_pipe(x, debug_percentile)
     y = model(aug_x, None)
 
-    # dy_dx = paddle.grad(outputs=[y.sum()], inputs=[x], create_graph=True)[0]
-    dy_daug_x = paddle.grad(outputs=[y.sum()], inputs=[aug_x], create_graph=True)[0]
-    dy_dx = augment_pipe.grad_layer(dy_daug_x)
+    dy_dx = paddle.grad(outputs=[y.sum()], inputs=[x], create_graph=True)[0]
+    # dy_daug_x = paddle.grad(outputs=[y.sum()], inputs=[aug_x], create_graph=True)[0]
+    # dy_dx = augment_pipe.grad_layer(dy_daug_x)
 
 
     y_paddle = y.numpy()
