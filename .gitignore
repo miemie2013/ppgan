@@ -128,8 +128,4 @@ ps_usr_print_log
 
 log/
 
-!test_DDP/*.npz
-!test_DDP/*.pth
-!test_DDP/*.pdparams
-
 

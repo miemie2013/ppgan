@@ -49,6 +49,9 @@ nohup python tools/main.py -c configs/stylegan_v2ada_256_custom.yaml --load styl
 
 
 单机双卡训练：
+export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/cuda-10.2/lib64
+export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/lib/x86_64-linux-gnu
+
 cd ~/ppgan
 CUDA_VISIBLE_DEVICES=0,1
 python -m paddle.distributed.launch --gpus 0,1 tools/main.py -c configs/stylegan_v2ada_256_custom_2_gpu.yaml --load styleganv2ada_512_afhqcat.pdparams

@@ -2,6 +2,8 @@
 import paddle
 import numpy as np
 
+print(paddle.__version__)
+
 
 ckpt_file1 = "01_19.pdparams"
 ckpt_file2 = "01_19_DDP.pdparams"
