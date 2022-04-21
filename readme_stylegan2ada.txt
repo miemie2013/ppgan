@@ -16,6 +16,24 @@ python setup.py install
 cd ../../
 
 
+解压数据集：
+nvidia-smi
+cd ~
+cd data
+cd data110820
+unzip faces.zip
+cd ~/ppgan
+
+
+nvidia-smi
+cd ~
+cd data
+cd data42681
+unzip afhq.zip
+cd ~/ppgan
+
+
+
 
 看显存占用、GPU利用率
 watch -n 0.1 nvidia-smi
