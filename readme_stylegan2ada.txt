@@ -67,6 +67,18 @@ python tools/main.py -c configs/stylegan_v2ada_512_afhqcat.yaml
 nohup python tools/main.py -c configs/stylegan_v2ada_512_afhqcat.yaml > stylegan2ada.log 2>&1 &
 
 
+单机4卡训练：
+cd ~/ppgan
+CUDA_VISIBLE_DEVICES=0,1,2,3
+python -m paddle.distributed.launch --gpus 0,1,2,3 tools/main.py -c configs/stylegan_v2ada_512_afhqcat_4_gpu.yaml
+
+
+
+
+nohup python -m paddle.distributed.launch --gpus 0,1,2,3 tools/main.py -c configs/stylegan_v2ada_512_afhqcat_4_gpu.yaml > stylegan2ada.log 2>&1 &
+
+
+
 
 ------------------------ 恢复训练 ------------------------
 cd ~/ppgan
