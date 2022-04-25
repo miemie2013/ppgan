@@ -71,6 +71,7 @@ if __name__ == "__main__":
         ddd = np.sum((v1 - v2) ** 2)
         if ddd <= d_value:
             print('diff=%.6f (%s)' % (ddd, key))
+    print(paddle.__version__)
     print()
 
 

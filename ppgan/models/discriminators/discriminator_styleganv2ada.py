@@ -130,6 +130,7 @@ class DiscriminatorEpilogue(nn.Layer):
     ):
         assert architecture in ['orig', 'skip', 'resnet']
         super().__init__()
+        # mbstd_num_channels = 0
         self.in_channels = in_channels
         self.cmap_dim = cmap_dim
         self.resolution = resolution

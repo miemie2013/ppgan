@@ -298,13 +298,18 @@ class StyleGANv2ADAModel(BaseModel):
             (loss_Gmain.mean() * float(gain)).backward()  # 咩酱：gain即上文提到的这个阶段的训练间隔。
             # if self.align_grad:
             #     mapping = self.get_bare_model(self.nets['mapping'])
+            #     synthesis = self.get_bare_model(self.nets['synthesis'])
             #     discriminator = self.get_bare_model(self.nets['discriminator'])
             #     m_w_grad = mapping.fc7.weight.grad
             #     m_b_grad = mapping.fc7.bias.grad
+            #     s_w_grad = synthesis.convs[5].affine.weight.grad
+            #     s_b_grad = synthesis.convs[5].affine.bias.grad
             #     d_w_grad = discriminator.b32.conv0.weight.grad
             #     d_b_grad = discriminator.b32.conv0.bias.grad
             #     print_diff(dic, phase + ' m_w_grad', m_w_grad)
             #     print_diff(dic, phase + ' m_b_grad', m_b_grad)
+            #     print_diff(dic, phase + ' s_w_grad', s_w_grad)
+            #     print_diff(dic, phase + ' s_b_grad', s_b_grad)
             #     print_diff(dic, phase + ' d_w_grad', d_w_grad)
             #     print_diff(dic, phase + ' d_b_grad', d_b_grad)
 
@@ -343,6 +348,22 @@ class StyleGANv2ADAModel(BaseModel):
             # loss_numpy['loss_Gpl'] = loss_Gpl.numpy()
             # loss_Gpl.backward()  # 咩酱：gain即上文提到的这个阶段的训练间隔。
             (loss_Gpl.mean() * float(gain)).backward()  # 咩酱：gain即上文提到的这个阶段的训练间隔。
+            # if self.align_grad:
+            #     mapping = self.get_bare_model(self.nets['mapping'])
+            #     synthesis = self.get_bare_model(self.nets['synthesis'])
+            #     discriminator = self.get_bare_model(self.nets['discriminator'])
+            #     m_w_grad = mapping.fc7.weight.grad
+            #     m_b_grad = mapping.fc7.bias.grad
+            #     s_w_grad = synthesis.convs[5].affine.weight.grad
+            #     s_b_grad = synthesis.convs[5].affine.bias.grad
+            #     d_w_grad = discriminator.b32.conv0.weight.grad
+            #     d_b_grad = discriminator.b32.conv0.bias.grad
+            #     print_diff(dic, phase + ' m_w_grad', m_w_grad)
+            #     print_diff(dic, phase + ' m_b_grad', m_b_grad)
+            #     print_diff(dic, phase + ' s_w_grad', s_w_grad)
+            #     print_diff(dic, phase + ' s_b_grad', s_b_grad)
+            #     print_diff(dic, phase + ' d_w_grad', d_w_grad)
+            #     print_diff(dic, phase + ' d_b_grad', d_b_grad)
 
         # Dmain: Minimize logits for generated images.
         # loss3 = 0.0
@@ -367,6 +388,22 @@ class StyleGANv2ADAModel(BaseModel):
 
             # loss3 = loss_Dgen * float(gain)
             (loss_Dgen.mean() * float(gain)).backward()  # 咩酱：gain即上文提到的这个阶段的训练间隔。
+            # if self.align_grad:
+            #     mapping = self.get_bare_model(self.nets['mapping'])
+            #     synthesis = self.get_bare_model(self.nets['synthesis'])
+            #     discriminator = self.get_bare_model(self.nets['discriminator'])
+            #     m_w_grad = mapping.fc7.weight.grad
+            #     m_b_grad = mapping.fc7.bias.grad
+            #     s_w_grad = synthesis.convs[5].affine.weight.grad
+            #     s_b_grad = synthesis.convs[5].affine.bias.grad
+            #     d_w_grad = discriminator.b32.conv0.weight.grad
+            #     d_b_grad = discriminator.b32.conv0.bias.grad
+            #     print_diff(dic, phase + ' backward0 m_w_grad', m_w_grad)
+            #     print_diff(dic, phase + ' backward0 m_b_grad', m_b_grad)
+            #     print_diff(dic, phase + ' backward0 s_w_grad', s_w_grad)
+            #     print_diff(dic, phase + ' backward0 s_b_grad', s_b_grad)
+            #     print_diff(dic, phase + ' backward0 d_w_grad', d_w_grad)
+            #     print_diff(dic, phase + ' backward0 d_b_grad', d_b_grad)
 
         # Dmain: Maximize logits for real images.
         # Dr1: Apply R1 regularization.
@@ -410,6 +447,30 @@ class StyleGANv2ADAModel(BaseModel):
             #     loss4 += loss3
             # loss4.backward()  # 咩酱：gain即上文提到的这个阶段的训练间隔。
             ((loss_Dreal + loss_Dr1).mean() * float(gain)).backward()  # 咩酱：gain即上文提到的这个阶段的训练间隔。
+            # if self.align_grad:
+            #     mapping = self.get_bare_model(self.nets['mapping'])
+            #     synthesis = self.get_bare_model(self.nets['synthesis'])
+            #     discriminator = self.get_bare_model(self.nets['discriminator'])
+            #     m_w_grad = mapping.fc7.weight.grad
+            #     m_b_grad = mapping.fc7.bias.grad
+            #     s_w_grad = synthesis.convs[5].affine.weight.grad
+            #     s_b_grad = synthesis.convs[5].affine.bias.grad
+            #     d_w_grad = discriminator.b32.conv0.weight.grad
+            #     d_b_grad = discriminator.b32.conv0.bias.grad
+            #     if do_Dmain:
+            #         print_diff(dic, phase + ' backward1 m_w_grad', m_w_grad)
+            #         print_diff(dic, phase + ' backward1 m_b_grad', m_b_grad)
+            #         print_diff(dic, phase + ' backward1 s_w_grad', s_w_grad)
+            #         print_diff(dic, phase + ' backward1 s_b_grad', s_b_grad)
+            #         print_diff(dic, phase + ' backward1 d_w_grad', d_w_grad)
+            #         print_diff(dic, phase + ' backward1 d_b_grad', d_b_grad)
+            #     if do_Dr1:
+            #         print_diff(dic, phase + ' m_w_grad', m_w_grad)
+            #         print_diff(dic, phase + ' m_b_grad', m_b_grad)
+            #         print_diff(dic, phase + ' s_w_grad', s_w_grad)
+            #         print_diff(dic, phase + ' s_b_grad', s_b_grad)
+            #         print_diff(dic, phase + ' d_w_grad', d_w_grad)
+            #         print_diff(dic, phase + ' d_b_grad', d_b_grad)
         return loss_numpy
 
     def train_iter(self, optimizers=None, rank=0, world_size=1):
@@ -527,8 +588,10 @@ class StyleGANv2ADAModel(BaseModel):
                 continue
 
             # Initialize gradient accumulation.  咩酱：初始化梯度累加（变相增大批大小）。
+            # 两个优化器都要清除梯度才能和pytorch对齐。
+            optimizers['generator'].clear_gradients()
+            optimizers['discriminator'].clear_gradients()
             if 'G' in phase.name:
-                optimizers['generator'].clear_gradients()
                 for name, param in self.nets['synthesis'].named_parameters():
                     param.stop_gradient = False
                 for name, param in self.nets['mapping'].named_parameters():
@@ -536,7 +599,6 @@ class StyleGANv2ADAModel(BaseModel):
                 for name, param in self.nets['discriminator'].named_parameters():
                     param.stop_gradient = True
             elif 'D' in phase.name:
-                optimizers['discriminator'].clear_gradients()
                 for name, param in self.nets['synthesis'].named_parameters():
                     param.stop_gradient = True
                 for name, param in self.nets['mapping'].named_parameters():

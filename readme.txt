@@ -77,7 +77,6 @@ cp ../data/data128401/styleganv2ada_512_afhqcat.pdparams styleganv2ada_512_afhqc
 
 对齐梯度：
 1.(原版仓库也要设置)设置 ppgan/models/styleganv2ada_model.py 的 StyleGANv2ADAModel 的
-    self.augment_pipe = None
     self.style_mixing_prob = -1.0
     self.align_grad = True
 解除上面语句的注释即可。
@@ -85,10 +84,17 @@ cp ../data/data128401/styleganv2ada_512_afhqcat.pdparams styleganv2ada_512_afhqc
 if self.align_grad:
     xxx
 
-2.(原版仓库也要设置) ppgan/models/styleganv2ada_model.py，计算loss_Gpl那里，pl_noise使用全1而不是随机数：
+计算loss_Gpl那里，pl_noise使用全1而不是随机数：
             pl_noise = paddle.randn(gen_img.shape) / np.sqrt(gen_img.shape[2] * gen_img.shape[3])
             # pl_noise = paddle.ones(gen_img.shape) / np.sqrt(gen_img.shape[2] * gen_img.shape[3])
 注释掉第一行代码，第二行代码解除注释。
+
+run_D()方法中，注释掉：
+            img = self.augment_pipe(img)
+解除注释：
+            # debug_percentile = 0.7
+            # img = self.augment_pipe(img, debug_percentile)
+
 
 3.(原版仓库也要设置)设置 ppgan/models/generators/generator_styleganv2ada.py 的 SynthesisLayer 的
     self.use_noise = False
@@ -121,25 +127,19 @@ python convert_weights/stylegan2ada_convert_weights.py -c configs/stylegan_v2ada
 python convert_weights/stylegan2ada_convert_weights.py -c configs/stylegan_v2ada_32_custom.yaml -c_G G_19.pth -c_Gema G_ema_19.pth -c_D D_19.pth -oc styleganv2ada_32_19.pdparams
 
 
-# 转换权重方便对齐（简单网络版）
-python convert_weights/stylegan2ada_convert_weights_simple.py -c configs/stylegan_v2ada_32_custom.yaml -c_G G_00.pth -c_Gema G_ema_00.pth -c_D D_00.pth -oc styleganv2ada_32_00.pdparams
 
-
-python convert_weights/stylegan2ada_convert_weights_simple.py -c configs/stylegan_v2ada_32_custom.yaml -c_G G_19.pth -c_Gema G_ema_19.pth -c_D D_19.pth -oc styleganv2ada_32_19.pdparams
-
-
-
-
+stylegan_v2ada_32_custom.yaml 的 batch_size 改成 8
 CUDA_VISIBLE_DEVICES=0
 python tools/main.py -c configs/stylegan_v2ada_32_custom.yaml --load styleganv2ada_32_00.pdparams
 
 
+stylegan_v2ada_32_custom.yaml 的 batch_size 改成 4
 CUDA_VISIBLE_DEVICES=0,1
 python -m paddle.distributed.launch tools/main.py -c configs/stylegan_v2ada_32_custom.yaml --load styleganv2ada_32_00.pdparams
 
 
 
-python diff_weights.py --cp1 styleganv2ada_32_19.pdparams --cp2 output_dir/stylegan_v2ada_32_custom-2022-04-15-10-04/iter_20_checkpoint.pdparams --d_value 0.0005
+python diff_weights.py --cp1 styleganv2ada_32_19.pdparams --cp2 output_dir/stylegan_v2ada_32_custom-2022-04-25-14-05/iter_20_checkpoint.pdparams --d_value 0.0005
 
 
 
