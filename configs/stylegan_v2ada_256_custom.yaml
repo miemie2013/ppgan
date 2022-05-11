@@ -77,13 +77,13 @@ dataset:
 
 lr_scheduler_G:
   name: MultiStepDecay
-  learning_rate: 0.000234375  # 0.0025 / 64.0 per image; 0.00015625 if batch_size is 4; 0.000234375 if batch_size is 6;
+  learning_rate: 0.0009375  # 0.0025 / 16.0 per image; 0.000625 if batch_size is 4; 0.0009375 if batch_size is 6; 0.00125 if batch_size is 8;
   milestones: [99999000]
   gamma: 0.5
 
 lr_scheduler_D:
   name: MultiStepDecay
-  learning_rate: 0.000234375  # 0.0025 / 64.0 per image; 0.00015625 if batch_size is 4; 0.000234375 if batch_size is 6;
+  learning_rate: 0.0009375  # 0.0025 / 16.0 per image; 0.000625 if batch_size is 4; 0.0009375 if batch_size is 6; 0.00125 if batch_size is 8;
   milestones: [99999000]
   gamma: 0.5
 

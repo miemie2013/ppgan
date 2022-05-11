@@ -53,4 +53,5 @@ for key in fullyConnectedLayer_dic.keys():
 model.load_state_dict(fullyConnectedLayer_std)
 
 mge.save(fullyConnectedLayer_std, save_name)
+print(mge.__version__)
 

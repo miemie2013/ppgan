@@ -1,9 +1,11 @@
 
 import torch
-import paddle
-import os
+import mindspore as ms
 import numpy as np
-from ppgan.models.generators.generator_styleganv2ada import FullyConnectedLayer
+from ms_networks import FullyConnectedLayer
+import mindspore.context as context
+context.set_context(device_target="CPU")
+
 
 in_channels = 512
 w_dim = 512
@@ -19,22 +21,19 @@ activation = 'sigmoid'
 # activation = 'swish'
 
 model = FullyConnectedLayer(w_dim, in_channels, activation=activation, bias_init=1)
-model.train()
+# model.train()
 
-use_gpu = True
-gpu_id = int(os.environ.get('FLAGS_selected_gpus', 0))
-place = paddle.CUDAPlace(gpu_id) if use_gpu else paddle.CPUPlace()
 
 def copy(name, w, std):
-    value2 = paddle.to_tensor(w, place=place)
     value = std[name]
-    value = value * 0 + value2
-    std[name] = value
+    value2 = ms.common.parameter.Parameter(w, name=value.name)
+    std[name] = value2
 
-fullyConnectedLayer_std = model.state_dict()
+fullyConnectedLayer_std = model.parameters_dict()
+
 
 ckpt_file = 'pytorch_fullyConnectedLayer.pth'
-save_name = 'pytorch_fullyConnectedLayer.pdparams'
+save_name = 'pytorch_fullyConnectedLayer.ckpt'
 state_dict = torch.load(ckpt_file, map_location=torch.device('cpu'))
 
 
@@ -52,8 +51,7 @@ for key in fullyConnectedLayer_dic.keys():
         w = np.reshape(w, [1, ])
     print(key)
     copy(name2, w, fullyConnectedLayer_std)
-model.set_state_dict(fullyConnectedLayer_std)
+ms.load_param_into_net(model, fullyConnectedLayer_std)
 
-paddle.save(fullyConnectedLayer_std, save_name)
-print(paddle.__version__)
+ms.save_checkpoint(model, save_name)
 

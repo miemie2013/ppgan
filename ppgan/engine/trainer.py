@@ -269,6 +269,11 @@ class Trainer:
             # data input should be dict
             self.model.setup_input(data)
             if self.archi_name == 'StyleGANv2ADAModel':
+                # raw_idx = data[-1]
+                # if self.local_rank == 0:
+                #     self.logger.info(raw_idx)
+                # else:
+                #     print(raw_idx)
                 self.model.train_iter(self.optimizers, self.local_rank, self.world_size)
             else:
                 self.model.train_iter(self.optimizers)
@@ -602,13 +607,28 @@ class Trainer:
 
         os.makedirs(self.output_dir, exist_ok=True)
         save_path = os.path.join(self.output_dir, save_filename)
-        for net_name, net in self.model.nets.items():
-            state_dicts[net_name] = net.state_dict()
+        if self.archi_name == 'StyleGANv2ADAModel' and self.is_distributed:
+            for net_name, net in self.model.nets.items():
+                # state_dicts[net_name] = net._layers.state_dict()
+                state_dicts[net_name] = net.state_dict()
+                # print(state_dicts[net_name].keys())
+        else:
+            for net_name, net in self.model.nets.items():
+                state_dicts[net_name] = net.state_dict()
+                # print(state_dicts[net_name].keys())
 
         if hasattr(self.model, 'nets_ema'):
-            for net_name, net in self.model.nets_ema.items():
-                net_ema_name = net_name + '_ema'
-                state_dicts[net_ema_name] = net.state_dict()
+            if self.archi_name == 'StyleGANv2ADAModel' and self.is_distributed:
+                for net_name, net in self.model.nets_ema.items():
+                    net_ema_name = net_name + '_ema'
+                    # state_dicts[net_ema_name] = net._layers.state_dict()
+                    state_dicts[net_ema_name] = net.state_dict()
+                    # print(state_dicts[net_ema_name].keys())
+            else:
+                for net_name, net in self.model.nets_ema.items():
+                    net_ema_name = net_name + '_ema'
+                    state_dicts[net_ema_name] = net.state_dict()
+                    # print(state_dicts[net_ema_name].keys())
 
         if name == 'weight':
             save(state_dicts, save_path)

@@ -3,7 +3,7 @@
 #define PADDLE_WITH_CUDA
 #define CHECK_INPUT(x) PD_CHECK(x.place() == paddle::PlaceType::kGPU, #x " must be a GPU Tensor.")
 
-// cuda实现声明
+// cuda function declaration
 std::vector<paddle::Tensor> gather_cuda_forward(const paddle::Tensor& input, const paddle::Tensor& index);
 
 std::vector<paddle::Tensor> gather_cuda_backward(const paddle::Tensor& input, const paddle::Tensor& index, const paddle::Tensor& doutput);
@@ -11,7 +11,7 @@ std::vector<paddle::Tensor> gather_cuda_backward(const paddle::Tensor& input, co
 std::vector<paddle::Tensor> gather_cuda_double_backward(const paddle::Tensor& input, const paddle::Tensor& index, const paddle::Tensor& ddx);
 
 
-// 决定调用cpu或者gpu实现。暂时只提供了gpu实现
+// use gpu or cpu impl? now only support gpu.
 std::vector<paddle::Tensor> GatherForward(const paddle::Tensor& input, const paddle::Tensor& index) {
     CHECK_INPUT(input);
     CHECK_INPUT(index);
@@ -32,7 +32,7 @@ std::vector<paddle::Tensor> GatherDoubleBackward(const paddle::Tensor& input, co
     return gather_cuda_double_backward(input, index, ddx);
 }
 
-// 形状推断函数
+//
 std::vector<std::vector<int64_t>> gather_forward_InferShape(
     const std::vector<int64_t>& input_shape,
     const std::vector<int64_t>& index_shape) {
@@ -64,7 +64,7 @@ std::vector<std::vector<int64_t>> gather_double_backward_InferShape(
 }
 
 
-// 类型推断函数
+//
 std::vector<paddle::DataType> gather_forward_InferDtype(paddle::DataType input_dtype, paddle::DataType index_dtype) {
     return {input_dtype};
 }

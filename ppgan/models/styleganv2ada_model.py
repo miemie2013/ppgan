@@ -186,8 +186,7 @@ class StyleGANv2ADAModel(BaseModel):
             self.ada_stats = training_stats.Collector(regex='Loss/signs/real')
         self.Loss_signs_real = []
 
-        self.align_grad = False
-        # self.align_grad = True
+        self.align_grad = True
 
 
 

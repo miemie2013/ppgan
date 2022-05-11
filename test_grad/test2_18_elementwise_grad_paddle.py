@@ -48,5 +48,4 @@ for batch_idx in range(8):
     ddd = np.mean((dloss_dstyles_pytorch - dloss_dstyles_paddle) ** 2)
     print('ddd=%.6f' % ddd)
     print()
-print(paddle.__version__)
 print()

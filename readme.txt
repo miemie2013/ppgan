@@ -127,6 +127,17 @@ python convert_weights/stylegan2ada_convert_weights.py -c configs/stylegan_v2ada
 python convert_weights/stylegan2ada_convert_weights.py -c configs/stylegan_v2ada_32_custom.yaml -c_G G_19.pth -c_Gema G_ema_19.pth -c_D D_19.pth -oc styleganv2ada_32_19.pdparams
 
 
+如果在AIStudio上跑，解压权重和npz：
+nvidia-smi
+cd ~/ppgan
+cp ../data/data137600/1gpu.zip ./1gpu.zip
+cp ../data/data137600/2gpu.zip ./2gpu.zip
+
+unzip 1gpu.zip
+
+unzip 2gpu.zip
+
+
 
 stylegan_v2ada_32_custom.yaml 的 batch_size 改成 8
 CUDA_VISIBLE_DEVICES=0
@@ -135,15 +146,38 @@ python tools/main.py -c configs/stylegan_v2ada_32_custom.yaml --load styleganv2a
 
 stylegan_v2ada_32_custom.yaml 的 batch_size 改成 4
 CUDA_VISIBLE_DEVICES=0,1
-python -m paddle.distributed.launch tools/main.py -c configs/stylegan_v2ada_32_custom.yaml --load styleganv2ada_32_00.pdparams
+python -m paddle.distributed.launch --gpus 0,1 tools/main.py -c configs/stylegan_v2ada_32_custom.yaml --load styleganv2ada_32_00.pdparams
+
+
+python diff_weights.py --cp1 styleganv2ada_32_19.pdparams --cp2 output_dir/stylegan_v2ada_32_custom-2022-05-11-17-52/iter_20_checkpoint.pdparams --d_value 0.0005
 
 
 
-python diff_weights.py --cp1 styleganv2ada_32_19.pdparams --cp2 output_dir/stylegan_v2ada_32_custom-2022-04-25-14-05/iter_20_checkpoint.pdparams --d_value 0.0005
 
+----------------------- 进阶：验证每张卡上的训练数据是否不重复 -----------------------
+1.configs/stylegan_v2ada_256_custom.yaml
+        # 有前16张照片，用来验证每张卡上的训练数据是否不重复
+        dataroot: ../data/data110820/faces
+改成
+        dataroot: ../data/data110820/faces2
+批大小改成4
 
+2.trainer.py下面代码解除注释
+                # raw_idx = data[-1]
+                # if self.local_rank == 0:
+                #     self.logger.info(raw_idx)
+                # else:
+                #     print(raw_idx)
+注释掉这句代码
+                self.model.train_iter(self.optimizers, self.local_rank, self.world_size)
+肉眼观察raw_idx即可(0~15的值)。
 
+单机1卡
+python tools/main.py -c configs/stylegan_v2ada_256_custom.yaml
 
+单机2卡
+CUDA_VISIBLE_DEVICES=0,1
+python -m paddle.distributed.launch --gpus 0,1 tools/main.py -c configs/stylegan_v2ada_256_custom.yaml
 
 
 

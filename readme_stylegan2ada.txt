@@ -16,6 +16,32 @@ python setup.py install
 cd ../../
 
 
+如果报错 fatal error: cuda_runtime.h: 没有那个文件或目录
+
+sudo vi ~/.bashrc
+
+或者
+sudo gedit ~/.bashrc
+
+...
+export CPLUS_INCLUDE_PATH=$CPLUS_INCLUDE_PATH:${CUDA_HOME}/targets/x86_64-linux/include
+export C_INCLUDE_PATH=$C_INCLUDE_PATH:${CUDA_HOME}/targets/x86_64-linux/include
+export CPLUS_INCLUDE_PATH=$CPLUS_INCLUDE_PATH:${CUDA_HOME}/targets/x86_64-linux/lib
+export C_INCLUDE_PATH=$C_INCLUDE_PATH:${CUDA_HOME}/targets/x86_64-linux/lib
+export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:${CUDA_HOME}/targets/x86_64-linux/include
+export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:${CUDA_HOME}/targets/x86_64-linux/lib
+export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:${CUDA_HOME}/lib64
+
+source ~/.bashrc
+
+如果报错
+cannot find -lcudart
+collect2: error: ld returned 1 exit status
+error: command '/usr/bin/g++' failed with exit code 1
+
+find /usr/local/cuda-11.1 -name *cudart*
+
+
 解压数据集：
 nvidia-smi
 cd ~
@@ -71,6 +97,12 @@ nohup python tools/main.py -c configs/stylegan_v2ada_512_afhqcat.yaml > stylegan
 cd ~/ppgan
 CUDA_VISIBLE_DEVICES=0,1,2,3
 python -m paddle.distributed.launch --gpus 0,1,2,3 tools/main.py -c configs/stylegan_v2ada_512_afhqcat_4_gpu.yaml
+
+
+恢复训练:
+cd ~/ppgan
+CUDA_VISIBLE_DEVICES=0,1,2,3
+python -m paddle.distributed.launch --gpus 0,1,2,3 tools/main.py -c configs/stylegan_v2ada_512_afhqcat_4_gpu.yaml --resume output_dir/stylegan_v2ada_512_afhqcat_4_gpu-2022-05-11-17-52/iter_20_checkpoint.pdparams
 
 
 

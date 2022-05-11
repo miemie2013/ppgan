@@ -124,6 +124,7 @@ output_dir/
 *.pth
 *.pt
 *.pkl
+*.ckpt
 ps_usr_print_log
 
 log/

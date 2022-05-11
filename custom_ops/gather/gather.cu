@@ -3,7 +3,7 @@
 #include <cuda.h>
 #include <cuda_runtime.h>
 
-// ================================ CudaAtomicAdd 源码位于"paddle/fluid/platform/device/gpu/gpu_primitives.h" ================================
+// ================================ CudaAtomicAdd at "paddle/fluid/platform/device/gpu/gpu_primitives.h" ================================
 #define CUDA_ATOMIC_WRAPPER(op, T) \
   __device__ __forceinline__ T CudaAtomic##op(T *address, const T val)
 
@@ -52,7 +52,7 @@ CUDA_ATOMIC_WRAPPER(Add, double) {
 }
 #endif
 
-// ================================ CudaAtomicAdd （完） ================================
+// ================================ CudaAtomicAdd (end) ================================
 
 
 
@@ -64,7 +64,6 @@ CUDA_ATOMIC_WRAPPER(Add, double) {
        i < (n); i += step)
 
 
-// 暂时不支持定义2个泛型？
 // template<typename data_t, typename index_t>
 template<typename data_t>
 __global__ void GatherCUDAKernel(const data_t* params, const int64_t* indices,
@@ -183,7 +182,7 @@ std::vector<paddle::Tensor> gather_cuda_backward(const paddle::Tensor& input, co
     int index_size = index_shape[0];
 
     paddle::Tensor dinput = paddle::Tensor(paddle::PlaceType::kGPU, input_shape);
-    // dinput初始化为全0。
+    // dinput = 0
     dinput = fill_constant(dinput, 0, input)[0];
 
     // slice size
@@ -196,10 +195,10 @@ std::vector<paddle::Tensor> gather_cuda_backward(const paddle::Tensor& input, co
     int n = slice_size * index_size;
     int grid = (n + block - 1) / block;
 
-    // 为 true 时表示覆盖写；为 false 时表示累加。一定要是false。
+    // overwrite if overwrite == true; accumulation if overwrite == false;
     bool overwrite = false;
 
-    // 累加模式，被填写的位置要初始化为全0。
+    // accumulation
     if (!overwrite) {
         PD_DISPATCH_FLOATING_TYPES(
             input.type(), "ScatterInitCUDAKernel", ([&] {

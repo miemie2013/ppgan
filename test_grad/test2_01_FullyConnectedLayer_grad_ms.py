@@ -1,8 +1,11 @@
 
-import paddle
-import paddle.nn.functional as F
+import mindspore as ms
+import mindspore.nn as nn
+from mindspore.ops import operations as P
 import numpy as np
-from ppgan.models.generators.generator_styleganv2ada import FullyConnectedLayer
+from ms_networks import FullyConnectedLayer
+import mindspore.context as context
+context.set_context(device_target="CPU")
 
 batch_size = 2
 in_channels = 512
@@ -19,23 +22,24 @@ activation = 'sigmoid'
 # activation = 'swish'
 
 model = FullyConnectedLayer(w_dim, in_channels, activation=activation, bias_init=1)
-model.train()
-optimizer = paddle.optimizer.Momentum(parameters=model.parameters(), learning_rate=lr, momentum=0.9)
-model.set_state_dict(paddle.load("pytorch_fullyConnectedLayer.pdparams"))
+# model.train()
+optimizer = nn.Momentum(params=model.trainable_params(), learning_rate=lr, momentum=0.9)
+ms.load_param_into_net(model, ms.load_checkpoint("pytorch_fullyConnectedLayer.ckpt"))
+model = ms.Model(model, optimizer)
 
 
 dic2 = np.load('01_fullyConnectedLayer_grad.npz')
 for batch_idx in range(20):
     print('======================== batch_%.3d ========================'%batch_idx)
-    optimizer.clear_gradients()
+    # optimizer.clear_gradients()
     ws = dic2['batch_%.3d.input'%batch_idx]
     styles_pytorch = dic2['batch_%.3d.output'%batch_idx]
     dstyles2_dws_pytorch = dic2['batch_%.3d.dstyles2_dws'%batch_idx]
-    ws = paddle.to_tensor(ws)
-    ws.stop_gradient = False
+    ws = ms.Tensor(ws)
+    ws.requ = False
     styles = model(ws)
 
-    styles2 = F.sigmoid(styles)
+    styles2 = P.Sigmoid()(styles)
 
     # 总结：和梯度相乘的临时前向张量styles2_clone一定要是本尊，不能加.detach()
     # 正确的
@@ -50,7 +54,7 @@ for batch_idx in range(20):
     # styles2_clone.set_value(styles2)
 
 
-    dstyles2_dws = paddle.grad(outputs=[styles2.sum()], inputs=[ws], create_graph=True)[0]
+    # dstyles2_dws = paddle.grad(outputs=[styles2.sum()], inputs=[ws], create_graph=True)[0]
     # dstyles2_dstyles2 = paddle.ones(styles2.shape, dtype=paddle.float32)
     # dstyles2_dstyles = dstyles2_dstyles2 * styles2_clone * (1.0 - styles2_clone)  # 总结：和梯度相乘的临时前向张量styles2_clone一定要是本尊，不能加.detach()
     # dstyles2_dws = model.grad_layer(dstyles2_dstyles)
@@ -59,11 +63,12 @@ for batch_idx in range(20):
     ddd = np.sum((styles_pytorch - aaaaaa) ** 2)
     print('ddd=%.6f' % ddd)
 
-    aaaaaa = dstyles2_dws.numpy()
-    ddd = np.sum((dstyles2_dws_pytorch - aaaaaa) ** 2)
-    print('ddd=%.6f' % ddd)
+    # aaaaaa = dstyles2_dws.numpy()
+    # ddd = np.sum((dstyles2_dws_pytorch - aaaaaa) ** 2)
+    # print('ddd=%.6f' % ddd)
 
-    loss = dstyles2_dws.sum() + styles2.sum()
+    # loss = dstyles2_dws.sum() + styles2.sum()
+    loss = styles2.sum()
     loss.backward()
-    optimizer.step()
+    # optimizer.step()
 print()

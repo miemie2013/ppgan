@@ -43,6 +43,7 @@ optimizer = paddle.optimizer.Momentum(parameters=model.parameters(), learning_ra
 model.set_state_dict(paddle.load("53.pdparams"))
 
 
+print(model.torgbs[-1].weight.numpy()[:2, :2])
 dic2 = np.load('53.npz')
 for batch_idx in range(8):
     print('======================== batch_%.3d ========================'%batch_idx)
@@ -66,9 +67,12 @@ for batch_idx in range(8):
     print('ddd=%.6f' % ddd)
 
     # 需要强制设置ppgan/models/generators/generator_styleganv2ada.py里的 SynthesisLayer 的self.use_noise = False，pytorch的也要设置，才会和pytorch输出一样！！！
-    loss = dy_dws.sum() + y.sum()
+    # loss = dy_dws.sum() + y.sum()
     # loss = y.sum()
+    loss = dy_dws.sum()
     loss.backward()
+    aaaaaaaa = model.torgbs[-1].weight.grad.numpy()
+    print(model.torgbs[-1].weight.grad.numpy()[:2, :2])
     optimizer.step()
 print('================= last dy_dws =================')
 print('dy_dws_pytorch[:, :2, :2]=\n', dy_dws_pytorch[:, :2, :2])
