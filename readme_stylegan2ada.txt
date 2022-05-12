@@ -114,7 +114,7 @@ nohup python -m paddle.distributed.launch --gpus 0,1,2,3 tools/main.py -c config
 单机4卡训练：
 cd ~/ppgan
 CUDA_VISIBLE_DEVICES=0,1,2,3
-python -m paddle.distributed.launch --gpus 0,1,2,3 tools/main.py -c configs/stylegan_v2ada_256_custom_4_gpu.yaml
+python -m paddle.distributed.launch --gpus 0,1,2,3 tools/main.py -c configs/stylegan_v2ada_256_custom_4_gpu.yaml --load styleganv2ada_512_afhqcat.pdparams
 
 
 恢复训练:

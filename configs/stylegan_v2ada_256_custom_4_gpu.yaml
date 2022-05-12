@@ -105,7 +105,7 @@ optimizer:
     epsilon: 1e-8
 
 validate:
-  interval: 1000   # test iters
+  interval: 200   # test iters
   save_img: true
 
 log_config:
@@ -113,4 +113,4 @@ log_config:
   visiual_interval: 1000   # visual iters
 
 snapshot_config:
-  interval: 1000   # save epochs when use 'epochs'; save iters when use 'total_iters' or 'kimgs'.
+  interval: 200   # save epochs when use 'epochs'; save iters when use 'total_iters' or 'kimgs'.
