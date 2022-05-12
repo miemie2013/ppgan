@@ -102,7 +102,7 @@ python -m paddle.distributed.launch --gpus 0,1,2,3 tools/main.py -c configs/styl
 恢复训练:
 cd ~/ppgan
 CUDA_VISIBLE_DEVICES=0,1,2,3
-python -m paddle.distributed.launch --gpus 0,1,2,3 tools/main.py -c configs/stylegan_v2ada_512_afhqcat_4_gpu.yaml --resume output_dir/stylegan_v2ada_512_afhqcat_4_gpu-2022-05-11-17-52/iter_20_checkpoint.pdparams
+python -m paddle.distributed.launch --gpus 0,1,2,3 tools/main.py -c configs/stylegan_v2ada_512_afhqcat_4_gpu.yaml --resume output_dir/stylegan_v2ada_512_afhqcat_4_gpu-2022-05-12-11-43/iter_20_checkpoint.pdparams
 
 
 
@@ -129,17 +129,19 @@ python -m paddle.distributed.launch --gpus 0,1 tools/main.py -c configs/stylegan
 
 
 ------------------------ 预测 ------------------------
+cd ~/ppgan
+CUDA_VISIBLE_DEVICES=0
+python tools/main.py -c configs/stylegan_v2ada_512_afhqcat_4_gpu.yaml --evaluate-only --load output_dir/stylegan_v2ada_512_afhqcat_4_gpu-2022-05-12-11-43/iter_20_checkpoint.pdparams
 
 
 
 
 ------------------------ style-mixing ------------------------
 cd ~/ppgan
-python tools/main.py -c configs/stylegan_v2ada_256_custom.yaml --style-mixing --load output_dir/stylegan_v2ada_256_custom-2022-04-20-10-08/iter_5000_checkpoint.pdparams --row_seeds 85,100,75,458,1500 --col_seeds 55,821,1789,293 --col_styles 0,1,2,3,4,5,6
+CUDA_VISIBLE_DEVICES=0
+python tools/main.py -c configs/stylegan_v2ada_512_afhqcat_4_gpu.yaml --style-mixing --load output_dir/stylegan_v2ada_512_afhqcat_4_gpu-2022-05-12-11-43/iter_20_checkpoint.pdparams --row_seeds 85,100 --col_seeds 55,821 --col_styles 0,1,2,3,4,5,6
 
-
-python tools/main.py -c configs/stylegan_v2ada_256_custom.yaml --style-mixing --load output_dir/stylegan_v2ada_256_custom-2022-04-20-10-08/iter_5000_checkpoint.pdparams --row_seeds 85,100 --col_seeds 55,821 --col_styles 0,1,2,3,4,5,6
-
+python tools/main.py -c configs/stylegan_v2ada_512_afhqcat_4_gpu.yaml --style-mixing --load output_dir/stylegan_v2ada_512_afhqcat_4_gpu-2022-05-12-11-43/iter_20_checkpoint.pdparams --row_seeds 85,100,75,458,1500 --col_seeds 55,821,1789,293 --col_styles 0,1,2,3,4,5,6
 
 
 
@@ -154,7 +156,7 @@ cd ..
 
 
 cd ~/ppgan
-python tools/calc_metrics.py -c configs/stylegan_v2ada_512_afhqcat.yaml --load styleganv2ada_512_afhqcat.pdparams -b 2 -n 50000 --inceptionv3_path inception-2015-12-05.pdparams
+python tools/calc_metrics.py -c configs/stylegan_v2ada_512_afhqcat_4_gpu.yaml --load output_dir/stylegan_v2ada_512_afhqcat_4_gpu-2022-05-12-11-43/iter_20_checkpoint.pdparams -b 2 -n 50000 --inceptionv3_path inception-2015-12-05.pdparams
 
 
 论文中 afhqcat 的结果为3.55
