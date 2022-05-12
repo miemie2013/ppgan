@@ -84,7 +84,7 @@ python -m paddle.distributed.launch --gpus 0,1 tools/main.py -c configs/stylegan
 
 
 
-
+(afhqcat)
 用从头训练 afhqcat ：
 cd ~/ppgan
 python tools/main.py -c configs/stylegan_v2ada_512_afhqcat.yaml
@@ -110,6 +110,18 @@ python -m paddle.distributed.launch --gpus 0,1,2,3 tools/main.py -c configs/styl
 nohup python -m paddle.distributed.launch --gpus 0,1,2,3 tools/main.py -c configs/stylegan_v2ada_512_afhqcat_4_gpu.yaml > stylegan2ada.log 2>&1 &
 
 
+(迁移学习动漫头像数据集)
+单机4卡训练：
+cd ~/ppgan
+CUDA_VISIBLE_DEVICES=0,1,2,3
+python -m paddle.distributed.launch --gpus 0,1,2,3 tools/main.py -c configs/stylegan_v2ada_256_custom_4_gpu.yaml
+
+
+恢复训练:
+cd ~/ppgan
+CUDA_VISIBLE_DEVICES=0,1,2,3
+python -m paddle.distributed.launch --gpus 0,1,2,3 tools/main.py -c configs/stylegan_v2ada_256_custom_4_gpu.yaml --resume output_dir/stylegan_v2ada_256_custom_4_gpu-2022-05-12-11-43/iter_20_checkpoint.pdparams
+
 
 
 ------------------------ 恢复训练 ------------------------
@@ -131,7 +143,7 @@ python -m paddle.distributed.launch --gpus 0,1 tools/main.py -c configs/stylegan
 ------------------------ 预测 ------------------------
 cd ~/ppgan
 CUDA_VISIBLE_DEVICES=0
-python tools/main.py -c configs/stylegan_v2ada_512_afhqcat_4_gpu.yaml --evaluate-only --load output_dir/stylegan_v2ada_512_afhqcat_4_gpu-2022-05-12-11-43/iter_20_checkpoint.pdparams
+python tools/main.py -c configs/stylegan_v2ada_512_afhqcat_4_gpu.yaml --evaluate-only --load output_dir/stylegan_v2ada_512_afhqcat_4_gpu-2022-05-12-13-01/iter_1000_checkpoint.pdparams
 
 
 
@@ -139,10 +151,15 @@ python tools/main.py -c configs/stylegan_v2ada_512_afhqcat_4_gpu.yaml --evaluate
 ------------------------ style-mixing ------------------------
 cd ~/ppgan
 CUDA_VISIBLE_DEVICES=0
-python tools/main.py -c configs/stylegan_v2ada_512_afhqcat_4_gpu.yaml --style-mixing --load output_dir/stylegan_v2ada_512_afhqcat_4_gpu-2022-05-12-11-43/iter_20_checkpoint.pdparams --row_seeds 85,100 --col_seeds 55,821 --col_styles 0,1,2,3,4,5,6
+python tools/main.py -c configs/stylegan_v2ada_512_afhqcat_4_gpu.yaml --style-mixing --load output_dir/stylegan_v2ada_512_afhqcat_4_gpu-2022-05-12-13-01/iter_1000_checkpoint.pdparams --row_seeds 85,100 --col_seeds 55,821 --col_styles 0,1,2,3,4,5,6
 
-python tools/main.py -c configs/stylegan_v2ada_512_afhqcat_4_gpu.yaml --style-mixing --load output_dir/stylegan_v2ada_512_afhqcat_4_gpu-2022-05-12-11-43/iter_20_checkpoint.pdparams --row_seeds 85,100,75,458,1500 --col_seeds 55,821,1789,293 --col_styles 0,1,2,3,4,5,6
 
+python tools/main.py -c configs/stylegan_v2ada_512_afhqcat_4_gpu.yaml --style-mixing --load output_dir/stylegan_v2ada_512_afhqcat_4_gpu-2022-05-12-13-01/iter_1000_checkpoint.pdparams --row_seeds 85,100 --col_seeds 55,821 --col_styles 0,1,2,3,4,5,6
+
+
+python tools/main.py -c configs/stylegan_v2ada_512_afhqcat_4_gpu.yaml --style-mixing --load output_dir/stylegan_v2ada_512_afhqcat_4_gpu-2022-05-12-13-01/iter_1000_checkpoint.pdparams --row_seeds 85,100,75,458,1500 --col_seeds 55,821,1789,293 --col_styles 0,1,2,3,4,5,6
+
+python diff_weights.py --cp1 styleganv2ada_32_19.pdparams --cp2 output_dir/stylegan_v2ada_512_afhqcat_4_gpu-2022-05-12-13-01/iter_1000_checkpoint.pdparams --d_value 0.0005
 
 
 
