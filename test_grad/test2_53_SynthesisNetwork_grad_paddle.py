@@ -1,6 +1,11 @@
 
 import paddle
 import numpy as np
+import os
+import sys
+cur_path = os.path.abspath(os.path.dirname(__file__))
+root_path = os.path.split(cur_path)[0]
+sys.path.append(root_path)
 from ppgan.models.generators.generator_styleganv2ada import StyleGANv2ADA_SynthesisNetwork
 
 
@@ -38,6 +43,7 @@ optimizer = paddle.optimizer.Momentum(parameters=model.parameters(), learning_ra
 model.set_state_dict(paddle.load("53.pdparams"))
 
 
+print(model.torgbs[-1].weight.numpy()[:2, :2])
 dic2 = np.load('53.npz')
 for batch_idx in range(8):
     print('======================== batch_%.3d ========================'%batch_idx)
@@ -49,11 +55,7 @@ for batch_idx in range(8):
     ws.stop_gradient = False
     y = model(ws)
 
-    # dy_dws_list = paddle.grad(outputs=[y.sum()], inputs=ws, create_graph=True)
-    # dy_dws = paddle.stack(dy_dws_list, 1)
-    dysum_dy = paddle.ones(y.shape, dtype=paddle.float32)
-    dy_dws = model.grad_layer(dysum_dy)
-    dy_dws = paddle.stack(dy_dws, 1)
+    dy_dws = paddle.grad(outputs=[y.sum()], inputs=ws, create_graph=True)[0]
 
 
     y_paddle = y.numpy()
@@ -64,18 +66,17 @@ for batch_idx in range(8):
     ddd = np.sum((dy_dws_pytorch - dy_dws_paddle) ** 2)
     print('ddd=%.6f' % ddd)
 
-    ddd = np.mean((y_pytorch - y_paddle) ** 2)
-    print('ddd=%.6f' % ddd)
-    ddd = np.mean((dy_dws_pytorch - dy_dws_paddle) ** 2)
-    print('ddd=%.6f' % ddd)
-
-    # 需要强制设置ppgan/models/generators/generator_styleganv2ada.py里的SynthesisLayer的self.use_noise = False，pytorch的也要设置，才会和pytorch输出一样！！！
-    loss = dy_dws.sum() + y.sum()
+    # 需要强制设置ppgan/models/generators/generator_styleganv2ada.py里的 SynthesisLayer 的self.use_noise = False，pytorch的也要设置，才会和pytorch输出一样！！！
+    # loss = dy_dws.sum() + y.sum()
     # loss = y.sum()
+    loss = dy_dws.sum()
     loss.backward()
+    aaaaaaaa = model.torgbs[-1].weight.grad.numpy()
+    print(model.torgbs[-1].weight.grad.numpy()[:2, :2])
     optimizer.step()
 print('================= last dy_dws =================')
 print('dy_dws_pytorch[:, :2, :2]=\n', dy_dws_pytorch[:, :2, :2])
 print()
 print('dy_dws_paddle[:, :2, :2]=\n', dy_dws_paddle[:, :2, :2])
+print(paddle.__version__)
 print()

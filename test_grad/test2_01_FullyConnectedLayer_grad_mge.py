@@ -3,7 +3,7 @@ import megengine.functional as F
 import megengine.module as M
 import numpy as np
 from megengine.autodiff import GradManager
-from meg_networks import FullyConnectedLayer
+from meg_networks import FullyConnectedLayer, mge_grad
 
 
 
@@ -37,19 +37,20 @@ for batch_idx in range(20):
     ws = mge.tensor(ws)
     ws.stop_gradient = False
 
-    gm = GradManager().attach([ws])
-    gm2 = GradManager().attach([ws])
+    gm = GradManager()
+    gm2 = GradManager()
+    gm.attach([ws])
+    gm2.attach([ws])
+    gm.attach(model.parameters())
+    gm2.attach(model.parameters())
 
 
     with gm:
         with gm2:
             styles = model(ws)
-            # styles = F.cos(ws)
             styles2 = F.sigmoid(styles)
 
-            gm2.backward(styles2)
-            dstyles2_dws = ws.grad
-            ws.grad = None
+            dstyles2_dws = mge_grad(gm2, output=styles2, inputs=[ws], clear_grad_nets=[model])[0]
 
             styles_mge = styles.numpy()
             ddd = np.sum((styles_pytorch - styles_mge) ** 2)
@@ -59,9 +60,7 @@ for batch_idx in range(20):
             ddd = np.sum((dstyles2_dws_pytorch - dstyles2_dws_mge) ** 2)
             print('ddd=%.6f' % ddd)
 
-
             loss = dstyles2_dws.sum() + styles2.sum()
-            # loss = styles2.sum()
             gm.backward(loss)
     optimizer.step()
 print()

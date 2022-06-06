@@ -23,9 +23,10 @@ import datetime
 import paddle
 from paddle.distributed import ParallelEnv
 
-from ..datasets.builder import build_dataloader
-from ..models import PastaGANModel, StyleGANv2ADAModel
+from ..datasets.builder import build_dataloader, build_dataset
+from ..metrics.fid import FeatureStats
 from ..models.builder import build_model
+from ..utils import training_stats
 from ..utils.visual import tensor2img, save_image
 from ..utils.filesystem import makedirs, save, load
 from ..utils.timer import TimeAverager
@@ -96,9 +97,19 @@ class Trainer:
 
         # build model
         self.model = build_model(cfg.model)
+        self.archi_name = cfg.model.name
+        self.is_distributed = ParallelEnv().nranks > 1
         # multiple gpus prepare
         if ParallelEnv().nranks > 1:
             self.distributed_data_parallel()
+            if self.archi_name == 'StyleGANv2ADAModel':
+                self.distributed_data_parallel_ema()
+        if self.archi_name == 'StyleGANv2ADAModel':
+            # 为了同步统计量.
+            sync_device = paddle.CUDAPlace(self.local_rank) if self.is_distributed else None
+            training_stats.init_multiprocessing(rank=self.local_rank, sync_device=sync_device)
+            # 修改model的配置，虽然这样写有点丑
+            self.model.rank = self.local_rank
 
         # build metrics
         self.metrics = None
@@ -124,8 +135,9 @@ class Trainer:
 
         # build lr scheduler
         # TODO: has a better way?
-        if isinstance(self.model, PastaGANModel) or isinstance(self.model, StyleGANv2ADAModel):
-            learning_rate = cfg.lr_scheduler_G.learning_rate
+        if self.archi_name == 'StyleGANv2ADAModel':
+            learning_rate_g = cfg.lr_scheduler_G.learning_rate
+            learning_rate_d = cfg.lr_scheduler_D.learning_rate
             beta1 = cfg.optimizer.generator.beta1
             beta2 = cfg.optimizer.generator.beta2
 
@@ -135,22 +147,28 @@ class Trainer:
             for name, reg_interval in [('G', G_reg_interval), ('D', D_reg_interval)]:
                 if reg_interval is None:
                     if name == 'G':
-                        cfg.lr_scheduler_G.learning_rate = learning_rate
+                        cfg.lr_scheduler_G.learning_rate = learning_rate_g
                     elif name == 'D':
-                        cfg.lr_scheduler_D.learning_rate = learning_rate
+                        cfg.lr_scheduler_D.learning_rate = learning_rate_d
                 else:  # Lazy regularization.
-                    mb_ratio = reg_interval / (reg_interval + 1)
-                    new_lr = learning_rate * mb_ratio
-                    new_beta1 = beta1 ** mb_ratio
-                    new_beta2 = beta2 ** mb_ratio
-                if name == 'G':
-                    cfg.lr_scheduler_G.learning_rate = new_lr
-                    cfg.optimizer.generator.beta1 = new_beta1
-                    cfg.optimizer.generator.beta2 = new_beta2
-                elif name == 'D':
-                    cfg.lr_scheduler_D.learning_rate = new_lr
-                    cfg.optimizer.discriminator.beta1 = new_beta1
-                    cfg.optimizer.discriminator.beta2 = new_beta2
+                    if name == 'G':
+                        mb_ratio = reg_interval / (reg_interval + 1)
+                        new_lr = learning_rate_g * mb_ratio
+                        new_beta1 = beta1 ** mb_ratio
+                        new_beta2 = beta2 ** mb_ratio
+
+                        cfg.lr_scheduler_G.learning_rate = new_lr
+                        cfg.optimizer.generator.beta1 = new_beta1
+                        cfg.optimizer.generator.beta2 = new_beta2
+                    elif name == 'D':
+                        mb_ratio = reg_interval / (reg_interval + 1)
+                        new_lr = learning_rate_d * mb_ratio
+                        new_beta1 = beta1 ** mb_ratio
+                        new_beta2 = beta2 ** mb_ratio
+
+                        cfg.lr_scheduler_D.learning_rate = new_lr
+                        cfg.optimizer.discriminator.beta1 = new_beta1
+                        cfg.optimizer.discriminator.beta2 = new_beta2
 
             if 'lr_scheduler_G' in cfg and 'iters_per_epoch' in cfg.lr_scheduler_G:
                 cfg.lr_scheduler_G.iters_per_epoch = self.iters_per_epoch
@@ -181,7 +199,8 @@ class Trainer:
             if self.total_iters is None:
                 kimgs = cfg.get('kimgs', None)
                 kimgs = kimgs * 1000
-                batch_size = self.cfg.dataset.train.batch_size
+                batch_gpu = self.cfg.dataset.train.batch_size
+                batch_size = batch_gpu * self.world_size
                 self.total_iters = kimgs // batch_size
 
         if self.by_epoch:
@@ -210,6 +229,12 @@ class Trainer:
         find_unused_parameters = self.cfg.get('find_unused_parameters', False)
         for net_name, net in self.model.nets.items():
             self.model.nets[net_name] = paddle.DataParallel(
+                net, find_unused_parameters=find_unused_parameters)
+
+    def distributed_data_parallel_ema(self):
+        find_unused_parameters = self.cfg.get('find_unused_parameters', False)
+        for net_name, net in self.model.nets_ema.items():
+            self.model.nets_ema[net_name] = paddle.DataParallel(
                 net, find_unused_parameters=find_unused_parameters)
 
     def learning_rate_scheduler_step(self):
@@ -243,7 +268,15 @@ class Trainer:
             # unpack data from dataset and apply preprocessing
             # data input should be dict
             self.model.setup_input(data)
-            self.model.train_iter(self.optimizers)
+            if self.archi_name == 'StyleGANv2ADAModel':
+                # raw_idx = data[-1]
+                # if self.local_rank == 0:
+                #     self.logger.info(raw_idx)
+                # else:
+                #     print(raw_idx)
+                self.model.train_iter(self.optimizers, self.local_rank, self.world_size)
+            else:
+                self.model.train_iter(self.optimizers)
 
             batch_cost_averager.record(
                 time.time() - step_start_time,
@@ -333,6 +366,100 @@ class Trainer:
             for metric_name, metric in self.metrics.items():
                 self.logger.info("Metric {}: {:.4f}".format(
                     metric_name, metric.accumulate()))
+
+    @paddle.no_grad()
+    def calc_stylegan2ada_metric(self, inceptionv3_model, dataset_batch_size, batch_size, num_gen, G_kwargs={}):
+        cfg_ = self.cfg.dataset.train.copy()
+        _ = cfg_.pop('batch_size', 1)
+        num_workers = cfg_.pop('num_workers', 0)
+        use_shared_memory = cfg_.pop('use_shared_memory', True)
+        dataset = build_dataset(cfg_)
+        n_dataset = len(dataset)
+        return_features = True
+
+        if not hasattr(self, 'train_dataloader'):
+            self.cfg.dataset.train.batch_size = dataset_batch_size
+            self.test_dataloader = build_dataloader(self.cfg.dataset.train,
+                                                    is_train=False)
+        iter_loader = IterLoader(self.test_dataloader)
+        if self.max_eval_steps is None:
+            self.max_eval_steps = len(self.test_dataloader)
+
+        # set model.is_train = False
+        self.model.setup_train_mode(is_train=False)
+
+        num_items = len(self.test_dataloader)
+        real_stats_kwargs = dict(capture_mean_cov=True,)
+        real_stats = FeatureStats(max_items=n_dataset, **real_stats_kwargs)
+
+        log_interval = 1024
+        for i in range(self.max_eval_steps):
+            n_imgs = i * dataset_batch_size
+            if n_dataset < log_interval or n_imgs % log_interval == 0:
+                self.logger.info('dataset features: [%d/%d]' % (n_imgs, n_dataset))
+
+            data = next(iter_loader)
+            real_image, label, image_gen_c = data
+            real_image = paddle.cast(real_image, dtype=paddle.float32)  # BGR格式
+            real_features = inceptionv3_model(real_image, return_features=return_features)
+            real_stats.append_tensor(real_features, num_gpus=1, rank=0)
+        mu_real, sigma_real = real_stats.get_mean_cov()
+
+        batch_gen = min(batch_size, 4)
+        assert batch_size % batch_gen == 0
+
+        fake_stats_kwargs = dict(capture_mean_cov=True,)
+        fake_stats = FeatureStats(max_items=num_gen, **fake_stats_kwargs)
+
+        from collections import deque
+        time_stat = deque(maxlen=20)
+        start_time = time.time()
+        end_time = time.time()
+        num_imgs = num_gen
+        start = time.time()
+        i = 0
+
+        # Main loop.
+        while not fake_stats.is_full():
+            images = []
+            for _i in range(batch_size // batch_gen):
+                z = paddle.randn([batch_gen, self.model.z_dim], dtype=paddle.float32)
+                c = [dataset.get_label(np.random.randint(len(dataset))) for _i in range(batch_gen)]
+                c = paddle.to_tensor(np.stack(c))
+                img = self.model.gen_images(z=z, c=c, **G_kwargs)
+                img = (img * 127.5 + 128)
+                img = paddle.clip(img, 0, 255)
+                images.append(img)
+            images = paddle.concat(images)  # BGR格式
+            if images.shape[1] == 1:
+                images = images.tile([1, 3, 1, 1])
+            fake_features = inceptionv3_model(images, return_features=return_features)
+            fake_stats.append_tensor(fake_features, num_gpus=1, rank=0)
+
+            # 估计剩余时间
+            start_time = end_time
+            end_time = time.time()
+            time_stat.append(end_time - start_time)
+            time_cost = np.mean(time_stat)
+            eta_sec = (num_imgs - i * batch_size) * time_cost
+            eta = str(datetime.timedelta(seconds=int(eta_sec)))
+            n_imgs = i * batch_size
+            if num_gen < log_interval or n_imgs % log_interval == 0:
+                self.logger.info('generator features: [%d/%d], eta=%s.' % (n_imgs, num_gen, eta))
+
+            i += 1
+        cost = time.time() - start
+        self.logger.info('total time: {0:.6f}s'.format(cost))
+        self.logger.info('Speed: %.6fs per image,  %.1f FPS.' % ((cost / num_imgs), (num_imgs / cost)))
+        mu_gen, sigma_gen = fake_stats.get_mean_cov()
+
+        m = np.square(mu_gen - mu_real).sum()
+        import scipy.linalg
+        s, _ = scipy.linalg.sqrtm(np.dot(sigma_gen, sigma_real), disp=False) # pylint: disable=no-member
+        fid = np.real(m + np.trace(sigma_gen + sigma_real - s * 2))
+        fid = float(fid)
+        self.logger.info('FID: %.6f' % (fid, ))
+
 
     def style_mixing(self, row_seeds, col_seeds, col_styles):
         # set model.is_train = False
@@ -480,13 +607,28 @@ class Trainer:
 
         os.makedirs(self.output_dir, exist_ok=True)
         save_path = os.path.join(self.output_dir, save_filename)
-        for net_name, net in self.model.nets.items():
-            state_dicts[net_name] = net.state_dict()
+        if self.archi_name == 'StyleGANv2ADAModel' and self.is_distributed:
+            for net_name, net in self.model.nets.items():
+                # state_dicts[net_name] = net._layers.state_dict()
+                state_dicts[net_name] = net.state_dict()
+                # print(state_dicts[net_name].keys())
+        else:
+            for net_name, net in self.model.nets.items():
+                state_dicts[net_name] = net.state_dict()
+                # print(state_dicts[net_name].keys())
 
         if hasattr(self.model, 'nets_ema'):
-            for net_name, net in self.model.nets_ema.items():
-                net_ema_name = net_name + '_ema'
-                state_dicts[net_ema_name] = net.state_dict()
+            if self.archi_name == 'StyleGANv2ADAModel' and self.is_distributed:
+                for net_name, net in self.model.nets_ema.items():
+                    net_ema_name = net_name + '_ema'
+                    # state_dicts[net_ema_name] = net._layers.state_dict()
+                    state_dicts[net_ema_name] = net.state_dict()
+                    # print(state_dicts[net_ema_name].keys())
+            else:
+                for net_name, net in self.model.nets_ema.items():
+                    net_ema_name = net_name + '_ema'
+                    state_dicts[net_ema_name] = net.state_dict()
+                    # print(state_dicts[net_ema_name].keys())
 
         if name == 'weight':
             save(state_dicts, save_path)

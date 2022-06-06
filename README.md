@@ -15,6 +15,9 @@ https://aistudio.baidu.com/aistudio/projectdetail/3639193
 
 上述链接对应的代码版本为release/0.1
 
+最新代码在develop分支。
+
+
 ## 最新动态
 
 2022/03/31： 今天实现了gather的二阶梯度（自定义外部算子），StyleGANv2ADA_AugmentPipe里的grid_sample支持二阶梯度了！

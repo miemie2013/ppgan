@@ -122,7 +122,11 @@ output_dir/
 
 *.npz
 *.pth
+*.pt
 *.pkl
+*.ckpt
 ps_usr_print_log
+
+log/
 
 

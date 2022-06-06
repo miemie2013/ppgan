@@ -120,7 +120,7 @@ class StyleGANv2ADADataset(BaseDataset):
             assert image.ndim == 3 # CHW
             image = image[:, :, ::-1]
         image_gen_c = [self.get_label(np.random.randint(len(self))) for _ in range(self.len_phases)]
-        return image.copy(), self.get_label(idx), image_gen_c
+        return image.copy(), self.get_label(idx), image_gen_c, self._raw_idx[idx]
 
     def get_label(self, idx):
         label = self._get_raw_labels()[self._raw_idx[idx]]
@@ -198,6 +198,7 @@ class StyleGANv2ADATestDataset(BaseDataset):
         z = np.random.RandomState(seed).randn(self.z_dim, )
         datas = {
             'z': z,
+            'seed': seed,
         }
         return datas
 

@@ -5,7 +5,27 @@ upfirdn2d
 _conv2d_wrapper
 
 
+wget https://paddlegan.bj.bcebos.com/InceptionV3.pdparams
+
 ======================== StyleGANv2_ADA ========================
+
+
+# 转换原版仓库权重
+python convert_weights/stylegan2ada_convert_weights.py -c configs/stylegan_v2ada_512_afhqcat.yaml -c_Gema G_ema_afhqcat.pth -c_G G_afhqcat.pth -c_D D_afhqcat.pth -oc styleganv2ada_512_afhqcat.pdparams
+
+python convert_weights/stylegan2ada_convert_weights.py -c configs/stylegan_v2ada_1024_metfaces_1_gpu.yaml -c_Gema G_ema_metfaces.pth -c_G G_metfaces.pth -c_D D_metfaces.pth -oc styleganv2ada_1024_metfaces.pdparams
+
+python convert_weights/stylegan2ada_convert_weights.py -c configs/stylegan_v2ada_1024_metfaces_1_gpu.yaml -c_Gema G_ema_ffhq.pth -c_G G_ffhq.pth -c_D D_ffhq.pth -oc styleganv2ada_1024_ffhq.pdparams
+
+# 测试
+python tools/main.py -c configs/stylegan_v2ada_512_afhqcat.yaml --evaluate-only --load styleganv2ada_512_afhqcat.pdparams
+
+python tools/main.py -c configs/stylegan_v2ada_1024_metfaces_1_gpu.yaml --evaluate-only --load styleganv2ada_1024_metfaces.pdparams
+
+python tools/main.py -c configs/stylegan_v2ada_1024_metfaces_1_gpu.yaml --evaluate-only --load styleganv2ada_1024_ffhq.pdparams
+
+
+
 
 1.因为会报错 ValueError: (InvalidArgument) float16 can only be used when CUDNN or NPU is used
 所以强制设置StyleGANv2ADA_SynthesisNetwork的use_fp16 = False
@@ -57,7 +77,6 @@ cp ../data/data128401/styleganv2ada_512_afhqcat.pdparams styleganv2ada_512_afhqc
 
 对齐梯度：
 1.(原版仓库也要设置)设置 ppgan/models/styleganv2ada_model.py 的 StyleGANv2ADAModel 的
-    self.augment_pipe = None
     self.style_mixing_prob = -1.0
     self.align_grad = True
 解除上面语句的注释即可。
@@ -65,10 +84,17 @@ cp ../data/data128401/styleganv2ada_512_afhqcat.pdparams styleganv2ada_512_afhqc
 if self.align_grad:
     xxx
 
-2.(原版仓库也要设置) ppgan/models/styleganv2ada_model.py，计算loss_Gpl那里，pl_noise使用全1而不是随机数：
+计算loss_Gpl那里，pl_noise使用全1而不是随机数：
             pl_noise = paddle.randn(gen_img.shape) / np.sqrt(gen_img.shape[2] * gen_img.shape[3])
             # pl_noise = paddle.ones(gen_img.shape) / np.sqrt(gen_img.shape[2] * gen_img.shape[3])
 注释掉第一行代码，第二行代码解除注释。
+
+run_D()方法中，注释掉：
+            img = self.augment_pipe(img)
+解除注释：
+            # debug_percentile = 0.7
+            # img = self.augment_pipe(img, debug_percentile)
+
 
 3.(原版仓库也要设置)设置 ppgan/models/generators/generator_styleganv2ada.py 的 SynthesisLayer 的
     self.use_noise = False
@@ -90,6 +116,72 @@ elif opt_name == 'discriminator':
 
 
 
+export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/cuda-10.2/lib64
+export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/lib/x86_64-linux-gnu
+
+
+# 转换权重方便对齐
+python convert_weights/stylegan2ada_convert_weights.py -c configs/stylegan_v2ada_32_custom.yaml -c_G G_00.pth -c_Gema G_ema_00.pth -c_D D_00.pth -oc styleganv2ada_32_00.pdparams
+
+
+python convert_weights/stylegan2ada_convert_weights.py -c configs/stylegan_v2ada_32_custom.yaml -c_G G_19.pth -c_Gema G_ema_19.pth -c_D D_19.pth -oc styleganv2ada_32_19.pdparams
+
+
+如果在AIStudio上跑，解压权重和npz：
+nvidia-smi
+cd ~/ppgan
+cp ../data/data137600/1gpu.zip ./1gpu.zip
+cp ../data/data137600/2gpu.zip ./2gpu.zip
+
+unzip 1gpu.zip
+
+unzip 2gpu.zip
+
+
+
+stylegan_v2ada_32_custom.yaml 的 batch_size 改成 8
+CUDA_VISIBLE_DEVICES=0
+python tools/main.py -c configs/stylegan_v2ada_32_custom.yaml --load styleganv2ada_32_00.pdparams
+
+
+stylegan_v2ada_32_custom.yaml 的 batch_size 改成 4
+CUDA_VISIBLE_DEVICES=0,1
+python -m paddle.distributed.launch --gpus 0,1 tools/main.py -c configs/stylegan_v2ada_32_custom.yaml --load styleganv2ada_32_00.pdparams
+
+
+python diff_weights.py --cp1 styleganv2ada_32_19.pdparams --cp2 output_dir/stylegan_v2ada_32_custom-2022-05-11-17-52/iter_20_checkpoint.pdparams --d_value 0.0005
+
+
+
+
+----------------------- 进阶：验证每张卡上的训练数据是否不重复 -----------------------
+1.configs/stylegan_v2ada_256_custom.yaml
+        # 有前16张照片，用来验证每张卡上的训练数据是否不重复
+        dataroot: ../data/data110820/faces
+改成
+        dataroot: ../data/data110820/faces2
+批大小改成4
+
+2.trainer.py下面代码解除注释
+                # raw_idx = data[-1]
+                # if self.local_rank == 0:
+                #     self.logger.info(raw_idx)
+                # else:
+                #     print(raw_idx)
+注释掉这句代码
+                self.model.train_iter(self.optimizers, self.local_rank, self.world_size)
+肉眼观察raw_idx即可(0~15的值)。
+
+单机1卡
+python tools/main.py -c configs/stylegan_v2ada_256_custom.yaml
+
+单机2卡
+CUDA_VISIBLE_DEVICES=0,1
+python -m paddle.distributed.launch --gpus 0,1 tools/main.py -c configs/stylegan_v2ada_256_custom.yaml
+
+
+
+
 
 cd ~/w*
 cd convert_weights
@@ -104,7 +196,36 @@ python diff_weights_with_pytorch.py
 
 
 
-训练模型:
+------------------------ 安装自定义op ------------------------
+目前只有develop分支支持二阶导数：
+python -m pip install paddlepaddle-gpu==0.0.0.post101 -f https://www.paddlepaddle.org.cn/whl/linux/gpu/develop.html
+
+cd ~/w*
+pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
+
+
+cd ~/work/custom_ops/gather
+python setup.py install
+
+
+
+cd ~/work/test_grad
+python test2_54_Discriminator_grad_paddle.py
+
+
+
+
+
+
+------------------------ 训练模型 ------------------------
+转换inceptionv3的权重：
+cd convert_weights
+wget https://nvlabs-fi-cdn.nvidia.com/stylegan2-ada-pytorch/pretrained/metrics/inception-2015-12-05.pt
+python inception_convert_weights.py
+cd ..
+
+
+
 cd ~/w*
 python tools/main.py -c configs/stylegan_v2ada_512_afhqcat.yaml
 
@@ -124,7 +245,7 @@ python tools/main.py -c configs/stylegan_v2ada_32_custom.yaml --load styleganv2a
 
 
 
-恢复训练:
+------------------------ 恢复训练 ------------------------
 cd ~/w*
 python tools/main.py -c configs/stylegan_v2ada_512_afhqcat.yaml --resume output_dir/stylegan_v2ada_512_afhqcat-2022-03-03-11-11/iter_20_checkpoint.pdparams
 
@@ -140,7 +261,7 @@ python tools/main.py -c configs/stylegan_v2ada_512_afhqcat.yaml --evaluate-only 
 python tools/main.py -c configs/stylegan_v2ada_512_afhqcat.yaml --evaluate-only --load styleganv2ada_512_afhqcat.pdparams
 
 
-模型style-mixing:
+------------------------ 模型style-mixing ------------------------
 python tools/main.py -c configs/stylegan_v2ada_512_afhqcat.yaml --style-mixing --load styleganv2ada_512_afhqcat.pdparams --row_seeds 85,100,75,458,1500 --col_seeds 55,821,1789,293 --col_styles 0,1,2,3,4,5,6
 
 python tools/main.py -c configs/stylegan_v2ada_512_afhqcat.yaml --style-mixing --load styleganv2ada_512_afhqcat.pdparams --row_seeds 85 --col_seeds 55 --col_styles 0,1,2,3,4,5,6
@@ -157,6 +278,14 @@ python tools/main.py -c configs/stylegan_v2ada_256_custom.yaml --style-mixing --
 
 如果提示显存不足，请减少row_seeds和col_seeds随机种子数量，比如：
 python tools/main.py -c configs/stylegan_v2ada_256_custom.yaml --style-mixing --load iter_26000_checkpoint.pdparams --row_seeds 100,75,458 --col_seeds 55,821 --col_styles 0,1,2,3,4,5,6
+
+
+
+------------------------ 计算指标 ------------------------
+cd ~/w*
+python tools/calc_metrics.py -c configs/stylegan_v2ada_512_afhqcat.yaml --load styleganv2ada_512_afhqcat.pdparams -b 2 -n 50000 --inceptionv3_path inception-2015-12-05.pdparams
+
+
 
 
 

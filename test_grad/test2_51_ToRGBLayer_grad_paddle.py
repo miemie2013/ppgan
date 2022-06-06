@@ -103,10 +103,10 @@ for batch_idx in range(8):
     x.stop_gradient = False
     y = model(x, ws, fused_modconv=fused_modconv)
 
-    # dy_dx = paddle.grad(outputs=[y.sum()], inputs=[x], create_graph=True)[0]
-    # dy_dws = paddle.grad(outputs=[y.sum()], inputs=[ws], create_graph=True)[0]
-    dysum_dy = paddle.ones(y.shape, dtype=paddle.float32)
-    dy_dx, dy_dws = model.grad_layer(dysum_dy)
+    dy_dx = paddle.grad(outputs=[y.sum()], inputs=[x], create_graph=True)[0]
+    dy_dws = paddle.grad(outputs=[y.sum()], inputs=[ws], create_graph=True)[0]
+    # dysum_dy = paddle.ones(y.shape, dtype=paddle.float32)
+    # dy_dx, dy_dws = model.grad_layer(dysum_dy)
 
     y_paddle = y.numpy()
     ddd = np.sum((y_pytorch - y_paddle) ** 2)

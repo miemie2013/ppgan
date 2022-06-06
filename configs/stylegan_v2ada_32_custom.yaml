@@ -1,5 +1,6 @@
 kimgs: 25000
 output_dir: output_dir
+find_unused_parameters: true
 
 model:
   name: StyleGANv2ADAModel
@@ -66,7 +67,7 @@ dataset:
     use_labels: False
     xflip: False
     num_workers: 0
-    batch_size: 6
+    batch_size: 8
     len_phases: 4
     preprocess: None
 
@@ -113,4 +114,4 @@ log_config:
   visiual_interval: 1000   # visual iters
 
 snapshot_config:
-  interval: 1000   # save epochs when use 'epochs'; save iters when use 'total_iters' or 'kimgs'.
+  interval: 20   # save epochs when use 'epochs'; save iters when use 'total_iters' or 'kimgs'.

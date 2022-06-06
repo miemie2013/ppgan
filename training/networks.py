@@ -83,6 +83,130 @@ def modulated_conv2d(
         x = x.add_(noise)
     return x
 
+
+class RSS(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, w0, styles, batch_size):
+        ctx.batch_size = batch_size
+        w1 = w0 * styles.reshape(batch_size, 1, -1, 1, 1)  # [NOIkk]
+        dcoefs = (w1.square().sum(dim=[2, 3, 4]) + 1e-8).rsqrt()  # [NO]
+        w2 = w1 * dcoefs.reshape(batch_size, -1, 1, 1, 1)  # [NOIkk]
+        ctx.save_for_backward(w0, w1, w2, dcoefs)
+        return w2
+
+    @staticmethod
+    def backward(ctx, dloss_dw2):
+        batch_size = ctx.batch_size
+        w0, w1, w2, dcoefs = ctx.saved_tensors
+        # dx = RSSGrad.apply(dy, y)
+
+        # w2 = w1 * dcoefs.reshape((batch_size, -1, 1, 1, 1))
+        dloss_dstyles_1 = dloss_dw2 * dcoefs.reshape((batch_size, -1, 1, 1, 1))  # du * v
+        dloss_dstyles_2 = w1 * dloss_dw2  # u * dv
+        # dloss_dstyles_2继续对dcoefs求导
+        dloss_dstyles_2 = dloss_dstyles_2.sum([2, 3, 4])
+
+
+        # dcoefs = (w.square().sum(axis=[2, 3, 4]) + 1e-8).rsqrt()  # [NO]
+        dloss_dw_square_sum_add_1e8 = -0.5 * dloss_dstyles_2 * dcoefs * dcoefs * dcoefs
+        dloss_dw_square_sum = dloss_dw_square_sum_add_1e8
+        dloss_dw_square = dloss_dw_square_sum.unsqueeze([2, 3, 4])
+        dloss_dw_square = dloss_dw_square.repeat([1, 1, w1.shape[2], w1.shape[3], w1.shape[4]])
+        dloss_dstyles_2 = dloss_dw_square * 2 * w1
+        # w = weight.unsqueeze(0)  # [NOIkk]
+        # w = w * styles.reshape((batch_size, 1, -1, 1, 1))  # [NOIkk]
+
+        # dloss_dstyles_1继续对w1求导
+        dloss_dstyles_1 = dloss_dstyles_1 * w0
+        dloss_dstyles_1 = dloss_dstyles_1.sum([1, 3, 4])
+
+        dloss_dstyles_2 = dloss_dstyles_2 * w0
+        dloss_dstyles_2 = dloss_dstyles_2.sum([1, 3, 4])
+        dloss_dstyles = dloss_dstyles_1 + dloss_dstyles_2
+
+
+        return dloss_dw0, dloss_dstyles
+
+class RSSGrad(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, dy, y):
+        dx = dy * (1 - torch.square(y))
+        ctx.save_for_backward(dy, y)
+        return dx
+
+    @staticmethod
+    def backward(ctx, ddx):
+        dy, y = ctx.saved_tensors
+        ddy = ddx * (1 - torch.square(y))
+        dy_new = ddx * dy * -2 * y
+        return ddy, dy_new
+
+
+@misc.profiled_function
+def modulated_conv2d2(
+    x,                          # Input tensor of shape [batch_size, in_channels, in_height, in_width].
+    weight,                     # Weight tensor of shape [out_channels, in_channels, kernel_height, kernel_width].
+    styles,                     # Modulation coefficients of shape [batch_size, in_channels].
+    noise           = None,     # Optional noise tensor to add to the output activations.
+    up              = 1,        # Integer upsampling factor.
+    down            = 1,        # Integer downsampling factor.
+    padding         = 0,        # Padding with respect to the upsampled image.
+    resample_filter = None,     # Low-pass filter to apply when resampling activations. Must be prepared beforehand by calling upfirdn2d.setup_filter().
+    demodulate      = True,     # Apply weight demodulation?
+    flip_weight     = True,     # False = convolution, True = correlation (matches torch.nn.functional.conv2d).
+    fused_modconv   = True,     # Perform modulation, convolution, and demodulation as a single fused operation?
+):
+    batch_size = x.shape[0]
+    out_channels, in_channels, kh, kw = weight.shape
+    misc.assert_shape(weight, [out_channels, in_channels, kh, kw]) # [OIkk]
+    misc.assert_shape(x, [batch_size, in_channels, None, None]) # [NIHW]
+    misc.assert_shape(styles, [batch_size, in_channels]) # [NI]
+
+    # Pre-normalize inputs to avoid FP16 overflow.
+    if x.dtype == torch.float16 and demodulate:
+        weight = weight * (1 / np.sqrt(in_channels * kh * kw) / weight.norm(float('inf'), dim=[1,2,3], keepdim=True)) # max_Ikk
+        styles = styles / styles.norm(float('inf'), dim=1, keepdim=True) # max_I
+
+    # Calculate per-sample weights and demodulation coefficients.
+    w = None
+    dcoefs = None
+    if demodulate and not fused_modconv:
+        w = weight.unsqueeze(0)  # [NOIkk]
+        w = w * styles.reshape(batch_size, 1, -1, 1, 1)  # [NOIkk]
+        dcoefs = (w.square().sum(dim=[2, 3, 4]) + 1e-8).rsqrt()  # [NO]
+    elif demodulate and fused_modconv:
+        w = weight.unsqueeze(0)  # [NOIkk]
+        w = RSSGrad.apply(w, styles)
+    elif not demodulate and not fused_modconv:
+        pass
+    elif not demodulate and fused_modconv:
+        w = weight.unsqueeze(0)  # [NOIkk]
+        w = w * styles.reshape(batch_size, 1, -1, 1, 1)  # [NOIkk]
+
+    # Execute by scaling the activations before and after the convolution.
+    if not fused_modconv:
+        x = x * styles.to(x.dtype).reshape(batch_size, -1, 1, 1)
+        x = conv2d_resample.conv2d_resample(x=x, w=weight.to(x.dtype), f=resample_filter, up=up, down=down, padding=padding, flip_weight=flip_weight)
+        if demodulate and noise is not None:
+            x = fma.fma(x, dcoefs.to(x.dtype).reshape(batch_size, -1, 1, 1), noise.to(x.dtype))
+        elif demodulate:
+            x = x * dcoefs.to(x.dtype).reshape(batch_size, -1, 1, 1)
+        elif noise is not None:
+            x = x.add_(noise.to(x.dtype))
+        return x
+
+    # Execute as one fused op using grouped convolution.
+    with misc.suppress_tracer_warnings(): # this value will be treated as a constant
+        batch_size = int(batch_size)
+    misc.assert_shape(x, [batch_size, in_channels, None, None])
+    x = x.reshape(1, -1, *x.shape[2:])
+    w = w.reshape(-1, in_channels, kh, kw)
+    x = conv2d_resample.conv2d_resample(x=x, w=w.to(x.dtype), f=resample_filter, up=up, down=down, padding=padding, groups=batch_size, flip_weight=flip_weight)
+    x = x.reshape(batch_size, -1, *x.shape[2:])
+    if noise is not None:
+        x = x.add_(noise)
+    return x
+
 #----------------------------------------------------------------------------
 
 @persistence.persistent_class
@@ -317,6 +441,60 @@ class SynthesisLayer(torch.nn.Module):
 
         flip_weight = (self.up == 1) # slightly faster
         img2 = modulated_conv2d(x=x, weight=self.weight, styles=styles, noise=noise, up=self.up,
+            padding=self.padding, resample_filter=self.resample_filter, flip_weight=flip_weight, fused_modconv=fused_modconv)
+
+        act_gain = self.act_gain * gain
+        act_clamp = self.conv_clamp * gain if self.conv_clamp is not None else None
+        img3 = bias_act.bias_act(img2, self.bias.to(img2.dtype), act=self.activation, gain=act_gain, clamp=act_clamp)
+        return img3
+
+@persistence.persistent_class
+class SynthesisLayer2(torch.nn.Module):
+    def __init__(self,
+        in_channels,                    # Number of input channels.
+        out_channels,                   # Number of output channels.
+        w_dim,                          # Intermediate latent (W) dimensionality.
+        resolution,                     # Resolution of this layer.
+        kernel_size     = 3,            # Convolution kernel size.
+        up              = 1,            # Integer upsampling factor.
+        use_noise       = True,         # Enable noise input?
+        activation      = 'lrelu',      # Activation function: 'relu', 'lrelu', etc.
+        resample_filter = [1,3,3,1],    # Low-pass filter to apply when resampling activations.
+        conv_clamp      = None,         # Clamp the output of convolution layers to +-X, None = disable clamping.
+        channels_last   = False,        # Use channels_last format for the weights?
+    ):
+        super().__init__()
+        self.resolution = resolution
+        self.up = up
+        self.use_noise = use_noise
+        self.use_noise = False
+        self.activation = activation
+        self.conv_clamp = conv_clamp
+        self.register_buffer('resample_filter', upfirdn2d.setup_filter(resample_filter))
+        self.padding = kernel_size // 2
+        self.act_gain = bias_act.activation_funcs[activation].def_gain
+
+        self.affine = FullyConnectedLayer(w_dim, in_channels, bias_init=1)
+        memory_format = torch.channels_last if channels_last else torch.contiguous_format
+        self.weight = torch.nn.Parameter(torch.randn([out_channels, in_channels, kernel_size, kernel_size]).to(memory_format=memory_format))
+        if use_noise:
+            self.register_buffer('noise_const', torch.randn([resolution, resolution]))
+            self.noise_strength = torch.nn.Parameter(torch.zeros([]))
+        self.bias = torch.nn.Parameter(torch.zeros([out_channels]))
+
+    def forward(self, x, w, noise_mode='random', fused_modconv=True, gain=1):
+        assert noise_mode in ['random', 'const', 'none']
+        in_resolution = self.resolution // self.up
+        styles = self.affine(w)
+
+        noise = None
+        if self.use_noise and noise_mode == 'random':
+            noise = torch.randn([x.shape[0], 1, self.resolution, self.resolution], device=x.device) * self.noise_strength
+        if self.use_noise and noise_mode == 'const':
+            noise = self.noise_const * self.noise_strength
+
+        flip_weight = (self.up == 1) # slightly faster
+        img2 = modulated_conv2d2(x=x, weight=self.weight, styles=styles, noise=noise, up=self.up,
             padding=self.padding, resample_filter=self.resample_filter, flip_weight=flip_weight, fused_modconv=fused_modconv)
 
         act_gain = self.act_gain * gain

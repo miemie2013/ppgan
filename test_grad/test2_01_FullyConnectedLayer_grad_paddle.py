@@ -50,10 +50,10 @@ for batch_idx in range(20):
     # styles2_clone.set_value(styles2)
 
 
-    # dstyles2_dws = paddle.grad(outputs=[styles2.sum()], inputs=[ws], create_graph=True)[0]
-    dstyles2_dstyles2 = paddle.ones(styles2.shape, dtype=paddle.float32)
-    dstyles2_dstyles = dstyles2_dstyles2 * styles2_clone * (1.0 - styles2_clone)  # 总结：和梯度相乘的临时前向张量styles2_clone一定要是本尊，不能加.detach()
-    dstyles2_dws = model.grad_layer(dstyles2_dstyles)
+    dstyles2_dws = paddle.grad(outputs=[styles2.sum()], inputs=[ws], create_graph=True)[0]
+    # dstyles2_dstyles2 = paddle.ones(styles2.shape, dtype=paddle.float32)
+    # dstyles2_dstyles = dstyles2_dstyles2 * styles2_clone * (1.0 - styles2_clone)  # 总结：和梯度相乘的临时前向张量styles2_clone一定要是本尊，不能加.detach()
+    # dstyles2_dws = model.grad_layer(dstyles2_dstyles)
 
     aaaaaa = styles.numpy()
     ddd = np.sum((styles_pytorch - aaaaaa) ** 2)

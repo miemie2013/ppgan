@@ -30,7 +30,7 @@ synthesis_cfg = dict(
     conv_clamp=conv_clamp,
 )
 
-batch_size = 1
+batch_size = 2
 w_shape = [batch_size, w_dim]
 lr = 0.0001
 
@@ -54,9 +54,15 @@ for batch_idx in range(8):
     dic['batch_%.3d.output'%batch_idx] = y.cpu().detach().numpy()
     dic['batch_%.3d.input1'%batch_idx] = ws.cpu().detach().numpy()
 
-    loss = dy_dws.sum() + y.sum()
+    # loss = dy_dws.sum() + y.sum()
     # loss = y.sum()
+    loss = dy_dws.sum()
     loss.backward()
+    dic['batch_%.3d.model.b32.torgb.weight.grad'%batch_idx] = model.b32.torgb.weight.grad.cpu().detach().numpy()
+    if model.b32.torgb.bias.grad is not None:
+        dic['batch_%.3d.model.b32.torgb.bias.grad'%batch_idx] = model.b32.torgb.bias.grad.cpu().detach().numpy()
+    dic['batch_%.3d.model.b32.conv1.weight.grad'%batch_idx] = model.b32.conv1.weight.grad.cpu().detach().numpy()
+    dic['batch_%.3d.model.b32.conv1.bias.grad'%batch_idx] = model.b32.conv1.bias.grad.cpu().detach().numpy()
     optimizer.step()
 np.savez('53', **dic)
 print()

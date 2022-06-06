@@ -55,4 +55,5 @@ for key in fullyConnectedLayer_dic.keys():
 model.set_state_dict(fullyConnectedLayer_std)
 
 paddle.save(fullyConnectedLayer_std, save_name)
+print(paddle.__version__)
 
