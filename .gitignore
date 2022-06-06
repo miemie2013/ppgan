@@ -125,6 +125,14 @@ output_dir/
 *.pt
 *.pkl
 *.ckpt
+*.0
+*.1
+*.2
+*.3
+*.4
+*.5
+*.6
+*.7
 ps_usr_print_log
 
 log/
